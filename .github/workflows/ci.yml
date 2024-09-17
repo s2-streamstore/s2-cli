@@ -28,8 +28,7 @@ jobs:
         if: >-
           contains(needs.*.result, 'failure') || contains(needs.*.result,
           'cancelled') || contains(needs.*.result, 'skipped')
-  lint:
-    name: clippy
+  lint:    
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -43,7 +42,7 @@ jobs:
           toolchain: stable
           target: x86_64-unknown-linux-gnu          
       - name: Check format
-        run: cargo +nightly fmt --all -- --check
+        run: cargo fmt --all -- --check
       - name: Check clippy
         run: >-
           cargo clippy --workspace --all-features --all-targets -- -D warnings
