@@ -41,6 +41,7 @@ jobs:
         with:
           components: 'clippy, rustfmt'
           toolchain: stable
+          target: x86_64-unknown-linux-gnu          
       - name: Check format
         run: cargo +nightly fmt --all -- --check
       - name: Check clippy
