@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use colored::*;
 use config::{config_path, create_config};
 use error::S2CliError;
 
@@ -30,7 +31,14 @@ enum ConfigActions {
     },
 }
 
-fn main() -> Result<(), S2CliError> {
+fn main() {
+    if let Err(err) = run() {
+        eprintln!("{}", format!("✗ {}", err).red());
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), S2CliError> {
     let commands = Cli::parse();
     let config_path = config_path()?;
 
@@ -38,6 +46,11 @@ fn main() -> Result<(), S2CliError> {
         Commands::Config { action } => match action {
             ConfigActions::Set { token } => {
                 create_config(&config_path, &token)?;
+                println!("{}", "✓ Token set successfully".green().bold());
+                println!(
+                    "  Configuration saved to: {}",
+                    config_path.display().to_string().cyan()
+                );
             }
         },
     }
