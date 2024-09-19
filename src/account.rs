@@ -80,7 +80,7 @@ impl AccountService {
     }
 
     pub async fn delete_basin(&self, name: String) -> Result<(), AccountServiceError> {
-        let delete_basin_req = s2::types::DeleteBasinRequest { basin: name };
+        let delete_basin_req = s2::types::DeleteBasinRequest::builder().basin(name).build();
         self.client.delete_basin(delete_basin_req).await?;
         Ok(())
     }

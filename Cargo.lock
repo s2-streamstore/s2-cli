@@ -1298,7 +1298,7 @@ checksum = "f3cb5ba0dc43242ce17de99c180e96db90b235b8a9fdc9543c96d2209116bd9f"
 [[package]]
 name = "s2"
 version = "0.1.0"
-source = "git+ssh://git@github.com/s2-streamstore/s2.rs.git?branch=fromstr#3d0415946fae3afadce54ac713fa436fb6c3ce1b"
+source = "git+ssh://git@github.com/s2-streamstore/s2.rs.git?branch=main#448a154072fbdc029f76b48e74c9bb4d80f4db29"
 dependencies = [
  "backon",
  "http",

@@ -12,18 +12,7 @@ static HELP: OnceLock<String> = OnceLock::new();
 fn get_help() -> &'static str {
     HELP.get_or_init(|| {
         format!(
-            r#"
-            {}
-
-            ► {}
-            {}
-
-            ► {}
-            {}
-
-            ► {}
-            {}
-            "#,
+            "\n{}\n\n ► {}\n{}\n\n ► {}\n{}\n\n ► {}\n{}",
             "Notice something wrong?".cyan().bold(),
             "Open an issue:".green(),
             "https://github.com/s2-cli/issues".bold(),

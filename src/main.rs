@@ -4,7 +4,7 @@ use colored::*;
 use config::{config_path, create_config};
 use error::S2CliError;
 use s2::{
-    client::{Client, ClientConfig, Cloud},
+    client::{Client, ClientConfig, HostCloud},
     types::StorageClass,
 };
 
@@ -83,14 +83,12 @@ enum AccountActions {
 
 async fn s2_client(token: String) -> Result<Client, S2CliError> {
     let config = ClientConfig::builder()
-        .url(Cloud::Local)
+        .host_uri(HostCloud::Local)
         .token(token.to_string())
         .connection_timeout(std::time::Duration::from_secs(5))
         .build();
 
-    let bro = Client::connect(config).await?;
-    println!("{:?}", bro);
-    Ok(bro)
+    Ok(Client::connect(config).await?)
 }
 
 #[tokio::main]
