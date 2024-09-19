@@ -1,6 +1,6 @@
 use s2::{
     client::Client,
-    service_error::{CreateBasinError, ServiceError},
+    service_error::{CreateBasinError, DeleteBasinError, ServiceError},
     types::{
         BasinConfig, CreateBasinResponse, ListBasinsResponse, RetentionPolicy, StorageClass,
         StreamConfig,
@@ -18,6 +18,9 @@ pub enum AccountServiceError {
 
     #[error("Failed to create basin")]
     CreateBasin(#[from] ServiceError<CreateBasinError>),
+
+    #[error("Failed to delete basin")]
+    DeleteBasin(#[from] ServiceError<DeleteBasinError>),
 }
 
 impl AccountService {
@@ -31,11 +34,11 @@ impl AccountService {
         start_after: String,
         limit: u32,
     ) -> Result<ListBasinsResponse, AccountServiceError> {
-        let list_basins_req = s2::types::ListBasinsRequest {
-            prefix,
-            start_after,
-            limit,
-        };
+        let list_basins_req = s2::types::ListBasinsRequest::builder()
+            .prefix(prefix)
+            .start_after(start_after)
+            .limit(limit)
+            .build();
 
         self.client
             .list_basins(list_basins_req)
@@ -74,5 +77,11 @@ impl AccountService {
             .create_basin(create_basin_req)
             .await
             .map_err(AccountServiceError::CreateBasin)
+    }
+
+    pub async fn delete_basin(&self, name: String) -> Result<(), AccountServiceError> {
+        let delete_basin_req = s2::types::DeleteBasinRequest { basin: name };
+        self.client.delete_basin(delete_basin_req).await?;
+        Ok(())
     }
 }

@@ -62,8 +62,7 @@ enum AccountActions {
 
     /// Create a basin
     CreateBasin {
-        /// Basin name, which must be globally unique.
-        #[arg(short, long)]
+        /// Basin name, which must be globally unique.        
         basin: String,
 
         /// Storage class for recent writes.
@@ -74,15 +73,24 @@ enum AccountActions {
         #[arg(short, long, requires_all = ["storage_class"])]
         retention_policy: Option<humantime::Duration>,
     },
+
+    /// Delete a basin
+    DeleteBasin {
+        /// Basin name to delete.        
+        basin: String,
+    },
 }
 
 async fn s2_client(token: String) -> Result<Client, S2CliError> {
     let config = ClientConfig::builder()
         .url(Cloud::Local)
         .token(token.to_string())
+        .connection_timeout(std::time::Duration::from_secs(5))
         .build();
 
-    Ok(Client::connect(config).await?)
+    let bro = Client::connect(config).await?;
+    println!("{:?}", bro);
+    Ok(bro)
 }
 
 #[tokio::main]
@@ -134,6 +142,10 @@ async fn run() -> Result<(), S2CliError> {
                         .create_basin(basin, storage_class, retention_policy)
                         .await?;
                     println!("{:?}", response);
+                }
+                AccountActions::DeleteBasin { basin } => {
+                    account_service.delete_basin(basin).await?;
+                    println!("{}", "✓ Basin deleted successfully".green().bold());
                 }
             }
         }

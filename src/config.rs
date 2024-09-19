@@ -4,6 +4,7 @@ use std::{
 };
 
 use config::{Config, FileFormat};
+use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -21,7 +22,6 @@ pub fn config_path() -> Result<PathBuf, S2CliError> {
     Ok(path)
 }
 
-#[allow(dead_code)]
 pub fn load_config(path: &Path) -> Result<S2Config, S2ConfigError> {
     if let Ok(env_token) = env::var("S2_AUTH_TOKEN") {
         return Ok(S2Config { token: env_token });
@@ -52,7 +52,7 @@ pub fn create_config(config_path: &PathBuf, token: String) -> Result<(), S2Confi
     Ok(())
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Diagnostic)]
 pub enum S2ConfigError {
     #[error("Failed to find config directory")]
     DirNotFound,
@@ -61,6 +61,9 @@ pub enum S2ConfigError {
     PathError,
 
     #[error("Failed to load config file")]
+    #[diagnostic(help(
+        "Did you run `s2 config set`? or use `S2_AUTH_TOKEN` environment variable."
+    ))]
     LoadError,
 
     #[error("Failed to write config file")]
