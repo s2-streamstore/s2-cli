@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
 use config::{Config, FileFormat};
 use serde::{Deserialize, Serialize};
@@ -8,10 +11,9 @@ use crate::error::S2CliError;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct S2Config {
-    token: String,
+    pub token: String,
 }
 
-/// Path to the configuration file
 pub fn config_path() -> Result<PathBuf, S2CliError> {
     let mut path = dirs::config_dir().ok_or(S2ConfigError::DirNotFound)?;
     path.push("s2");
@@ -21,19 +23,21 @@ pub fn config_path() -> Result<PathBuf, S2CliError> {
 
 #[allow(dead_code)]
 pub fn load_config(path: &Path) -> Result<S2Config, S2ConfigError> {
-    let cfg = Config::builder()
+    if let Ok(env_token) = env::var("S2_AUTH_TOKEN") {
+        return Ok(S2Config { token: env_token });
+    }
+    Config::builder()
         .add_source(config::File::new(
             path.to_str().ok_or(S2ConfigError::PathError)?,
             FileFormat::Toml,
         ))
         .build()
-        .map_err(|_| S2ConfigError::LoadError)?;
-
-    cfg.try_deserialize::<S2Config>()
+        .map_err(|_| S2ConfigError::LoadError)?
+        .try_deserialize::<S2Config>()
         .map_err(|_| S2ConfigError::LoadError)
 }
 
-pub fn create_config(config_path: &PathBuf, token: &str) -> Result<(), S2ConfigError> {
+pub fn create_config(config_path: &PathBuf, token: String) -> Result<(), S2ConfigError> {
     let cfg = S2Config {
         token: token.to_string(),
     };
@@ -52,10 +56,13 @@ pub fn create_config(config_path: &PathBuf, token: &str) -> Result<(), S2ConfigE
 pub enum S2ConfigError {
     #[error("Failed to find config directory")]
     DirNotFound,
+
     #[error("Failed to find config file")]
     PathError,
+
     #[error("Failed to load config file")]
     LoadError,
+
     #[error("Failed to write config file")]
     WriteError,
 }
