@@ -32,7 +32,7 @@ impl AccountService {
         &self,
         prefix: String,
         start_after: String,
-        limit: u32,
+        limit: usize,
     ) -> Result<ListBasinsResponse, AccountServiceError> {
         let list_basins_req = s2::types::ListBasinsRequest::builder()
             .prefix(prefix)

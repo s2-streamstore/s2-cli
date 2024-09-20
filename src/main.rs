@@ -1,5 +1,6 @@
 use account::AccountService;
-use clap::{Parser, Subcommand};
+use basin::BasinService;
+use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
 use error::S2CliError;
@@ -9,11 +10,25 @@ use s2::{
 };
 
 mod account;
+mod basin;
 mod config;
 mod error;
 
+const STYLES: styling::Styles = styling::Styles::styled()
+    .header(styling::AnsiColor::Green.on_default().bold())
+    .usage(styling::AnsiColor::Green.on_default().bold())
+    .literal(styling::AnsiColor::Blue.on_default().bold())
+    .placeholder(styling::AnsiColor::Cyan.on_default());
+
+const USAGE: &str = color_print::cstr!(
+    r#"          
+    <dim>$</dim> <bold>s2-cli config set --token ...</bold>
+    <dim>$</dim> <bold>s2-cli account list-basins --prefix "bar" --start-after "foo" --limit 100</bold>        
+    "#
+);
+
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[command(version, about, override_usage = USAGE, styles = STYLES)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -21,7 +36,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Manage s2 configuration
+    /// Manage s2-cli configuration
     Config {
         #[command(subcommand)]
         action: ConfigActions,
@@ -31,6 +46,12 @@ enum Commands {
     Account {
         #[command(subcommand)]
         action: AccountActions,
+    },
+
+    /// Manage s2 basins
+    Basins {
+        #[command(subcommand)]
+        action: BasinActions,
     },
 }
 
@@ -57,7 +78,7 @@ enum AccountActions {
 
         /// Number of results, upto a maximum of 1000.
         #[arg(short, long)]
-        limit: u32,
+        limit: usize,
     },
 
     /// Create a basin
@@ -66,11 +87,11 @@ enum AccountActions {
         basin: String,
 
         /// Storage class for recent writes.
-        #[arg(short, long, requires_all = ["retention_policy"])]
+        #[arg(short, long)]
         storage_class: Option<StorageClass>,
 
         /// Age threshold of oldest records in the stream, which can be automatically trimmed.
-        #[arg(short, long, requires_all = ["storage_class"])]
+        #[arg(short, long)]
         retention_policy: Option<humantime::Duration>,
     },
 
@@ -78,6 +99,27 @@ enum AccountActions {
     DeleteBasin {
         /// Basin name to delete.        
         basin: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum BasinActions {
+    /// List Streams
+    ListStreams {
+        /// Name of the basin to list streams from.
+        basin: String,
+
+        /// List stream names that begin with this prefix.
+        #[arg(short, long)]
+        prefix: String,
+
+        /// List stream names that lexicographically start after this name.        
+        #[arg(short, long)]
+        start_after: String,
+
+        /// Number of results, upto a maximum of 1000.
+        #[arg(short, long)]
+        limit: u32,
     },
 }
 
@@ -144,6 +186,26 @@ async fn run() -> Result<(), S2CliError> {
                 AccountActions::DeleteBasin { basin } => {
                     account_service.delete_basin(basin).await?;
                     println!("{}", "✓ Basin deleted successfully".green().bold());
+                }
+            }
+        }
+        Commands::Basins { action } => {
+            let cfg = config::load_config(&config_path)?;
+            let client = s2_client(cfg.token).await?;
+            match action {
+                BasinActions::ListStreams {
+                    basin,
+                    prefix,
+                    start_after,
+                    limit,
+                } => {
+                    let basin_client = client.basin_client(basin).await?;
+                    let response = BasinService::new(basin_client)
+                        .list_streams(prefix, start_after, limit as usize)
+                        .await?;
+                    for stream in response.streams {
+                        println!("{}", stream);
+                    }
                 }
             }
         }

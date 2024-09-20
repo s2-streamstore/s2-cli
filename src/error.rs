@@ -5,7 +5,7 @@ use miette::Diagnostic;
 use s2::client::ClientError;
 use thiserror::Error;
 
-use crate::{account::AccountServiceError, config::S2ConfigError};
+use crate::{account::AccountServiceError, basin::BasinServiceError, config::S2ConfigError};
 
 static HELP: OnceLock<String> = OnceLock::new();
 
@@ -37,4 +37,8 @@ pub enum S2CliError {
     #[error(transparent)]
     #[diagnostic(help("{}", get_help()))]
     AccountService(#[from] AccountServiceError),
+
+    #[error(transparent)]
+    #[diagnostic(help("{}", get_help()))]
+    BasinService(#[from] BasinServiceError),
 }
