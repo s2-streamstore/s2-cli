@@ -65,6 +65,7 @@ enum ConfigActions {
     },
 }
 
+#[deny(missing_docs)]
 #[derive(Subcommand, Debug)]
 enum AccountActions {
     /// List basins
@@ -101,6 +102,22 @@ enum AccountActions {
         /// Basin name to delete.        
         basin: String,
     },
+
+    /// Get basin config
+    GetBasinConfig {
+        /// Basin name to get config for.
+        basin: String,
+    },
+
+    /// Reconfigure a basin
+    ReconfigureBasin {
+        /// Basin name to reconfigure.
+        basin: String,
+
+        /// Configuration to apply.
+        #[arg(short, long)]
+        config: Vec<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -122,6 +139,9 @@ enum BasinActions {
         #[arg(short, long)]
         limit: u32,
     },
+
+    /// Create a stream
+    CreateStream {},
 }
 
 async fn s2_client(auth_token: String) -> Result<Client, S2CliError> {
@@ -169,7 +189,6 @@ async fn run() -> Result<(), S2CliError> {
 
         Commands::Account { action } => {
             let cfg = config::load_config(&config_path)?;
-            println!("cfg: {:?}", cfg);
             let account_service = AccountService::new(s2_client(cfg.auth_token).await?);
             match action {
                 AccountActions::ListBasins {
@@ -212,6 +231,14 @@ async fn run() -> Result<(), S2CliError> {
                     account_service.delete_basin(basin).await?;
                     println!("{}", "✓ Basin deleted successfully".green().bold());
                 }
+
+                AccountActions::GetBasinConfig { basin } => {
+                    let basin_config = account_service.get_basin_config(basin).await?;
+                    println!("{:?}", basin_config);
+                }
+                AccountActions::ReconfigureBasin { basin, config } => {
+                    unimplemented!()
+                }
             }
         }
         Commands::Basins { action } => {
@@ -232,6 +259,7 @@ async fn run() -> Result<(), S2CliError> {
                         println!("{}", stream);
                     }
                 }
+                BasinActions::CreateStream {} => todo!(),
             }
         }
     }

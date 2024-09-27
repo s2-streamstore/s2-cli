@@ -1358,7 +1358,7 @@ checksum = "f3cb5ba0dc43242ce17de99c180e96db90b235b8a9fdc9543c96d2209116bd9f"
 [[package]]
 name = "s2"
 version = "0.1.0"
-source = "git+ssh://git@github.com/s2-streamstore/s2.rs.git?branch=basinstate-disp#12d3927993c9064651498ca46350cb0ca236e0c3"
+source = "git+ssh://git@github.com/s2-streamstore/s2.rs.git?branch=main#153aa1b2d7e9eb328ce4ae50a1eeb972a780fdc9"
 dependencies = [
  "backon",
  "http",

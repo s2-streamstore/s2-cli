@@ -1,9 +1,9 @@
 use s2::{
     client::Client,
-    service_error::{CreateBasinError, DeleteBasinError, ServiceError},
+    service_error::{CreateBasinError, DeleteBasinError, GetBasinConfigError, ServiceError},
     types::{
-        BasinConfig, CreateBasinResponse, ListBasinsResponse, RetentionPolicy, StorageClass,
-        StreamConfig,
+        BasinConfig, CreateBasinResponse, GetBasinConfigResponse, ListBasinsResponse,
+        RetentionPolicy, StorageClass, StreamConfig,
     },
 };
 
@@ -21,6 +21,9 @@ pub enum AccountServiceError {
 
     #[error("Failed to delete basin")]
     DeleteBasin(#[from] ServiceError<DeleteBasinError>),
+
+    #[error("Failed to get basin config")]
+    GetBasinConfig(#[from] ServiceError<GetBasinConfigError>),
 }
 
 impl AccountService {
@@ -83,5 +86,14 @@ impl AccountService {
         let delete_basin_req = s2::types::DeleteBasinRequest::builder().basin(name).build();
         self.client.delete_basin(delete_basin_req).await?;
         Ok(())
+    }
+
+    pub async fn get_basin_config(&self, name: String) -> Result<BasinConfig, AccountServiceError> {
+        let get_basin_config_req = s2::types::GetBasinConfigRequest::builder()
+            .basin(name)
+            .build();
+        let GetBasinConfigResponse { config } =
+            self.client.get_basin_config(get_basin_config_req).await?;
+        Ok(config)
     }
 }
