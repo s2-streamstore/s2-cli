@@ -8,6 +8,7 @@ use s2::{
     client::{Client, ClientConfig, HostCloud},
     types::{BasinMetadata, StorageClass},
 };
+use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 
 mod account;
 mod basin;
@@ -60,7 +61,7 @@ enum ConfigActions {
     /// Set the authentication token
     Set {
         #[arg(short, long)]
-        token: String,
+        auth_token: String,
     },
 }
 
@@ -123,10 +124,10 @@ enum BasinActions {
     },
 }
 
-async fn s2_client(token: String) -> Result<Client, S2CliError> {
+async fn s2_client(auth_token: String) -> Result<Client, S2CliError> {
     let config = ClientConfig::builder()
         .host_uri(HostCloud::Local)
-        .token(token.to_string())
+        .token(auth_token.to_string())
         .connection_timeout(std::time::Duration::from_secs(5))
         .build();
 
@@ -143,10 +144,21 @@ async fn run() -> Result<(), S2CliError> {
     let commands = Cli::parse();
     let config_path = config_path()?;
 
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .pretty()
+                .with_span_events(FmtSpan::NEW)
+                .compact()
+                .with_writer(std::io::stderr),
+        )
+        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
     match commands.command {
         Commands::Config { action } => match action {
-            ConfigActions::Set { token } => {
-                create_config(&config_path, token)?;
+            ConfigActions::Set { auth_token } => {
+                create_config(&config_path, auth_token)?;
                 println!("{}", "✓ Token set successfully".green().bold());
                 println!(
                     "  Configuration saved to: {}",
@@ -157,7 +169,8 @@ async fn run() -> Result<(), S2CliError> {
 
         Commands::Account { action } => {
             let cfg = config::load_config(&config_path)?;
-            let account_service = AccountService::new(s2_client(cfg.token).await?);
+            println!("cfg: {:?}", cfg);
+            let account_service = AccountService::new(s2_client(cfg.auth_token).await?);
             match action {
                 AccountActions::ListBasins {
                     prefix,
@@ -203,7 +216,7 @@ async fn run() -> Result<(), S2CliError> {
         }
         Commands::Basins { action } => {
             let cfg = config::load_config(&config_path)?;
-            let client = s2_client(cfg.token).await?;
+            let client = s2_client(cfg.auth_token).await?;
             match action {
                 BasinActions::ListStreams {
                     basin,

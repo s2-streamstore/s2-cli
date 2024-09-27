@@ -1,7 +1,4 @@
-use std::{
-    env,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use config::{Config, FileFormat};
 use miette::Diagnostic;
@@ -12,7 +9,7 @@ use crate::error::S2CliError;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct S2Config {
-    pub token: String,
+    pub auth_token: String,
 }
 
 #[cfg(target_os = "windows")]
@@ -33,24 +30,20 @@ pub fn config_path() -> Result<PathBuf, S2CliError> {
 }
 
 pub fn load_config(path: &Path) -> Result<S2Config, S2ConfigError> {
-    if let Ok(env_token) = env::var("S2_AUTH_TOKEN") {
-        return Ok(S2Config { token: env_token });
-    }
     Config::builder()
         .add_source(config::File::new(
             path.to_str().ok_or(S2ConfigError::PathError)?,
             FileFormat::Toml,
         ))
+        .add_source(config::Environment::with_prefix("S2"))
         .build()
         .map_err(|_| S2ConfigError::LoadError)?
         .try_deserialize::<S2Config>()
         .map_err(|_| S2ConfigError::LoadError)
 }
 
-pub fn create_config(config_path: &PathBuf, token: String) -> Result<(), S2ConfigError> {
-    let cfg = S2Config {
-        token: token.to_string(),
-    };
+pub fn create_config(config_path: &PathBuf, auth_token: String) -> Result<(), S2ConfigError> {
+    let cfg = S2Config { auth_token };
 
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent).map_err(|_| S2ConfigError::WriteError)?;

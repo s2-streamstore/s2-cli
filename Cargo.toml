@@ -16,3 +16,5 @@ tokio = { version = "*", features = ["full"] }
 humantime = "2.1.0"
 miette = { version = "7.2.0", features = ["fancy"] }
 color-print = "0.3.6"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
