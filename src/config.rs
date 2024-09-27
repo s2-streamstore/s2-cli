@@ -15,8 +15,18 @@ pub struct S2Config {
     pub token: String,
 }
 
+#[cfg(target_os = "windows")]
 pub fn config_path() -> Result<PathBuf, S2CliError> {
     let mut path = dirs::config_dir().ok_or(S2ConfigError::DirNotFound)?;
+    path.push("s2");
+    path.push("config.toml");
+    Ok(path)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn config_path() -> Result<PathBuf, S2CliError> {
+    let mut path = dirs::home_dir().ok_or(S2ConfigError::DirNotFound)?;
+    path.push(".config");
     path.push("s2");
     path.push("config.toml");
     Ok(path)

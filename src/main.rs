@@ -70,15 +70,15 @@ enum AccountActions {
     ListBasins {
         /// List basin names that begin with this prefix.
         #[arg(short, long)]
-        prefix: String,
+        prefix: Option<String>,
 
         /// List basins names that lexicographically start after this name.        
         #[arg(short, long)]
-        start_after: String,
+        start_after: Option<String>,
 
         /// Number of results, upto a maximum of 1000.
         #[arg(short, long)]
-        limit: usize,
+        limit: Option<usize>,
     },
 
     /// Create a basin
@@ -165,7 +165,11 @@ async fn run() -> Result<(), S2CliError> {
                     limit,
                 } => {
                     let response = account_service
-                        .list_basins(prefix, start_after, limit)
+                        .list_basins(
+                            prefix.unwrap_or_default(),
+                            start_after.unwrap_or_default(),
+                            limit.unwrap_or_default(),
+                        )
                         .await?;
 
                     for basin_metadata in response.basins {
