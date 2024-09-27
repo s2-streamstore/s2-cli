@@ -6,7 +6,7 @@ use config::{config_path, create_config};
 use error::S2CliError;
 use s2::{
     client::{Client, ClientConfig, HostCloud},
-    types::StorageClass,
+    types::{BasinMetadata, StorageClass},
 };
 
 mod account;
@@ -169,7 +169,14 @@ async fn run() -> Result<(), S2CliError> {
                         .await?;
 
                     for basin_metadata in response.basins {
-                        println!("{}", basin_metadata.name);
+                        let BasinMetadata { name, state, .. } = basin_metadata;
+
+                        let state = match state {
+                            s2::types::BasinState::Active => state.to_string().green(),
+                            s2::types::BasinState::Deleting => state.to_string().red(),
+                            _ => state.to_string().yellow(),
+                        };
+                        println!("{} {}", name, state);
                     }
                 }
 
