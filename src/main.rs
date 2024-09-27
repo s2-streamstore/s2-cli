@@ -185,10 +185,11 @@ async fn run() -> Result<(), S2CliError> {
                     storage_class,
                     retention_policy,
                 } => {
-                    let response = account_service
+                    account_service
                         .create_basin(basin, storage_class, retention_policy)
                         .await?;
-                    println!("{:?}", response);
+
+                    println!("{}", "✓ Basin created successfully".green().bold());
                 }
                 AccountActions::DeleteBasin { basin } => {
                     account_service.delete_basin(basin).await?;
