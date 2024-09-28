@@ -11,10 +11,12 @@ dirs = "5.0.1"
 serde = { version = "1.0.210", features = ["derive"] }
 thiserror = "1.0.63"
 toml = "0.8.19"
-s2 = { git = "ssh://git@github.com/s2-streamstore/s2.rs.git", branch = "main" }
+s2 = { path = "../../s2.rs" }
 tokio = { version = "*", features = ["full"] }
 humantime = "2.1.0"
 miette = { version = "7.2.0", features = ["fancy"] }
 color-print = "0.3.6"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+serde_json = "1.0.128"
+json_dotpath = "1.1.0"

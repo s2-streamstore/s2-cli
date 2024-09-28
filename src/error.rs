@@ -41,4 +41,13 @@ pub enum S2CliError {
     #[error(transparent)]
     #[diagnostic(help("{}", get_help()))]
     BasinService(#[from] BasinServiceError),
+
+    #[error(transparent)]
+    InvalidConfigSubPath(#[from] json_dotpath::Error),
+
+    #[error(transparent)]
+    InvalidConfig(#[from] serde_json::Error),
+
+    #[error("Path: {0} not found!")]
+    PathKeyNotFound(String),
 }

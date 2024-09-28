@@ -1,13 +1,17 @@
+use std::{error::Error, time::Duration};
+
 use account::AccountService;
 use basin::BasinService;
 use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
 use error::S2CliError;
+use json_dotpath::DotPaths;
 use s2::{
     client::{Client, ClientConfig, HostCloud},
-    types::{BasinMetadata, StorageClass},
+    types::{BasinConfig, BasinMetadata, RetentionPolicy, StorageClass, StreamConfig},
 };
+use serde_json::Value;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 
 mod account;
@@ -115,8 +119,8 @@ enum AccountActions {
         basin: String,
 
         /// Configuration to apply.
-        #[arg(short, long)]
-        config: Vec<String>,
+        #[arg(short, long, value_parser = parse_key_val::<String, String>, num_args = 1..)]
+        config: Vec<(String, String)>,
     },
 }
 
@@ -152,6 +156,19 @@ async fn s2_client(auth_token: String) -> Result<Client, S2CliError> {
         .build();
 
     Ok(Client::connect(config).await?)
+}
+
+fn parse_key_val<T, U>(s: &str) -> Result<(T, U), Box<dyn Error + Send + Sync + 'static>>
+where
+    T: std::str::FromStr,
+    T::Err: Error + Send + Sync + 'static,
+    U: std::str::FromStr,
+    U::Err: Error + Send + Sync + 'static,
+{
+    let pos = s
+        .find('=')
+        .ok_or_else(|| format!("invalid KEY=value: no `=` found in `{s}`"))?;
+    Ok((s[..pos].parse()?, s[pos + 1..].parse()?))
 }
 
 #[tokio::main]
@@ -237,7 +254,46 @@ async fn run() -> Result<(), S2CliError> {
                     println!("{:?}", basin_config);
                 }
                 AccountActions::ReconfigureBasin { basin, config } => {
-                    unimplemented!()
+                    // dummy basin config for full path matching
+                    let basin_config = BasinConfig::builder()
+                        .default_stream_config(Some(
+                            StreamConfig::builder()
+                                .storage_class(StorageClass::Unspecified)
+                                .retention_policy(RetentionPolicy::Age(Duration::from_secs(60)))
+                                .build(),
+                        ))
+                        .build();
+
+                    let mut json_config: Value = serde_json::to_value(basin_config)
+                        .expect("Failed to convert basin_config to Value");                    
+
+                    for (key, value) in config {
+                        match value.as_str() {
+                            "null" => {
+                                json_config.dot_remove(&key)?;
+                            }
+                            _ => {
+                                let parsed_value = match humantime::parse_duration(&value) {
+                                    Ok(duration) => serde_json::json!({
+                                        "secs": duration.as_secs(),
+                                        "nanos": duration.subsec_nanos()
+                                    }),
+                                    Err(_) => Value::String(value.clone()),
+                                };
+
+                                match json_config.dot_has_checked(&key) {
+                                    Ok(true) => {
+                                        json_config.dot_set(&key, parsed_value)?;
+                                    }
+                                    _ => {
+                                        Err(S2CliError::PathKeyNotFound(key.clone()))?;
+                                    }
+                                }
+                            }
+                        }
+                    }                    
+
+                    let basin_config: BasinConfig = serde_json::from_value(json_config)?;                    
                 }
             }
         }
