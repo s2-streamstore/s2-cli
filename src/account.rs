@@ -1,6 +1,9 @@
 use s2::{
     client::Client,
-    service_error::{CreateBasinError, DeleteBasinError, GetBasinConfigError, ServiceError},
+    service_error::{
+        CreateBasinError, DeleteBasinError, GetBasinConfigError, ReconfigureBasinError,
+        ServiceError,
+    },
     types::{
         BasinConfig, CreateBasinResponse, GetBasinConfigResponse, ListBasinsResponse,
         RetentionPolicy, StorageClass, StreamConfig,
@@ -24,6 +27,9 @@ pub enum AccountServiceError {
 
     #[error("Failed to get basin config")]
     GetBasinConfig(#[from] ServiceError<GetBasinConfigError>),
+
+    #[error("Failed to reconfigure basin")]
+    ReconfigureBasin(#[from] ServiceError<ReconfigureBasinError>),
 }
 
 impl AccountService {
@@ -95,5 +101,20 @@ impl AccountService {
         let GetBasinConfigResponse { config } =
             self.client.get_basin_config(get_basin_config_req).await?;
         Ok(config)
+    }
+
+    pub async fn reconfigure_basin(
+        &self,
+        basin: String,
+        basin_config: BasinConfig,
+        mask: Vec<String>,
+    ) -> Result<(), AccountServiceError> {
+        let reconfigure_basin_req = s2::types::ReconfigureBasinRequest::builder()
+            .basin(basin)
+            .config(basin_config)
+            .mask(mask)
+            .build();
+        self.client.reconfigure_basin(reconfigure_basin_req).await?;
+        Ok(())
     }
 }

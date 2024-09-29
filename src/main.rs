@@ -5,6 +5,7 @@ use basin::BasinService;
 use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
+use dialoguer::Confirm;
 use error::S2CliError;
 use json_dotpath::DotPaths;
 use s2::{
@@ -265,15 +266,15 @@ async fn run() -> Result<(), S2CliError> {
                         .build();
 
                     let mut json_config: Value = serde_json::to_value(basin_config)
-                        .expect("Failed to convert basin_config to Value");                    
+                        .expect("Failed to convert basin_config to Value");
 
-                    for (key, value) in config {
+                    for (key, value) in &config {
                         match value.as_str() {
-                            "null" => {
-                                json_config.dot_remove(&key)?;
+                            "null" | "" => {
+                                json_config.dot_remove(key)?;
                             }
                             _ => {
-                                let parsed_value = match humantime::parse_duration(&value) {
+                                let parsed_value = match humantime::parse_duration(value) {
                                     Ok(duration) => serde_json::json!({
                                         "secs": duration.as_secs(),
                                         "nanos": duration.subsec_nanos()
@@ -281,9 +282,9 @@ async fn run() -> Result<(), S2CliError> {
                                     Err(_) => Value::String(value.clone()),
                                 };
 
-                                match json_config.dot_has_checked(&key) {
+                                match json_config.dot_has_checked(key) {
                                     Ok(true) => {
-                                        json_config.dot_set(&key, parsed_value)?;
+                                        json_config.dot_set(key, parsed_value)?;
                                     }
                                     _ => {
                                         Err(S2CliError::PathKeyNotFound(key.clone()))?;
@@ -291,9 +292,32 @@ async fn run() -> Result<(), S2CliError> {
                                 }
                             }
                         }
-                    }                    
+                    }
 
-                    let basin_config: BasinConfig = serde_json::from_value(json_config)?;                    
+                    let basin_config: BasinConfig = serde_json::from_value(json_config)?;
+
+                    let confirmation = Confirm::new()
+                        .with_prompt(color_print::cformat!(
+                            "Are you sure you want to reconfigure basin <red>{}</red>?",
+                            basin,
+                        ))
+                        .interact()?;
+
+                    match confirmation {
+                        true => {
+                            account_service
+                                .reconfigure_basin(
+                                    basin,
+                                    basin_config,
+                                    config.iter().map(|(k, _)| k.clone()).collect(),
+                                )
+                                .await?;
+                            println!("{}", "✓ Basin reconfigured successfully".green().bold());
+                        }
+                        false => {
+                            println!("{}", "✗ Reconfigure cancelled".red().bold());
+                        }
+                    }
                 }
             }
         }
