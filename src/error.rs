@@ -24,23 +24,6 @@ fn get_help() -> &'static str {
     })
 }
 
-const INVALID_PATH_HELP: &str = color_print::cstr!(
-    r#"
-A valid basin configuration looks like this:
-<yellow>
-{
-    "basin": "my-basin-1",
-    "config": {
-        "defaultStreamConfig": {
-            "storageClass": "STORAGE_CLASS_STANDARD",
-        }
-    }
-}
-</yellow>
-And a path like <red>default_stream_config.storage_class</red> would be valid.
-"#
-);
-
 #[derive(Error, Debug, Diagnostic)]
 pub enum S2CliError {
     #[error(transparent)]
@@ -60,14 +43,7 @@ pub enum S2CliError {
     BasinService(#[from] BasinServiceError),
 
     #[error(transparent)]
-    InvalidConfigSubPath(#[from] json_dotpath::Error),
-
-    #[error(transparent)]
     InvalidConfig(#[from] serde_json::Error),
-
-    #[error("Path: {0} not found!")]
-    #[diagnostic(help("{}", INVALID_PATH_HELP))]
-    PathKeyNotFound(String),
 
     #[error("Failed to interact for confirmation!")]
     #[diagnostic(help("{}", get_help()))]
