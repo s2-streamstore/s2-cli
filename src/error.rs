@@ -1,28 +1,21 @@
-use std::sync::OnceLock;
-
-use colored::*;
 use miette::Diagnostic;
 use s2::client::ClientError;
 use thiserror::Error;
 
-use crate::{account::AccountServiceError, basin::BasinServiceError, config::S2ConfigError};
+use crate::{
+    account::AccountServiceError, basin::BasinServiceError, config::S2ConfigError,
+    stream::StreamServiceError,
+};
 
-static HELP: OnceLock<String> = OnceLock::new();
-
-fn get_help() -> &'static str {
-    HELP.get_or_init(|| {
-        format!(
-            "\n{}\n\n ► {}\n{}\n\n ► {}\n{}\n\n ► {}\n{}",
-            "Notice something wrong?".cyan().bold(),
-            "Open an issue:".green(),
-            "https://github.com/s2-cli/issues".bold(),
-            "Reach out to us:".green(),
-            "hi@s2.dev".bold(),
-            "Join our community:".green(),
-            "Discord: https://discord.gg/s2".bold(),
-        )
-    })
-}
+const HELP: &str = color_print::cstr!(
+    "\n<cyan><bold>Notice something wrong?</bold></cyan>\n\n\
+     <green> ► Open an issue:</green>\n\
+     <bold>https://github.com/s2-cli/issues</bold>\n\n\
+     <green> ► Reach out to us:</green>\n\
+     <bold>hi@s2.dev</bold>\n\n\
+     <green> ► Join our community:</green>\n\
+     <bold>Discord: https://discord.gg/s2</bold>"
+);
 
 #[derive(Error, Debug, Diagnostic)]
 pub enum S2CliError {
@@ -35,17 +28,17 @@ pub enum S2CliError {
     Connection(#[from] ClientError),
 
     #[error(transparent)]
-    #[diagnostic(help("{}", get_help()))]
+    #[diagnostic(help("{}", HELP))]
     AccountService(#[from] AccountServiceError),
 
     #[error(transparent)]
-    #[diagnostic(help("{}", get_help()))]
+    #[diagnostic(help("{}", HELP))]
     BasinService(#[from] BasinServiceError),
 
     #[error(transparent)]
-    InvalidConfig(#[from] serde_json::Error),
+    #[diagnostic(help("{}", HELP))]
+    StreamService(#[from] StreamServiceError),
 
-    #[error("Failed to interact for confirmation!")]
-    #[diagnostic(help("{}", get_help()))]
-    ConfirmationError(#[from] dialoguer::Error),
+    #[error(transparent)]
+    InvalidConfig(#[from] serde_json::Error),
 }

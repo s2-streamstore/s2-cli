@@ -5,16 +5,18 @@ use colored::*;
 use config::{config_path, create_config};
 use error::S2CliError;
 use s2::{
-    client::{Client, ClientConfig, HostCloud},
+    client::{BasinClient, Client, ClientConfig, HostCloud, StreamClient},
     types::{BasinMetadata, StorageClass},
 };
+use stream::StreamService;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
-use types::{BasinConfig, StreamConfig};
+use types::{BasinConfig, StreamConfig, RETENTION_POLICY_PATH, STORAGE_CLASS_PATH};
 
 mod account;
 mod basin;
 mod config;
 mod error;
+mod stream;
 mod types;
 
 const STYLES: styling::Styles = styling::Styles::styled()
@@ -23,7 +25,7 @@ const STYLES: styling::Styles = styling::Styles::styled()
     .literal(styling::AnsiColor::Blue.on_default().bold())
     .placeholder(styling::AnsiColor::Cyan.on_default());
 
-const USAGE: &str = color_print::cstr!(
+const GENERAL_USAGE: &str = color_print::cstr!(
     r#"          
     <dim>$</dim> <bold>s2-cli config set --token ...</bold>
     <dim>$</dim> <bold>s2-cli account list-basins --prefix "bar" --start-after "foo" --limit 100</bold>        
@@ -31,7 +33,7 @@ const USAGE: &str = color_print::cstr!(
 );
 
 #[derive(Parser, Debug)]
-#[command(version, about, override_usage = USAGE, styles = STYLES)]
+#[command(version, about, override_usage = GENERAL_USAGE, styles = STYLES)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -52,9 +54,15 @@ enum Commands {
     },
 
     /// Manage s2 basins
-    Basins {
+    Basin {
         #[command(subcommand)]
         action: BasinActions,
+    },
+
+    /// Manage s2 streams
+    Stream {
+        #[command(subcommand)]
+        action: StreamActions,
     },
 }
 
@@ -187,14 +195,26 @@ enum BasinActions {
     },
 }
 
-async fn s2_client(auth_token: String) -> Result<Client, S2CliError> {
-    let config = ClientConfig::builder()
+#[derive(Subcommand, Debug)]
+enum StreamActions {
+    /// Get the next sequence number that will be assigned by a stream.
+    GetNextSeqNum {
+        /// Name of the basin to get the next sequence number from.
+        basin: String,
+
+        /// Name of the stream to get the next sequence number for.
+        stream: String,
+    },
+
+    
+}
+
+fn s2_config(auth_token: String) -> ClientConfig {
+    ClientConfig::builder()
         .host_uri(HostCloud::Local)
         .token(auth_token.to_string())
         .connection_timeout(std::time::Duration::from_secs(5))
-        .build();
-
-    Ok(Client::connect(config).await?)
+        .build()
 }
 
 #[tokio::main]
@@ -232,7 +252,8 @@ async fn run() -> Result<(), S2CliError> {
 
         Commands::Account { action } => {
             let cfg = config::load_config(&config_path)?;
-            let account_service = AccountService::new(s2_client(cfg.auth_token).await?);
+            let account_service =
+                AccountService::new(Client::connect(s2_config(cfg.auth_token)).await?);
             match action {
                 AccountActions::ListBasins {
                     prefix,
@@ -270,6 +291,7 @@ async fn run() -> Result<(), S2CliError> {
 
                     println!("{}", "✓ Basin created successfully".green().bold());
                 }
+
                 AccountActions::DeleteBasin { basin } => {
                     account_service.delete_basin(basin).await?;
                     println!("{}", "✓ Basin deleted successfully".green().bold());
@@ -277,24 +299,20 @@ async fn run() -> Result<(), S2CliError> {
 
                 AccountActions::GetBasinConfig { basin } => {
                     let basin_config = account_service.get_basin_config(basin).await?;
-                    println!("{:?}", basin_config);
+                    let basin_config: BasinConfig = basin_config.into();
+                    println!("{:?}", serde_json::to_string_pretty(&basin_config)?);
                 }
+
                 AccountActions::ReconfigureBasin { basin, config } => {
                     let mut mask = Vec::new();
                     match &config.default_stream_config {
                         Some(config) => {
-                            match config.storage_class {
-                                Some(_) => {
-                                    mask.push("default_stream_config.storage_class".to_string());
-                                }
-                                None => {}
+                            if config.storage_class.is_some() {
+                                mask.push(STORAGE_CLASS_PATH.to_string());
                             }
 
-                            match config.retention_policy {
-                                Some(_) => {
-                                    mask.push("default_stream_config.retention_policy".to_string());
-                                }
-                                None => {}
+                            if config.retention_policy.is_some() {
+                                mask.push(RETENTION_POLICY_PATH.to_string());
                             }
                         }
                         None => {}
@@ -306,9 +324,10 @@ async fn run() -> Result<(), S2CliError> {
                 }
             }
         }
-        Commands::Basins { action } => {
+
+        Commands::Basin { action } => {
             let cfg = config::load_config(&config_path)?;
-            let client = s2_client(cfg.auth_token).await?;
+            let basin_config = s2_config(cfg.auth_token);
             match action {
                 BasinActions::ListStreams {
                     basin,
@@ -316,7 +335,7 @@ async fn run() -> Result<(), S2CliError> {
                     start_after,
                     limit,
                 } => {
-                    let basin_client = client.basin_client(basin).await?;
+                    let basin_client = BasinClient::connect(basin_config, basin).await?;
                     let streams = BasinService::new(basin_client)
                         .list_streams(prefix, start_after, limit as usize)
                         .await?;
@@ -324,50 +343,50 @@ async fn run() -> Result<(), S2CliError> {
                         println!("{}", stream);
                     }
                 }
+
                 BasinActions::CreateStream {
                     basin,
                     stream,
                     config,
                 } => {
-                    let basin_client = client.basin_client(basin).await?;
+                    let basin_client = BasinClient::connect(basin_config, basin).await?;
                     BasinService::new(basin_client)
                         .create_stream(stream, config.map(Into::into))
                         .await?;
                     println!("{}", "✓ Stream created successfully".green().bold());
                 }
+
                 BasinActions::DeleteStream { basin, stream } => {
-                    let basin_client = client.basin_client(basin).await?;
+                    let basin_client = BasinClient::connect(basin_config, basin).await?;
                     BasinService::new(basin_client)
                         .delete_stream(stream)
                         .await?;
                     println!("{}", "✓ Stream deleted successfully".green().bold());
                 }
+
                 BasinActions::GetStreamConfig { basin, stream } => {
-                    let basin_client = client.basin_client(basin).await?;
+                    let basin_client = BasinClient::connect(basin_config, basin).await?;
                     let config = BasinService::new(basin_client)
                         .get_stream_config(stream)
                         .await?;
+                    let config: StreamConfig = config.into();
                     println!("{:?}", serde_json::to_string_pretty(&config)?);
                 }
+
                 BasinActions::ReconfigureStream {
                     basin,
                     stream,
                     config,
                 } => {
-                    let basin_client = client.basin_client(basin).await?;
+                    let basin_client = BasinClient::connect(basin_config, basin).await?;
                     let mut mask = Vec::new();
-                    match config.storage_class {
-                        Some(_) => {
-                            mask.push("storage_class".to_string());
-                        }
-                        None => {}
+
+                    if config.storage_class.is_some() {
+                        mask.push("storage_class".to_string());
                     };
 
-                    match config.retention_policy {
-                        Some(_) => {
-                            mask.push("retention_policy".to_string());
-                        }
-                        None => {}
+                    if config.retention_policy.is_some() {
+                        mask.push("retention_policy".to_string());
                     };
 
                     BasinService::new(basin_client)
@@ -375,6 +394,17 @@ async fn run() -> Result<(), S2CliError> {
                         .await?;
 
                     println!("{}", "✓ Stream reconfigured successfully".green().bold());
+                }
+            }
+        }
+        Commands::Stream { action } => {
+            let cfg = config::load_config(&config_path)?;
+            let s2_config = s2_config(cfg.auth_token);
+            match action {
+                StreamActions::GetNextSeqNum { basin, stream } => {
+                    let stream_client = StreamClient::connect(s2_config, basin, stream).await?;
+                    let seq_num = StreamService::new(stream_client).get_next_seq_num().await?;
+                    println!("{}", seq_num);
                 }
             }
         }

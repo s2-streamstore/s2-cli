@@ -4,7 +4,7 @@ use s2::{
         CreateStreamError, DeleteStreamError, GetStreamConfigError, ListStreamsError,
         ReconfigureStreamError, ServiceError,
     },
-    types::{GetStreamConfigResponse, ListStreamsResponse, StreamConfig},
+    types::{ListStreamsResponse, StreamConfig},
 };
 
 pub struct BasinService {
@@ -85,9 +85,7 @@ impl BasinService {
             .stream(stream)
             .build();
 
-        let GetStreamConfigResponse { config } =
-            self.client.get_stream_config(get_stream_config_req).await?;
-        Ok(config)
+        Ok(self.client.get_stream_config(get_stream_config_req).await?)
     }
 
     pub async fn reconfigure_stream(

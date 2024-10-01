@@ -1,13 +1,19 @@
+//! Types for Basin configuration that directly map to s2::types.
+
 use clap::{Parser, ValueEnum};
+use serde::Serialize;
 use std::time::Duration;
 
-#[derive(Parser, Debug, Clone)]
+pub const STORAGE_CLASS_PATH: &str = "default_stream_config.storage_class";
+pub const RETENTION_POLICY_PATH: &str = "default_stream_config.retention_policy";
+
+#[derive(Parser, Debug, Clone, Serialize)]
 pub struct BasinConfig {
     #[clap(flatten)]
     pub default_stream_config: Option<StreamConfig>,
 }
 
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, Serialize)]
 pub struct StreamConfig {
     #[arg(short, long)]
     /// Storage class for a stream.
@@ -17,14 +23,14 @@ pub struct StreamConfig {
     pub retention_policy: Option<RetentionPolicy>,
 }
 
-#[derive(ValueEnum, Debug, Clone)]
+#[derive(ValueEnum, Debug, Clone, Serialize)]
 pub enum StorageClass {
     Unspecified,
     Standard,
     Express,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub enum RetentionPolicy {
     #[allow(dead_code)]
     Age(Duration),
@@ -72,10 +78,46 @@ impl From<StorageClass> for s2::types::StorageClass {
     }
 }
 
+impl From<s2::types::StorageClass> for StorageClass {
+    fn from(class: s2::types::StorageClass) -> Self {
+        match class {
+            s2::types::StorageClass::Unspecified => StorageClass::Unspecified,
+            s2::types::StorageClass::Standard => StorageClass::Standard,
+            s2::types::StorageClass::Express => StorageClass::Express,
+        }
+    }
+}
+
 impl From<RetentionPolicy> for s2::types::RetentionPolicy {
     fn from(policy: RetentionPolicy) -> Self {
         match policy {
             RetentionPolicy::Age(d) => s2::types::RetentionPolicy::Age(d),
+        }
+    }
+}
+
+impl From<s2::types::RetentionPolicy> for RetentionPolicy {
+    fn from(policy: s2::types::RetentionPolicy) -> Self {
+        match policy {
+            s2::types::RetentionPolicy::Age(d) => RetentionPolicy::Age(d),
+        }
+    }
+}
+
+impl From<s2::types::BasinConfig> for BasinConfig {
+    fn from(config: s2::types::BasinConfig) -> Self {
+        let default_stream_config = config.default_stream_config.map(|c| c.into());
+        BasinConfig {
+            default_stream_config,
+        }
+    }
+}
+
+impl From<s2::types::StreamConfig> for StreamConfig {
+    fn from(config: s2::types::StreamConfig) -> Self {
+        StreamConfig {
+            storage_class: Some(config.storage_class.into()),
+            retention_policy: config.retention_policy.map(|r| r.into()),
         }
     }
 }

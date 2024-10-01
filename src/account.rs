@@ -5,8 +5,7 @@ use s2::{
         ServiceError,
     },
     types::{
-        BasinConfig, CreateBasinResponse, GetBasinConfigResponse, ListBasinsResponse,
-        RetentionPolicy, StorageClass, StreamConfig,
+        BasinConfig, BasinMetadata, ListBasinsResponse, RetentionPolicy, StorageClass, StreamConfig,
     },
 };
 
@@ -60,7 +59,7 @@ impl AccountService {
         name: String,
         storage_class: Option<StorageClass>,
         retention_policy: Option<humantime::Duration>,
-    ) -> Result<CreateBasinResponse, AccountServiceError> {
+    ) -> Result<BasinMetadata, AccountServiceError> {
         let basin_config = match (&storage_class, retention_policy) {
             (Some(storage_class), Some(retention_policy)) => {
                 let stream_config = StreamConfig::builder()
@@ -98,9 +97,8 @@ impl AccountService {
         let get_basin_config_req = s2::types::GetBasinConfigRequest::builder()
             .basin(name)
             .build();
-        let GetBasinConfigResponse { config } =
-            self.client.get_basin_config(get_basin_config_req).await?;
-        Ok(config)
+
+        Ok(self.client.get_basin_config(get_basin_config_req).await?)
     }
 
     pub async fn reconfigure_basin(
