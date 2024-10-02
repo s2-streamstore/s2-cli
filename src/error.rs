@@ -2,10 +2,7 @@ use miette::Diagnostic;
 use s2::client::ClientError;
 use thiserror::Error;
 
-use crate::{
-    account::AccountServiceError, basin::BasinServiceError, config::S2ConfigError,
-    stream::StreamServiceError,
-};
+use crate::{account::AccountServiceError, basin::BasinServiceError, config::S2ConfigError};
 
 const HELP: &str = color_print::cstr!(
     "\n<cyan><bold>Notice something wrong?</bold></cyan>\n\n\
@@ -36,12 +33,5 @@ pub enum S2CliError {
     BasinService(#[from] BasinServiceError),
 
     #[error(transparent)]
-    #[diagnostic(help("{}", HELP))]
-    StreamService(#[from] StreamServiceError),
-
-    #[error(transparent)]
     InvalidConfig(#[from] serde_json::Error),
-
-    #[error("Failed to record file: {0}")]
-    RecordFileReadError(String),
 }

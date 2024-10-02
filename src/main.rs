@@ -1,5 +1,3 @@
-use std::{fs::File, io::BufReader, path::PathBuf};
-
 use account::AccountService;
 use basin::BasinService;
 use clap::{builder::styling, Parser, Subcommand};
@@ -7,18 +5,17 @@ use colored::*;
 use config::{config_path, create_config};
 use error::S2CliError;
 use s2::{
-    client::{BasinClient, Client, ClientConfig, HostCloud, StreamClient},
+    client::{BasinClient, Client, ClientConfig, HostCloud},
     types::{BasinMetadata, StorageClass},
 };
-use stream::StreamService;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{BasinConfig, StreamConfig, RETENTION_POLICY_PATH, STORAGE_CLASS_PATH};
 
 mod account;
 mod basin;
+
 mod config;
 mod error;
-mod stream;
 mod types;
 
 const STYLES: styling::Styles = styling::Styles::styled()
@@ -59,12 +56,6 @@ enum Commands {
     Basin {
         #[command(subcommand)]
         action: BasinActions,
-    },
-
-    /// Manage s2 streams
-    Stream {
-        #[command(subcommand)]
-        action: StreamActions,
     },
 }
 
@@ -197,44 +188,10 @@ enum BasinActions {
     },
 }
 
-#[derive(Subcommand, Debug)]
-enum StreamActions {
-    /// Get the next sequence number that will be assigned by a stream.
-    GetNextSeqNum {
-        /// Name of the basin to get the next sequence number from.
-        basin: String,
-
-        /// Name of the stream to get the next sequence number for.
-        stream: String,
-    },
-
-    /// Append a batch of records to a stream.
-    Append {
-        /// Name of the basin.
-        basin: String,
-
-        /// Name of the stream.
-        stream: String,
-
-        /// Enforce that the sequence number issued to the first record matches.
-        #[arg(short, long)]
-        match_seq_num: Option<u64>,
-
-        /// Enforce a fencing token which must have been previously set by a `fence` command record.
-        #[arg(short, long)]
-        fencing_token: Option<String>,
-
-        /// Path to the file containing the records to append.
-        file: PathBuf,
-    },
-}
-
 fn s2_config(auth_token: String) -> ClientConfig {
-    ClientConfig::builder()
-        .host_uri(HostCloud::Local)
-        .token(auth_token.to_string())
-        .connection_timeout(std::time::Duration::from_secs(5))
-        .build()
+    ClientConfig::new(auth_token.to_string())
+        .with_host_uri(HostCloud::Local)
+        .with_connection_timeout(std::time::Duration::from_secs(5))
 }
 
 #[tokio::main]
@@ -417,44 +374,6 @@ async fn run() -> Result<(), S2CliError> {
                 }
             }
         }
-        Commands::Stream { action } => {
-            let cfg = config::load_config(&config_path)?;
-            let s2_config = s2_config(cfg.auth_token);
-            match action {
-                StreamActions::GetNextSeqNum { basin, stream } => {
-                    let stream_client = StreamClient::connect(s2_config, basin, stream).await?;
-                    let seq_num = StreamService::new(stream_client).get_next_seq_num().await?;
-                    println!("{}", seq_num);
-                }
-
-                StreamActions::Append {
-                    basin,
-                    stream,
-                    match_seq_num,
-                    fencing_token,
-                    file,
-                } => {
-                    let stream_client = StreamClient::connect(s2_config, basin, stream).await?;
-                    let stream_service = StreamService::new(stream_client);
-
-                    let record_file = File::open(file.clone())
-                        .map_err(|_| S2CliError::RecordFileReadError(file.display().to_string()))?;
-
-                    let records = jsonl::read::<BufReader<File>, Vec<types::AppendRecord>>(
-                        BufReader::new(record_file),
-                    )
-                    .map_err(|_| {
-                        S2CliError::RecordFileReadError("Failed to parse records".to_string())
-                    })?;
-
-                    stream_service
-                        .append(records, match_seq_num, fencing_token)
-                        .await?;
-                    println!("{}", "✓ Records appended successfully".green().bold());
-                }
-            }
-        }
     }
-
     Ok(())
 }

@@ -5,7 +5,8 @@ use s2::{
         ServiceError,
     },
     types::{
-        BasinConfig, BasinMetadata, ListBasinsResponse, RetentionPolicy, StorageClass, StreamConfig,
+        BasinConfig, BasinMetadata, CreateBasinRequest, DeleteBasinRequest, ListBasinsRequest,
+        ListBasinsResponse, ReconfigureBasinRequest, RetentionPolicy, StorageClass, StreamConfig,
     },
 };
 
@@ -42,11 +43,10 @@ impl AccountService {
         start_after: String,
         limit: usize,
     ) -> Result<ListBasinsResponse, AccountServiceError> {
-        let list_basins_req = s2::types::ListBasinsRequest::builder()
-            .prefix(prefix)
-            .start_after(start_after)
-            .limit(limit)
-            .build();
+        let list_basins_req = ListBasinsRequest::new()
+            .with_prefix(prefix)
+            .with_start_after(start_after)
+            .with_limit(limit);
 
         self.client
             .list_basins(list_basins_req)
@@ -56,30 +56,28 @@ impl AccountService {
 
     pub async fn create_basin(
         &self,
-        name: String,
+        basin: String,
         storage_class: Option<StorageClass>,
         retention_policy: Option<humantime::Duration>,
     ) -> Result<BasinMetadata, AccountServiceError> {
         let basin_config = match (&storage_class, retention_policy) {
             (Some(storage_class), Some(retention_policy)) => {
-                let stream_config = StreamConfig::builder()
-                    .storage_class(*storage_class)
-                    .retention_policy(RetentionPolicy::Age(*retention_policy))
-                    .build();
+                let stream_config = StreamConfig::new()
+                    .with_storage_class(*storage_class)
+                    .with_retention_policy(RetentionPolicy::Age(*retention_policy));
 
-                let basin_config = BasinConfig::builder()
-                    .default_stream_config(Some(stream_config))
-                    .build();
+                let basin_config = BasinConfig::with_default_stream_config(stream_config);
 
                 Some(basin_config)
             }
             _ => None,
         };
 
-        let create_basin_req = s2::types::CreateBasinRequest::builder()
-            .basin(name)
-            .config(basin_config)
-            .build();
+        let mut create_basin_req = CreateBasinRequest::new(basin);
+
+        if let Some(basin_config) = basin_config {
+            create_basin_req = create_basin_req.with_config(basin_config)
+        };
 
         self.client
             .create_basin(create_basin_req)
@@ -87,18 +85,17 @@ impl AccountService {
             .map_err(AccountServiceError::CreateBasin)
     }
 
-    pub async fn delete_basin(&self, name: String) -> Result<(), AccountServiceError> {
-        let delete_basin_req = s2::types::DeleteBasinRequest::builder().basin(name).build();
+    pub async fn delete_basin(&self, basin: String) -> Result<(), AccountServiceError> {
+        let delete_basin_req = DeleteBasinRequest::new(basin);
         self.client.delete_basin(delete_basin_req).await?;
         Ok(())
     }
 
-    pub async fn get_basin_config(&self, name: String) -> Result<BasinConfig, AccountServiceError> {
-        let get_basin_config_req = s2::types::GetBasinConfigRequest::builder()
-            .basin(name)
-            .build();
-
-        Ok(self.client.get_basin_config(get_basin_config_req).await?)
+    pub async fn get_basin_config(
+        &self,
+        basin: String,
+    ) -> Result<BasinConfig, AccountServiceError> {
+        Ok(self.client.get_basin_config(basin).await?)
     }
 
     pub async fn reconfigure_basin(
@@ -107,11 +104,9 @@ impl AccountService {
         basin_config: BasinConfig,
         mask: Vec<String>,
     ) -> Result<(), AccountServiceError> {
-        let reconfigure_basin_req = s2::types::ReconfigureBasinRequest::builder()
-            .basin(basin)
-            .config(basin_config)
-            .mask(mask)
-            .build();
+        let reconfigure_basin_req = ReconfigureBasinRequest::new(basin)
+            .with_config(basin_config)
+            .with_mask(mask);
         self.client.reconfigure_basin(reconfigure_basin_req).await?;
         Ok(())
     }

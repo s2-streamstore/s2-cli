@@ -1,7 +1,7 @@
 //! Types for Basin configuration that directly map to s2::types.
 
 use clap::{Parser, ValueEnum};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::time::Duration;
 
 pub const STORAGE_CLASS_PATH: &str = "default_stream_config.storage_class";
@@ -47,10 +47,11 @@ impl From<&str> for RetentionPolicy {
 
 impl From<BasinConfig> for s2::types::BasinConfig {
     fn from(config: BasinConfig) -> Self {
-        let default_stream_config = config.default_stream_config.map(|c| c.into());
-        s2::types::BasinConfig::builder()
-            .default_stream_config(default_stream_config)
-            .build()
+        if let Some(default_stream_config) = config.default_stream_config.map(|c| c.into()) {
+            s2::types::BasinConfig::with_default_stream_config(default_stream_config)
+        } else {
+            s2::types::BasinConfig::default()
+        }
     }
 }
 
@@ -61,10 +62,13 @@ impl From<StreamConfig> for s2::types::StreamConfig {
             .map(s2::types::StorageClass::from)
             .unwrap_or(s2::types::StorageClass::Unspecified);
         let retention_policy = config.retention_policy.map(|r| r.into());
-        s2::types::StreamConfig::builder()
-            .storage_class(storage_class)
-            .retention_policy(retention_policy)
-            .build()
+        let stream_config = s2::types::StreamConfig::new().with_storage_class(storage_class);
+
+        if let Some(retention_policy) = retention_policy {
+            stream_config.with_retention_policy(retention_policy)
+        } else {
+            stream_config
+        }
     }
 }
 
@@ -106,9 +110,8 @@ impl From<s2::types::RetentionPolicy> for RetentionPolicy {
 
 impl From<s2::types::BasinConfig> for BasinConfig {
     fn from(config: s2::types::BasinConfig) -> Self {
-        let default_stream_config = config.default_stream_config.map(|c| c.into());
         BasinConfig {
-            default_stream_config,
+            default_stream_config: config.default_stream_config.map(Into::into),
         }
     }
 }
@@ -119,38 +122,5 @@ impl From<s2::types::StreamConfig> for StreamConfig {
             storage_class: Some(config.storage_class.into()),
             retention_policy: config.retention_policy.map(|r| r.into()),
         }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct AppendRecord {
-    /// Series of name-value pairs for this record.    
-    pub headers: Vec<Header>,
-    /// Body of the record.    
-    pub body: Vec<u8>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct Header {
-    pub name: Vec<u8>,
-    pub value: Vec<u8>,
-}
-
-impl From<AppendRecord> for s2::types::AppendRecord {
-    fn from(record: AppendRecord) -> Self {
-        let headers = record.headers.into_iter().map(|h| h.into()).collect();
-        s2::types::AppendRecord::builder()
-            .headers(headers)
-            .body(record.body)
-            .build()
-    }
-}
-
-impl From<Header> for s2::types::Header {
-    fn from(header: Header) -> Self {
-        s2::types::Header::builder()
-            .name(header.name)
-            .value(header.value)
-            .build()
     }
 }
