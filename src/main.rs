@@ -1,18 +1,16 @@
 use account::AccountService;
-use basin::BasinService;
 use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
 use error::S2CliError;
 use s2::{
-    client::{BasinClient, Client, ClientConfig, HostCloud},
+    client::{Client, ClientConfig, HostCloud},
     types::{BasinMetadata, StorageClass},
 };
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
-use types::{BasinConfig, StreamConfig, RETENTION_POLICY_PATH, STORAGE_CLASS_PATH};
+use types::{BasinConfig, RETENTION_POLICY_PATH, STORAGE_CLASS_PATH};
 
 mod account;
-mod basin;
 
 mod config;
 mod error;
@@ -50,12 +48,6 @@ enum Commands {
     Account {
         #[command(subcommand)]
         action: AccountActions,
-    },
-
-    /// Manage s2 basins
-    Basin {
-        #[command(subcommand)]
-        action: BasinActions,
     },
 }
 
@@ -120,71 +112,6 @@ enum AccountActions {
         /// Configuration to apply.        
         #[command(flatten)]
         config: BasinConfig,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum BasinActions {
-    /// List Streams
-    ListStreams {
-        /// Name of the basin to list streams from.
-        basin: String,
-
-        /// List stream names that begin with this prefix.
-        #[arg(short, long)]
-        prefix: String,
-
-        /// List stream names that lexicographically start after this name.        
-        #[arg(short, long)]
-        start_after: String,
-
-        /// Number of results, upto a maximum of 1000.
-        #[arg(short, long)]
-        limit: u32,
-    },
-
-    /// Create a stream
-    CreateStream {
-        /// Name of the basin to create a stream in.
-        basin: String,
-
-        /// Name of the stream to create.
-        stream: String,
-
-        /// Configuration to apply.        
-        #[command(flatten)]
-        config: Option<StreamConfig>,
-    },
-
-    /// Delete a stream
-    DeleteStream {
-        /// Name of the basin to delete a stream from.
-        basin: String,
-
-        /// Name of the stream to delete.
-        stream: String,
-    },
-
-    /// Get stream config
-    GetStreamConfig {
-        /// Name of the basin to get stream config from.
-        basin: String,
-
-        /// Name of the stream to get config for.
-        stream: String,
-    },
-
-    /// Reconfigure a stream
-    ReconfigureStream {
-        /// Name of the basin to reconfigure a stream in.
-        basin: String,
-
-        /// Name of the stream to reconfigure.
-        stream: String,
-
-        /// Configuration to apply.        
-        #[command(flatten)]
-        config: StreamConfig,
     },
 }
 
@@ -298,79 +225,6 @@ async fn run() -> Result<(), S2CliError> {
                     account_service
                         .reconfigure_basin(basin, config.into(), mask)
                         .await?;
-                }
-            }
-        }
-
-        Commands::Basin { action } => {
-            let cfg = config::load_config(&config_path)?;
-            let basin_config = s2_config(cfg.auth_token);
-            match action {
-                BasinActions::ListStreams {
-                    basin,
-                    prefix,
-                    start_after,
-                    limit,
-                } => {
-                    let basin_client = BasinClient::connect(basin_config, basin).await?;
-                    let streams = BasinService::new(basin_client)
-                        .list_streams(prefix, start_after, limit as usize)
-                        .await?;
-                    for stream in streams {
-                        println!("{}", stream);
-                    }
-                }
-
-                BasinActions::CreateStream {
-                    basin,
-                    stream,
-                    config,
-                } => {
-                    let basin_client = BasinClient::connect(basin_config, basin).await?;
-                    BasinService::new(basin_client)
-                        .create_stream(stream, config.map(Into::into))
-                        .await?;
-                    println!("{}", "✓ Stream created successfully".green().bold());
-                }
-
-                BasinActions::DeleteStream { basin, stream } => {
-                    let basin_client = BasinClient::connect(basin_config, basin).await?;
-                    BasinService::new(basin_client)
-                        .delete_stream(stream)
-                        .await?;
-                    println!("{}", "✓ Stream deleted successfully".green().bold());
-                }
-
-                BasinActions::GetStreamConfig { basin, stream } => {
-                    let basin_client = BasinClient::connect(basin_config, basin).await?;
-                    let config = BasinService::new(basin_client)
-                        .get_stream_config(stream)
-                        .await?;
-                    let config: StreamConfig = config.into();
-                    println!("{:?}", serde_json::to_string_pretty(&config)?);
-                }
-
-                BasinActions::ReconfigureStream {
-                    basin,
-                    stream,
-                    config,
-                } => {
-                    let basin_client = BasinClient::connect(basin_config, basin).await?;
-                    let mut mask = Vec::new();
-
-                    if config.storage_class.is_some() {
-                        mask.push("storage_class".to_string());
-                    };
-
-                    if config.retention_policy.is_some() {
-                        mask.push("retention_policy".to_string());
-                    };
-
-                    BasinService::new(basin_client)
-                        .reconfigure_stream(stream, config.into(), mask)
-                        .await?;
-
-                    println!("{}", "✓ Stream reconfigured successfully".green().bold());
                 }
             }
         }

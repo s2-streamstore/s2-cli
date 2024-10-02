@@ -2,7 +2,7 @@ use miette::Diagnostic;
 use s2::client::ClientError;
 use thiserror::Error;
 
-use crate::{account::AccountServiceError, basin::BasinServiceError, config::S2ConfigError};
+use crate::{account::AccountServiceError, config::S2ConfigError};
 
 const HELP: &str = color_print::cstr!(
     "\n<cyan><bold>Notice something wrong?</bold></cyan>\n\n\
@@ -27,10 +27,6 @@ pub enum S2CliError {
     #[error(transparent)]
     #[diagnostic(help("{}", HELP))]
     AccountService(#[from] AccountServiceError),
-
-    #[error(transparent)]
-    #[diagnostic(help("{}", HELP))]
-    BasinService(#[from] BasinServiceError),
 
     #[error(transparent)]
     InvalidConfig(#[from] serde_json::Error),
