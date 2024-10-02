@@ -1,3 +1,5 @@
+use std::{fs::File, io::BufReader, path::PathBuf};
+
 use account::AccountService;
 use basin::BasinService;
 use clap::{builder::styling, Parser, Subcommand};
@@ -206,7 +208,25 @@ enum StreamActions {
         stream: String,
     },
 
-    
+    /// Append a batch of records to a stream.
+    Append {
+        /// Name of the basin.
+        basin: String,
+
+        /// Name of the stream.
+        stream: String,
+
+        /// Enforce that the sequence number issued to the first record matches.
+        #[arg(short, long)]
+        match_seq_num: Option<u64>,
+
+        /// Enforce a fencing token which must have been previously set by a `fence` command record.
+        #[arg(short, long)]
+        fencing_token: Option<String>,
+
+        /// Path to the file containing the records to append.
+        file: PathBuf,
+    },
 }
 
 fn s2_config(auth_token: String) -> ClientConfig {
@@ -405,6 +425,32 @@ async fn run() -> Result<(), S2CliError> {
                     let stream_client = StreamClient::connect(s2_config, basin, stream).await?;
                     let seq_num = StreamService::new(stream_client).get_next_seq_num().await?;
                     println!("{}", seq_num);
+                }
+
+                StreamActions::Append {
+                    basin,
+                    stream,
+                    match_seq_num,
+                    fencing_token,
+                    file,
+                } => {
+                    let stream_client = StreamClient::connect(s2_config, basin, stream).await?;
+                    let stream_service = StreamService::new(stream_client);
+
+                    let record_file = File::open(file.clone())
+                        .map_err(|_| S2CliError::RecordFileReadError(file.display().to_string()))?;
+
+                    let records = jsonl::read::<BufReader<File>, Vec<types::AppendRecord>>(
+                        BufReader::new(record_file),
+                    )
+                    .map_err(|_| {
+                        S2CliError::RecordFileReadError("Failed to parse records".to_string())
+                    })?;
+
+                    stream_service
+                        .append(records, match_seq_num, fencing_token)
+                        .await?;
+                    println!("{}", "✓ Records appended successfully".green().bold());
                 }
             }
         }

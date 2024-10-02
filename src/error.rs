@@ -41,4 +41,7 @@ pub enum S2CliError {
 
     #[error(transparent)]
     InvalidConfig(#[from] serde_json::Error),
+
+    #[error("Failed to record file: {0}")]
+    RecordFileReadError(String),
 }

@@ -1,7 +1,7 @@
 //! Types for Basin configuration that directly map to s2::types.
 
 use clap::{Parser, ValueEnum};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 pub const STORAGE_CLASS_PATH: &str = "default_stream_config.storage_class";
@@ -119,5 +119,38 @@ impl From<s2::types::StreamConfig> for StreamConfig {
             storage_class: Some(config.storage_class.into()),
             retention_policy: config.retention_policy.map(|r| r.into()),
         }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct AppendRecord {
+    /// Series of name-value pairs for this record.    
+    pub headers: Vec<Header>,
+    /// Body of the record.    
+    pub body: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Header {
+    pub name: Vec<u8>,
+    pub value: Vec<u8>,
+}
+
+impl From<AppendRecord> for s2::types::AppendRecord {
+    fn from(record: AppendRecord) -> Self {
+        let headers = record.headers.into_iter().map(|h| h.into()).collect();
+        s2::types::AppendRecord::builder()
+            .headers(headers)
+            .body(record.body)
+            .build()
+    }
+}
+
+impl From<Header> for s2::types::Header {
+    fn from(header: Header) -> Self {
+        s2::types::Header::builder()
+            .name(header.name)
+            .value(header.value)
+            .build()
     }
 }
