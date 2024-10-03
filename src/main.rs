@@ -325,7 +325,7 @@ async fn run() -> Result<(), S2CliError> {
                     BasinService::new(basin_client)
                         .delete_stream(stream)
                         .await?;
-                    println!("{}", "✓ Stream deleted successfully".green().bold());
+                    eprintln!("{}", "✓ Stream deleted successfully".green().bold());
                 }
 
                 BasinActions::GetStreamConfig { stream } => {
@@ -353,7 +353,7 @@ async fn run() -> Result<(), S2CliError> {
                         .reconfigure_stream(stream, config.into(), mask)
                         .await?;
 
-                    println!("{}", "✓ Stream reconfigured successfully".green().bold());
+                    eprintln!("{}", "✓ Stream reconfigured successfully".green().bold());
                 }
             }
         }
