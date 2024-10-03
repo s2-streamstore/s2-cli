@@ -13,6 +13,7 @@ use types::{BasinConfig, StreamConfig, RETENTION_POLICY_PATH, STORAGE_CLASS_PATH
 
 mod account;
 mod basin;
+mod stream;
 
 mod config;
 mod error;
