@@ -146,8 +146,8 @@ async fn run() -> Result<(), S2CliError> {
         Commands::Config { action } => match action {
             ConfigActions::Set { auth_token } => {
                 create_config(&config_path, auth_token)?;
-                println!("{}", "✓ Token set successfully".green().bold());
-                println!(
+                eprintln!("{}", "✓ Token set successfully".green().bold());
+                eprintln!(
                     "  Configuration saved to: {}",
                     config_path.display().to_string().cyan()
                 );
@@ -193,12 +193,12 @@ async fn run() -> Result<(), S2CliError> {
                         .create_basin(basin, storage_class, retention_policy)
                         .await?;
 
-                    println!("{}", "✓ Basin created successfully".green().bold());
+                    eprintln!("{}", "✓ Basin created successfully".green().bold());
                 }
 
                 AccountActions::DeleteBasin { basin } => {
                     account_service.delete_basin(basin).await?;
-                    println!("{}", "✓ Basin deleted successfully".green().bold());
+                    eprintln!("{}", "✓ Basin deleted successfully".green().bold());
                 }
 
                 AccountActions::GetBasinConfig { basin } => {
