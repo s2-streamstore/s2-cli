@@ -54,6 +54,9 @@ enum Commands {
 
     /// Manage s2 basins
     Basin {
+        /// Name of the basin to manage.        
+        basin: String,
+
         #[command(subcommand)]
         action: BasinActions,
     },
@@ -109,7 +112,7 @@ enum AccountActions {
 
     /// Reconfigure a basin
     ReconfigureBasin {
-        /// Basin name to reconfigure.
+        /// Basin name to reconfigure.        
         basin: String,
 
         /// Configuration to apply.        
@@ -122,27 +125,21 @@ enum AccountActions {
 enum BasinActions {
     /// List Streams
     ListStreams {
-        /// Name of the basin to list streams from.
-        basin: String,
-
         /// List stream names that begin with this prefix.
         #[arg(short, long)]
-        prefix: String,
+        prefix: Option<String>,
 
         /// List stream names that lexicographically start after this name.        
         #[arg(short, long)]
-        start_after: String,
+        start_after: Option<String>,
 
         /// Number of results, upto a maximum of 1000.
         #[arg(short, long)]
-        limit: u32,
+        limit: Option<usize>,
     },
 
     /// Create a stream
     CreateStream {
-        /// Name of the basin to create a stream in.
-        basin: String,
-
         /// Name of the stream to create.
         stream: String,
 
@@ -153,27 +150,18 @@ enum BasinActions {
 
     /// Delete a stream
     DeleteStream {
-        /// Name of the basin to delete a stream from.
-        basin: String,
-
         /// Name of the stream to delete.
         stream: String,
     },
 
     /// Get stream config
     GetStreamConfig {
-        /// Name of the basin to get stream config from.
-        basin: String,
-
         /// Name of the stream to get config for.
         stream: String,
     },
 
     /// Reconfigure a stream
     ReconfigureStream {
-        /// Name of the basin to reconfigure a stream in.
-        basin: String,
-
         /// Name of the stream to reconfigure.
         stream: String,
 
@@ -302,38 +290,37 @@ async fn run() -> Result<(), S2CliError> {
             }
         }
 
-        Commands::Basin { action } => {
+        Commands::Basin { basin, action } => {
             let cfg = config::load_config(&config_path)?;
             let basin_config = s2_config(cfg.auth_token);
             match action {
                 BasinActions::ListStreams {
-                    basin,
                     prefix,
                     start_after,
                     limit,
                 } => {
                     let basin_client = BasinClient::connect(basin_config, basin).await?;
                     let streams = BasinService::new(basin_client)
-                        .list_streams(prefix, start_after, limit as usize)
+                        .list_streams(
+                            prefix.unwrap_or_default(),
+                            start_after.unwrap_or_default(),
+                            limit.unwrap_or_default(),
+                        )
                         .await?;
                     for stream in streams {
                         println!("{}", stream);
                     }
                 }
 
-                BasinActions::CreateStream {
-                    basin,
-                    stream,
-                    config,
-                } => {
+                BasinActions::CreateStream { stream, config } => {
                     let basin_client = BasinClient::connect(basin_config, basin).await?;
                     BasinService::new(basin_client)
                         .create_stream(stream, config.map(Into::into))
                         .await?;
-                    println!("{}", "✓ Stream created successfully".green().bold());
+                    eprintln!("{}", "✓ Stream created successfully".green().bold());
                 }
 
-                BasinActions::DeleteStream { basin, stream } => {
+                BasinActions::DeleteStream { stream } => {
                     let basin_client = BasinClient::connect(basin_config, basin).await?;
                     BasinService::new(basin_client)
                         .delete_stream(stream)
@@ -341,20 +328,16 @@ async fn run() -> Result<(), S2CliError> {
                     println!("{}", "✓ Stream deleted successfully".green().bold());
                 }
 
-                BasinActions::GetStreamConfig { basin, stream } => {
+                BasinActions::GetStreamConfig { stream } => {
                     let basin_client = BasinClient::connect(basin_config, basin).await?;
                     let config = BasinService::new(basin_client)
                         .get_stream_config(stream)
                         .await?;
                     let config: StreamConfig = config.into();
-                    println!("{:?}", serde_json::to_string_pretty(&config)?);
+                    println!("{}", serde_json::to_string_pretty(&config)?);
                 }
 
-                BasinActions::ReconfigureStream {
-                    basin,
-                    stream,
-                    config,
-                } => {
+                BasinActions::ReconfigureStream { stream, config } => {
                     let basin_client = BasinClient::connect(basin_config, basin).await?;
                     let mut mask = Vec::new();
 
