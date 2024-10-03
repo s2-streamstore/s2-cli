@@ -1,4 +1,4 @@
-//! Types for Basin configuration that directly map to s2::types.
+//! Types for Basin configuration that directly map to streamstore::types.
 
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
@@ -45,24 +45,25 @@ impl From<&str> for RetentionPolicy {
     }
 }
 
-impl From<BasinConfig> for s2::types::BasinConfig {
+impl From<BasinConfig> for streamstore::types::BasinConfig {
     fn from(config: BasinConfig) -> Self {
         if let Some(default_stream_config) = config.default_stream_config.map(|c| c.into()) {
-            s2::types::BasinConfig::with_default_stream_config(default_stream_config)
+            streamstore::types::BasinConfig::with_default_stream_config(default_stream_config)
         } else {
-            s2::types::BasinConfig::default()
+            streamstore::types::BasinConfig::default()
         }
     }
 }
 
-impl From<StreamConfig> for s2::types::StreamConfig {
+impl From<StreamConfig> for streamstore::types::StreamConfig {
     fn from(config: StreamConfig) -> Self {
         let storage_class = config
             .storage_class
-            .map(s2::types::StorageClass::from)
-            .unwrap_or(s2::types::StorageClass::Unspecified);
+            .map(streamstore::types::StorageClass::from)
+            .unwrap_or(streamstore::types::StorageClass::Unspecified);
         let retention_policy = config.retention_policy.map(|r| r.into());
-        let stream_config = s2::types::StreamConfig::new().with_storage_class(storage_class);
+        let stream_config =
+            streamstore::types::StreamConfig::new().with_storage_class(storage_class);
 
         if let Some(retention_policy) = retention_policy {
             stream_config.with_retention_policy(retention_policy)
@@ -72,52 +73,52 @@ impl From<StreamConfig> for s2::types::StreamConfig {
     }
 }
 
-impl From<StorageClass> for s2::types::StorageClass {
+impl From<StorageClass> for streamstore::types::StorageClass {
     fn from(class: StorageClass) -> Self {
         match class {
-            StorageClass::Unspecified => s2::types::StorageClass::Unspecified,
-            StorageClass::Standard => s2::types::StorageClass::Standard,
-            StorageClass::Express => s2::types::StorageClass::Express,
+            StorageClass::Unspecified => streamstore::types::StorageClass::Unspecified,
+            StorageClass::Standard => streamstore::types::StorageClass::Standard,
+            StorageClass::Express => streamstore::types::StorageClass::Express,
         }
     }
 }
 
-impl From<s2::types::StorageClass> for StorageClass {
-    fn from(class: s2::types::StorageClass) -> Self {
+impl From<streamstore::types::StorageClass> for StorageClass {
+    fn from(class: streamstore::types::StorageClass) -> Self {
         match class {
-            s2::types::StorageClass::Unspecified => StorageClass::Unspecified,
-            s2::types::StorageClass::Standard => StorageClass::Standard,
-            s2::types::StorageClass::Express => StorageClass::Express,
+            streamstore::types::StorageClass::Unspecified => StorageClass::Unspecified,
+            streamstore::types::StorageClass::Standard => StorageClass::Standard,
+            streamstore::types::StorageClass::Express => StorageClass::Express,
         }
     }
 }
 
-impl From<RetentionPolicy> for s2::types::RetentionPolicy {
+impl From<RetentionPolicy> for streamstore::types::RetentionPolicy {
     fn from(policy: RetentionPolicy) -> Self {
         match policy {
-            RetentionPolicy::Age(d) => s2::types::RetentionPolicy::Age(d),
+            RetentionPolicy::Age(d) => streamstore::types::RetentionPolicy::Age(d),
         }
     }
 }
 
-impl From<s2::types::RetentionPolicy> for RetentionPolicy {
-    fn from(policy: s2::types::RetentionPolicy) -> Self {
+impl From<streamstore::types::RetentionPolicy> for RetentionPolicy {
+    fn from(policy: streamstore::types::RetentionPolicy) -> Self {
         match policy {
-            s2::types::RetentionPolicy::Age(d) => RetentionPolicy::Age(d),
+            streamstore::types::RetentionPolicy::Age(d) => RetentionPolicy::Age(d),
         }
     }
 }
 
-impl From<s2::types::BasinConfig> for BasinConfig {
-    fn from(config: s2::types::BasinConfig) -> Self {
+impl From<streamstore::types::BasinConfig> for BasinConfig {
+    fn from(config: streamstore::types::BasinConfig) -> Self {
         BasinConfig {
             default_stream_config: config.default_stream_config.map(Into::into),
         }
     }
 }
 
-impl From<s2::types::StreamConfig> for StreamConfig {
-    fn from(config: s2::types::StreamConfig) -> Self {
+impl From<streamstore::types::StreamConfig> for StreamConfig {
+    fn from(config: streamstore::types::StreamConfig) -> Self {
         StreamConfig {
             storage_class: Some(config.storage_class.into()),
             retention_policy: config.retention_policy.map(|r| r.into()),

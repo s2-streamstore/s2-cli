@@ -1,4 +1,4 @@
-use s2::{
+use streamstore::{
     client::BasinClient,
     service_error::{
         CreateStreamError, DeleteStreamError, GetStreamConfigError, ListStreamsError,

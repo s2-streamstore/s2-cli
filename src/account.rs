@@ -1,4 +1,4 @@
-use s2::{
+use streamstore::{
     client::Client,
     service_error::{
         CreateBasinError, DeleteBasinError, GetBasinConfigError, ReconfigureBasinError,
@@ -6,7 +6,7 @@ use s2::{
     },
     types::{
         BasinConfig, BasinMetadata, CreateBasinRequest, DeleteBasinRequest, ListBasinsRequest,
-        ListBasinsResponse, ReconfigureBasinRequest, RetentionPolicy, StorageClass, StreamConfig,
+        ListBasinsResponse, ReconfigureBasinRequest, StreamConfig,
     },
 };
 
@@ -57,27 +57,21 @@ impl AccountService {
     pub async fn create_basin(
         &self,
         basin: String,
-        storage_class: Option<StorageClass>,
-        retention_policy: Option<humantime::Duration>,
+        storage_class: Option<crate::types::StorageClass>,
+        retention_policy: Option<crate::types::RetentionPolicy>,
     ) -> Result<BasinMetadata, AccountServiceError> {
-        let basin_config = match (&storage_class, retention_policy) {
-            (Some(storage_class), Some(retention_policy)) => {
-                let stream_config = StreamConfig::new()
-                    .with_storage_class(*storage_class)
-                    .with_retention_policy(RetentionPolicy::Age(*retention_policy));
+        let mut stream_config = StreamConfig::new();
 
-                let basin_config = BasinConfig::with_default_stream_config(stream_config);
+        if let Some(storage_class) = storage_class {
+            stream_config = stream_config.with_storage_class(storage_class);
+        }
 
-                Some(basin_config)
-            }
-            _ => None,
-        };
+        if let Some(retention_policy) = retention_policy {
+            stream_config = stream_config.with_retention_policy(retention_policy.into());
+        }
 
-        let mut create_basin_req = CreateBasinRequest::new(basin);
-
-        if let Some(basin_config) = basin_config {
-            create_basin_req = create_basin_req.with_config(basin_config)
-        };
+        let create_basin_req = CreateBasinRequest::new(basin)
+            .with_config(BasinConfig::with_default_stream_config(stream_config));
 
         self.client
             .create_basin(create_basin_req)
