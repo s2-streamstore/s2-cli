@@ -5,7 +5,7 @@ use config::{config_path, create_config};
 use error::S2CliError;
 use s2::{
     client::{Client, ClientConfig, HostCloud},
-    types::{BasinMetadata, StorageClass},
+    types::BasinMetadata,
 };
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{BasinConfig, RETENTION_POLICY_PATH, STORAGE_CLASS_PATH};
@@ -24,7 +24,7 @@ const STYLES: styling::Styles = styling::Styles::styled()
 
 const GENERAL_USAGE: &str = color_print::cstr!(
     r#"          
-    <dim>$</dim> <bold>s2-cli config set --token ...</bold>
+    <dim>$</dim> <bold>s2-cli config set --auth-token ...</bold>
     <dim>$</dim> <bold>s2-cli account list-basins --prefix "bar" --start-after "foo" --limit 100</bold>        
     "#
 );
@@ -83,13 +83,8 @@ enum AccountActions {
         /// Basin name, which must be globally unique.        
         basin: String,
 
-        /// Storage class for recent writes.
-        #[arg(short, long)]
-        storage_class: Option<StorageClass>,
-
-        /// Age threshold of oldest records in the stream, which can be automatically trimmed.
-        #[arg(short, long)]
-        retention_policy: Option<humantime::Duration>,
+        #[command(flatten)]
+        config: BasinConfig,
     },
 
     /// Delete a basin
@@ -123,6 +118,7 @@ fn s2_config(auth_token: String) -> ClientConfig {
 
 #[tokio::main]
 async fn main() -> miette::Result<()> {
+    miette::set_panic_hook();
     run().await?;
     Ok(())
 }
@@ -184,11 +180,15 @@ async fn run() -> Result<(), S2CliError> {
                     }
                 }
 
-                AccountActions::CreateBasin {
-                    basin,
-                    storage_class,
-                    retention_policy,
-                } => {
+                AccountActions::CreateBasin { basin, config } => {
+                    let (storage_class, retention_policy) = match &config.default_stream_config {
+                        Some(config) => {
+                            let storage_class = config.storage_class.clone();
+                            let retention_policy = config.retention_policy.clone();
+                            (storage_class, retention_policy)
+                        }
+                        None => (None, None),
+                    };
                     account_service
                         .create_basin(basin, storage_class, retention_policy)
                         .await?;
@@ -204,7 +204,7 @@ async fn run() -> Result<(), S2CliError> {
                 AccountActions::GetBasinConfig { basin } => {
                     let basin_config = account_service.get_basin_config(basin).await?;
                     let basin_config: BasinConfig = basin_config.into();
-                    println!("{:?}", serde_json::to_string_pretty(&basin_config)?);
+                    println!("{}", serde_json::to_string_pretty(&basin_config)?);
                 }
 
                 AccountActions::ReconfigureBasin { basin, config } => {
