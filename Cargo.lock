@@ -1415,22 +1415,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3cb5ba0dc43242ce17de99c180e96db90b235b8a9fdc9543c96d2209116bd9f"
 
 [[package]]
-name = "s2"
-version = "0.1.0"
-source = "git+ssh://git@github.com/s2-streamstore/s2.rs.git?branch=vrongmeal/stream-service#b17a9bddcc76d928d2189068b4368ac5fc8b8dbf"
-dependencies = [
- "backon",
- "futures",
- "http",
- "prost",
- "prost-types",
- "secrecy",
- "thiserror",
- "tonic",
- "tonic-build",
-]
-
-[[package]]
 name = "s2-cli"
 version = "0.1.0"
 dependencies = [
@@ -1441,9 +1425,9 @@ dependencies = [
  "dirs",
  "humantime",
  "miette",
- "s2",
  "serde",
  "serde_json",
+ "streamstore",
  "thiserror",
  "tokio",
  "toml",
@@ -1565,6 +1549,22 @@ checksum = "ce305eb0b4296696835b71df73eb912e0f1ffd2556a501fcede6e0c50349191c"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "streamstore"
+version = "0.1.0"
+source = "git+ssh://git@github.com/s2-streamstore/s2-rust-sdk.git?branch=vrongmeal/stream-service#b6907833a7a8dce0db8e1d7538d4d432effd8f47"
+dependencies = [
+ "backon",
+ "futures",
+ "http",
+ "prost",
+ "prost-types",
+ "secrecy",
+ "thiserror",
+ "tonic",
+ "tonic-build",
 ]
 
 [[package]]

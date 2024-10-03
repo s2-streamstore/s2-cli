@@ -1,5 +1,5 @@
 use miette::Diagnostic;
-use s2::client::ClientError;
+use streamstore::client::ClientError;
 use thiserror::Error;
 
 use crate::{account::AccountServiceError, config::S2ConfigError};

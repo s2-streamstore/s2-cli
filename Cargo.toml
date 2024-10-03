@@ -11,7 +11,7 @@ dirs = "5.0.1"
 serde = { version = "1.0.210", features = ["derive"] }
 thiserror = "1.0.63"
 toml = "0.8.19"
-s2 = { git = "ssh://git@github.com/s2-streamstore/s2.rs.git", branch = "vrongmeal/stream-service" }
+streamstore = { git = "ssh://git@github.com/s2-streamstore/s2-rust-sdk.git", branch = "vrongmeal/stream-service" }
 tokio = { version = "*", features = ["full"] }
 humantime = "2.1.0"
 miette = { version = "7.2.0", features = ["fancy"] }

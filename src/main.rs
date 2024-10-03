@@ -3,7 +3,7 @@ use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
 use error::S2CliError;
-use s2::{
+use streamstore::{
     client::{Client, ClientConfig, HostCloud},
     types::BasinMetadata,
 };
@@ -172,8 +172,8 @@ async fn run() -> Result<(), S2CliError> {
                         let BasinMetadata { name, state, .. } = basin_metadata;
 
                         let state = match state {
-                            s2::types::BasinState::Active => state.to_string().green(),
-                            s2::types::BasinState::Deleting => state.to_string().red(),
+                            streamstore::types::BasinState::Active => state.to_string().green(),
+                            streamstore::types::BasinState::Deleting => state.to_string().red(),
                             _ => state.to_string().yellow(),
                         };
                         println!("{} {}", name, state);
