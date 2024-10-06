@@ -1,13 +1,18 @@
+use std::path::PathBuf;
+
 use account::AccountService;
 use basin::BasinService;
 use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
 use error::S2CliError;
+use stream::{RecordStream, StreamService, StreamServiceError};
 use streamstore::{
-    client::{BasinClient, Client, ClientConfig, HostCloud},
+    client::{BasinClient, Client, ClientConfig, HostCloud, StreamClient},
     types::BasinMetadata,
 };
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
+use tokio_stream::StreamExt;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{BasinConfig, StreamConfig, RETENTION_POLICY_PATH, STORAGE_CLASS_PATH};
 
@@ -55,11 +60,23 @@ enum Commands {
 
     /// Manage s2 basins
     Basin {
-        /// Name of the basin to manage.        
+        /// Name of the basin.        
         basin: String,
 
         #[command(subcommand)]
         action: BasinActions,
+    },
+
+    /// Manage s2 streams
+    Stream {
+        /// Name of the basin.        
+        basin: String,
+
+        /// Name of the stream.
+        stream: String,
+
+        #[command(subcommand)]
+        action: StreamActions,
     },
 }
 
@@ -170,6 +187,48 @@ enum BasinActions {
         #[command(flatten)]
         config: StreamConfig,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum StreamActions {
+    /// Get the next sequence number that will be assigned by a stream.     
+    GetNextSeqNum,
+
+    Append {
+        /// Records to append.
+        records: RecordSource,
+    },
+}
+
+/// Source of records for an append session.
+#[derive(Debug, Clone)]
+pub enum RecordSource {
+    File(PathBuf),
+    Stdin,
+}
+
+impl RecordSource {
+    pub async fn into_reader(
+        &self,
+    ) -> Result<Box<dyn AsyncBufRead + Send + Unpin>, std::io::Error> {
+        match self {
+            RecordSource::File(path) => {
+                Ok(Box::new(BufReader::new(tokio::fs::File::open(path).await?)))
+            }
+            RecordSource::Stdin => Ok(Box::new(BufReader::new(tokio::io::stdin()))),
+        }
+    }
+}
+
+impl std::str::FromStr for RecordSource {
+    type Err = std::io::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "-" => Ok(RecordSource::Stdin),
+            _ => Ok(RecordSource::File(PathBuf::from(s))),
+        }
+    }
 }
 
 fn s2_config(auth_token: String) -> ClientConfig {
@@ -355,6 +414,54 @@ async fn run() -> Result<(), S2CliError> {
                         .await?;
 
                     eprintln!("{}", "✓ Stream reconfigured successfully".green().bold());
+                }
+            }
+        }
+        Commands::Stream {
+            basin,
+            stream,
+            action,
+        } => {
+            let cfg = config::load_config(&config_path)?;
+            let basin_config = s2_config(cfg.auth_token);
+            match action {
+                StreamActions::GetNextSeqNum => {
+                    let stream_client = StreamClient::connect(basin_config, basin, stream).await?;
+                    let next_seq_num = StreamService::new(stream_client).get_next_seq_num().await?;
+                    println!("{}", next_seq_num);
+                }
+                StreamActions::Append { records } => {
+                    let stream_client = StreamClient::connect(basin_config, basin, stream).await?;
+                    let append_input_stream = RecordStream::new(
+                        records
+                            .into_reader()
+                            .await
+                            .map_err(|_| S2CliError::RecordReaderInit)?
+                            .lines(),
+                    );
+
+                    let mut append_output_stream = StreamService::new(stream_client)
+                        .append_session(append_input_stream)
+                        .await?;
+                    loop {
+                        while let Some(append_result) = append_output_stream.next().await {
+                            append_result
+                                .map(|append_result| {
+                                    eprintln!(
+                                        "{}",
+                                        format!(
+                                            "✓ [APPENDED] start: {}, end: {}, next: {}",
+                                            append_result.start_seq_num,
+                                            append_result.end_seq_num,
+                                            append_result.next_seq_num
+                                        )
+                                        .green()
+                                        .bold()
+                                    );
+                                })
+                                .map_err(StreamServiceError::AppendSessionError)?;
+                        }
+                    }
                 }
             }
         }

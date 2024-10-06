@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+pin-project-lite = "0.2"
 clap = { version = "4.5.17", features = ["derive"] }
 colored = "2.1.0"
 config = "0.14.0"
@@ -11,7 +12,7 @@ dirs = "5.0.1"
 serde = { version = "1.0.210", features = ["derive"] }
 thiserror = "1.0.63"
 toml = "0.8.19"
-streamstore = { git = "ssh://git@github.com/s2-streamstore/s2-rust-sdk.git", branch = "main" }
+streamstore = { path = "../../s2.rs" }
 tokio = { version = "*", features = ["full"] }
 humantime = "2.1.0"
 miette = { version = "7.2.0", features = ["fancy"] }
@@ -19,3 +20,7 @@ color-print = "0.3.6"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 serde_json = "1.0.128"
+tokio-stream = { version = "0.1.16", features = ["io-util"] }
+async-stream = "0.3.6"
+futures-util-preview = "0.2.2"
+pin-utils = "0.1.0"
