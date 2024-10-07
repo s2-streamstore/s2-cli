@@ -6,10 +6,11 @@ use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
 use error::S2CliError;
+use std::io::Write;
 use stream::{RecordStream, StreamService, StreamServiceError};
 use streamstore::{
     client::{BasinClient, Client, ClientConfig, HostCloud, StreamClient},
-    types::BasinMetadata,
+    types::{BasinMetadata, ReadOutput},
 };
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 use tokio_stream::StreamExt;
@@ -197,6 +198,11 @@ enum StreamActions {
     Append {
         /// Records to append.
         records: RecordSource,
+    },
+
+    Read {
+        /// Starting sequence number (inclusive). If not specified, the latest record.    
+        start_seq_num: Option<u64>,
     },
 }
 
@@ -459,7 +465,55 @@ async fn run() -> Result<(), S2CliError> {
                                         .bold()
                                     );
                                 })
-                                .map_err(StreamServiceError::AppendSessionError)?;
+                                .map_err(StreamServiceError::AppendSession)?;
+                        }
+                    }
+                }
+                StreamActions::Read { start_seq_num } => {
+                    let stream_client = StreamClient::connect(basin_config, basin, stream).await?;
+                    let mut read_output_stream = StreamService::new(stream_client)
+                        .read_session(start_seq_num)
+                        .await?;
+                    loop {
+                        while let Some(read_result) = read_output_stream.next().await {
+                            read_result
+                                .map(|read_result| match read_result.output {
+                                    ReadOutput::Batch(sequenced_record_batch) => {
+                                        for sequenced_record in sequenced_record_batch.records {
+                                            eprintln!(
+                                                "{}",
+                                                format!(
+                                                    "✓ [READ] got record batch: seq_num: {}",
+                                                    sequenced_record.seq_num,
+                                                )
+                                                .green()
+                                                .bold()
+                                            );
+                                            std::io::stdout()
+                                                .write_all(&sequenced_record.body)
+                                                .unwrap();
+                                            std::io::stdout().flush().unwrap();
+                                        }
+                                    }
+                                    // TODO: better message for these cases
+                                    ReadOutput::FirstSeqNum(seq_num) => {
+                                        eprintln!(
+                                            "{}",
+                                            format!("✓ [READ] first_seq_num: {}", seq_num)
+                                                .blue()
+                                                .bold()
+                                        );
+                                    }
+                                    ReadOutput::NextSeqNum(seq_num) => {
+                                        eprintln!(
+                                            "{}",
+                                            format!("✓ [READ] next_seq_num: {}", seq_num)
+                                                .blue()
+                                                .bold()
+                                        );
+                                    }
+                                })
+                                .map_err(StreamServiceError::ReadSession)?;
                         }
                     }
                 }

@@ -1,7 +1,7 @@
 use streamstore::{
     client::StreamClient,
-    service_error::{AppendSessionError, GetNextSeqNumError, ServiceError},
-    types::AppendOutput,
+    service_error::{AppendSessionError, GetNextSeqNumError, ReadSessionError, ServiceError},
+    types::{AppendOutput, ReadSessionRequest, ReadSessionResponse},
     Streaming,
 };
 use tokio::io::AsyncBufRead;
@@ -87,10 +87,13 @@ pub struct StreamService {
 #[derive(Debug, thiserror::Error)]
 pub enum StreamServiceError {
     #[error("Failed to get next sequence number")]
-    GetNextSeqNumError(#[from] ServiceError<GetNextSeqNumError>),
+    GetNextSeqNum(#[from] ServiceError<GetNextSeqNumError>),
 
     #[error("Failed to append records")]
-    AppendSessionError(#[from] ServiceError<AppendSessionError>),
+    AppendSession(#[from] ServiceError<AppendSessionError>),
+
+    #[error("Failed to read records")]
+    ReadSession(#[from] ServiceError<ReadSessionError>),
 }
 
 impl StreamService {
@@ -107,5 +110,16 @@ impl StreamService {
         stream: RecordStream<Box<dyn AsyncBufRead + Send + Unpin>>,
     ) -> Result<Streaming<AppendOutput, AppendSessionError>, StreamServiceError> {
         Ok(self.client.append_session(stream).await?)
+    }
+
+    pub async fn read_session(
+        &self,
+        start_seq_num: Option<u64>,
+    ) -> Result<Streaming<ReadSessionResponse, ReadSessionError>, StreamServiceError> {
+        let mut read_session_req = ReadSessionRequest::new();
+        if let Some(start_seq_num) = start_seq_num {
+            read_session_req = read_session_req.with_start_seq_num(start_seq_num);
+        }
+        Ok(self.client.read_session(read_session_req).await?)
     }
 }
