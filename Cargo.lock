@@ -1554,7 +1554,7 @@ dependencies = [
 [[package]]
 name = "streamstore"
 version = "0.1.0"
-source = "git+ssh://git@github.com/s2-streamstore/s2-rust-sdk.git?branch=vrongmeal/stream-service#b6907833a7a8dce0db8e1d7538d4d432effd8f47"
+source = "git+ssh://git@github.com/s2-streamstore/s2-rust-sdk.git?branch=main#17f2f00a90a142001de4c37e1222c73010ca3766"
 dependencies = [
  "backon",
  "futures",
