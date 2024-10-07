@@ -16,6 +16,7 @@ use tokio_stream::Stream;
 pin_project! {
     #[derive(Debug)]
     /// A stream of records produced by polling for a new line from the underlying [`Lines`] stream.
+    /// Chunk up either 1MiB of records or 1000 records, whichever comes first.
     pub struct RecordStream<R> {
         #[pin]
         inner: Lines<R>,
@@ -50,6 +51,7 @@ impl<R: AsyncBufRead> Stream for RecordStream<R> {
         while num_records < 1000 {
             let line = match this.inner.as_mut().poll_next_line(cx) {
                 Poll::Ready(Ok(Some(line))) => {
+                    // + 8 for constant overhead to deal with encoding bits
                     if batch_size + line.len() + 8 > 1024 * 1024 {
                         *this.peeked_record = Some(line.clone());
                         break;
@@ -61,7 +63,11 @@ impl<R: AsyncBufRead> Stream for RecordStream<R> {
                     eprintln!("Error reading line: {}", e);
                     return Poll::Ready(None);
                 }
-                Poll::Ready(Ok(None)) | Poll::Pending => {
+                Poll::Ready(Ok(None)) => {
+                    // EOF
+                    return Poll::Ready(None);
+                }
+                Poll::Pending => {
                     if num_records == 0 {
                         return Poll::Pending;
                     } else {
