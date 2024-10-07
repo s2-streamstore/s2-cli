@@ -46,13 +46,13 @@ enum Commands {
         action: ConfigActions,
     },
 
-    /// Manage s2 account
+    // Operate on an S2 account.
     Account {
         #[command(subcommand)]
         action: AccountActions,
     },
 
-    /// Manage s2 basins
+    // Operate on an S2 basin
     Basin {
         /// Name of the basin to manage.        
         basin: String,
@@ -64,7 +64,8 @@ enum Commands {
 
 #[derive(Subcommand, Debug)]
 enum ConfigActions {
-    /// Set the authentication token
+    /// Set the authentication token to be reused in subsequent commands.
+    /// Alternatively, use the S2_AUTH_TOKEN environment variable.
     Set {
         #[arg(short, long)]
         auth_token: String,
@@ -77,15 +78,15 @@ enum AccountActions {
     /// List basins
     ListBasins {
         /// List basin names that begin with this prefix.
-        #[arg(short, long)]
+        #[arg(short, long, default_value = "")]
         prefix: Option<String>,
 
         /// List basins names that lexicographically start after this name.        
-        #[arg(short, long)]
+        #[arg(short, long, default_value = "")]
         start_after: Option<String>,
 
         /// Number of results, upto a maximum of 1000.
-        #[arg(short, long)]
+        #[arg(short, long, default_value = "0")]
         limit: Option<usize>,
     },
 
