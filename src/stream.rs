@@ -15,6 +15,7 @@ use tokio_stream::Stream;
 
 pin_project! {
     #[derive(Debug)]
+    /// A stream of records produced by polling for a new line from the underlying [`Lines`] stream.
     pub struct RecordStream<R> {
         #[pin]
         inner: Lines<R>,

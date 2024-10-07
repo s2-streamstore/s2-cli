@@ -12,7 +12,10 @@ use streamstore::{
     client::{BasinClient, Client, ClientConfig, HostCloud, StreamClient},
     types::{BasinMetadata, ReadOutput},
 };
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
+use tokio::{
+    fs::File,
+    io::{self, AsyncBufRead, AsyncBufReadExt, BufReader},
+};
 use tokio_stream::StreamExt;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{BasinConfig, StreamConfig, RETENTION_POLICY_PATH, STORAGE_CLASS_PATH};
@@ -195,45 +198,65 @@ enum StreamActions {
     /// Get the next sequence number that will be assigned by a stream.     
     GetNextSeqNum,
 
+    /// Append records to a stream, currently only supports newline delimited records.
     Append {
-        /// Records to append.
-        records: RecordSource,
+        /// Newline delimited records to append from a file or stdin (all records are treated as plain text).
+        /// Use "-" to read from stdin.    
+        #[arg(value_parser = parse_records_input_source)]
+        records: RecordsIO,
     },
 
     Read {
         /// Starting sequence number (inclusive). If not specified, the latest record.    
         start_seq_num: Option<u64>,
+
+        /// Output records to a file or stdout.
+        /// Use "-" to write to stdout.
+        #[arg(value_parser = parse_records_output_source)]
+        output: Option<RecordsIO>,
     },
 }
 
 /// Source of records for an append session.
 #[derive(Debug, Clone)]
-pub enum RecordSource {
+pub enum RecordsIO {
     File(PathBuf),
     Stdin,
+    Stdout,
 }
 
-impl RecordSource {
-    pub async fn into_reader(
-        &self,
-    ) -> Result<Box<dyn AsyncBufRead + Send + Unpin>, std::io::Error> {
+impl RecordsIO {
+    pub async fn into_reader(&self) -> std::io::Result<Box<dyn AsyncBufRead + Send + Unpin>> {
         match self {
-            RecordSource::File(path) => {
-                Ok(Box::new(BufReader::new(tokio::fs::File::open(path).await?)))
+            RecordsIO::File(path) => Ok(Box::new(BufReader::new(File::open(path).await?))),
+            RecordsIO::Stdin => Ok(Box::new(BufReader::new(tokio::io::stdin()))),
+            _ => panic!("unsupported record source"),
+        }
+    }
+
+    pub fn into_writer(&self) -> io::Result<Box<dyn Write>> {
+        match self {
+            RecordsIO::File(path) => {
+                let file = std::fs::File::create(path)?;
+                Ok(Box::new(std::io::BufWriter::new(file)))
             }
-            RecordSource::Stdin => Ok(Box::new(BufReader::new(tokio::io::stdin()))),
+            RecordsIO::Stdout => Ok(Box::new(std::io::BufWriter::new(std::io::stdout()))),
+            RecordsIO::Stdin => panic!("unsupported record source"),
         }
     }
 }
 
-impl std::str::FromStr for RecordSource {
-    type Err = std::io::Error;
+fn parse_records_input_source(s: &str) -> Result<RecordsIO, std::io::Error> {
+    match s {
+        "-" => Ok(RecordsIO::Stdin),
+        _ => Ok(RecordsIO::File(PathBuf::from(s))),
+    }
+}
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "-" => Ok(RecordSource::Stdin),
-            _ => Ok(RecordSource::File(PathBuf::from(s))),
-        }
+fn parse_records_output_source(s: &str) -> Result<RecordsIO, std::io::Error> {
+    match s {
+        "-" => Ok(RecordsIO::Stdout),
+        _ => Ok(RecordsIO::File(PathBuf::from(s))),
     }
 }
 
@@ -469,7 +492,10 @@ async fn run() -> Result<(), S2CliError> {
                         }
                     }
                 }
-                StreamActions::Read { start_seq_num } => {
+                StreamActions::Read {
+                    start_seq_num,
+                    output,
+                } => {
                     let stream_client = StreamClient::connect(basin_config, basin, stream).await?;
                     let mut read_output_stream = StreamService::new(stream_client)
                         .read_session(start_seq_num)
@@ -489,10 +515,11 @@ async fn run() -> Result<(), S2CliError> {
                                                 .green()
                                                 .bold()
                                             );
-                                            std::io::stdout()
-                                                .write_all(&sequenced_record.body)
-                                                .unwrap();
-                                            std::io::stdout().flush().unwrap();
+                                            if let Some(output) = &output {
+                                                let mut writer = output.into_writer().unwrap();
+                                                writer.write_all(&sequenced_record.body).unwrap();
+                                                writer.flush().unwrap();
+                                            }
                                         }
                                     }
                                     // TODO: better message for these cases
