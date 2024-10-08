@@ -65,7 +65,11 @@ impl<R: AsyncBufRead> Stream for RecordStream<R> {
                 }
                 Poll::Ready(Ok(None)) => {
                     // EOF
-                    return Poll::Ready(None);
+                    if num_records == 0 {
+                        return Poll::Ready(None);
+                    } else {
+                        break;
+                    }
                 }
                 Poll::Pending => {
                     if num_records == 0 {
