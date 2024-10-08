@@ -1,4 +1,4 @@
-use std::{fs::OpenOptions, path::PathBuf};
+use std::path::PathBuf;
 
 use account::AccountService;
 use basin::BasinService;
@@ -6,15 +6,14 @@ use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
 use error::S2CliError;
-use std::io::Write;
 use stream::{RecordStream, StreamService, StreamServiceError};
 use streamstore::{
     client::{BasinClient, Client, ClientConfig, HostCloud, StreamClient},
     types::{BasinMetadata, ReadOutput},
 };
 use tokio::{
-    fs::File,
-    io::{self, AsyncBufRead, AsyncBufReadExt, BufReader},
+    fs::{File, OpenOptions},
+    io::{self, AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
 };
 use tokio_stream::StreamExt;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
@@ -235,18 +234,19 @@ impl RecordsIO {
         }
     }
 
-    pub fn into_writer(&self) -> io::Result<Box<dyn Write>> {
+    pub async fn into_writer(&self) -> io::Result<Box<dyn AsyncWrite + Send + Unpin>> {
         match self {
             RecordsIO::File(path) => {
                 let file = OpenOptions::new()
                     .write(true)
                     .create(true)
                     .append(true)
-                    .open(path)?;
+                    .open(path)
+                    .await?;
 
-                Ok(Box::new(std::io::BufWriter::new(file)))
+                Ok(Box::new(tokio::io::BufWriter::new(file)))
             }
-            RecordsIO::Stdout => Ok(Box::new(std::io::BufWriter::new(std::io::stdout()))),
+            RecordsIO::Stdout => Ok(Box::new(BufWriter::new(tokio::io::stdout()))),
             RecordsIO::Stdin => panic!("unsupported record source"),
         }
     }
@@ -504,44 +504,44 @@ async fn run() -> Result<(), S2CliError> {
                     let mut read_output_stream = StreamService::new(stream_client)
                         .read_session(start_seq_num)
                         .await?;
-                    let mut writer = output.as_ref().map(|output| output.into_writer().unwrap());
+                    let mut writer = match output {
+                        Some(output) => Some(output.into_writer().await.unwrap()),
+                        None => None,
+                    };
                     while let Some(read_result) = read_output_stream.next().await {
-                        read_result
-                            .map(|read_result| match read_result.output {
-                                ReadOutput::Batch(sequenced_record_batch) => {
-                                    for sequenced_record in sequenced_record_batch.records {
-                                        eprintln!(
-                                            "{}",
-                                            format!(
-                                                "✓ [READ] got record batch: seq_num: {}",
-                                                sequenced_record.seq_num,
-                                            )
-                                            .green()
-                                            .bold()
-                                        );
-                                        if let Some(ref mut writer) = writer {
-                                            writer.write_all(&sequenced_record.body).unwrap();
-                                            writer.write_all(b"\n").unwrap();
-                                        }
+                        let read_result = read_result.map_err(StreamServiceError::ReadSession)?;
+                        match read_result.output {
+                            ReadOutput::Batch(sequenced_record_batch) => {
+                                for sequenced_record in sequenced_record_batch.records {
+                                    eprintln!(
+                                        "{}",
+                                        format!(
+                                            "✓ [READ] got record batch: seq_num: {}",
+                                            sequenced_record.seq_num,
+                                        )
+                                        .green()
+                                        .bold()
+                                    );
+                                    if let Some(ref mut writer) = writer {
+                                        writer.write_all(&sequenced_record.body).await.unwrap();
+                                        writer.write_all(b"\n").await.unwrap();
                                     }
                                 }
-                                // TODO: better message for these cases
-                                ReadOutput::FirstSeqNum(seq_num) => {
-                                    eprintln!(
-                                        "{}",
-                                        format!("✓ [READ] first_seq_num: {}", seq_num)
-                                            .blue()
-                                            .bold()
-                                    );
-                                }
-                                ReadOutput::NextSeqNum(seq_num) => {
-                                    eprintln!(
-                                        "{}",
-                                        format!("✓ [READ] next_seq_num: {}", seq_num).blue().bold()
-                                    );
-                                }
-                            })
-                            .map_err(StreamServiceError::ReadSession)?;
+                            }
+                            // TODO: better message for these cases
+                            ReadOutput::FirstSeqNum(seq_num) => {
+                                eprintln!(
+                                    "{}",
+                                    format!("✓ [READ] first_seq_num: {}", seq_num).blue().bold()
+                                );
+                            }
+                            ReadOutput::NextSeqNum(seq_num) => {
+                                eprintln!(
+                                    "{}",
+                                    format!("✓ [READ] next_seq_num: {}", seq_num).blue().bold()
+                                );
+                            }
+                        }
                     }
                 }
             }
