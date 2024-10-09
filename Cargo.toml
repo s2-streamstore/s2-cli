@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+pin-project-lite = "0.2"
 clap = { version = "4.5.17", features = ["derive"] }
 colored = "2.1.0"
 config = "0.14.0"
@@ -19,3 +20,6 @@ color-print = "0.3.6"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 serde_json = "1.0.128"
+tokio-stream = { version = "0.1.16", features = ["io-util"] }
+async-stream = "0.3.6"
+pin-utils = "0.1.0"

@@ -2,7 +2,10 @@ use miette::Diagnostic;
 use streamstore::client::ClientError;
 use thiserror::Error;
 
-use crate::{account::AccountServiceError, basin::BasinServiceError, config::S2ConfigError};
+use crate::{
+    account::AccountServiceError, basin::BasinServiceError, config::S2ConfigError,
+    stream::StreamServiceError,
+};
 
 const HELP: &str = color_print::cstr!(
     "\n<cyan><bold>Notice something wrong?</bold></cyan>\n\n\
@@ -38,6 +41,14 @@ pub enum S2CliError {
     BasinService(#[from] BasinServiceError),
 
     #[error(transparent)]
+    #[diagnostic(help("{}", HELP))]
+    StreamService(#[from] StreamServiceError),
+
+    #[error(transparent)]
     #[diagnostic(help("{}", BUG_HELP))]
     InvalidConfig(#[from] serde_json::Error),
+
+    #[error("Failed to initialize a `Record Reader`!")]
+    #[diagnostic(help("{}", BUG_HELP))]
+    RecordReaderInit,
 }

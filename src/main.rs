@@ -1,18 +1,27 @@
+use std::path::PathBuf;
+
 use account::AccountService;
 use basin::BasinService;
 use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
 use error::S2CliError;
+use stream::{RecordStream, StreamService, StreamServiceError};
 use streamstore::{
-    client::{BasinClient, Client, ClientConfig, HostCloud},
-    types::BasinMetadata,
+    client::{BasinClient, Client, ClientConfig, HostCloud, StreamClient},
+    types::{BasinMetadata, ReadOutput},
 };
+use tokio::{
+    fs::{File, OpenOptions},
+    io::{self, AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
+};
+use tokio_stream::StreamExt;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{BasinConfig, StreamConfig, RETENTION_POLICY_PATH, STORAGE_CLASS_PATH};
 
 mod account;
 mod basin;
+mod stream;
 
 mod config;
 mod error;
@@ -52,13 +61,25 @@ enum Commands {
         action: AccountActions,
     },
 
-    // Operate on an S2 basin
+    // Operate on an S2 basin.
     Basin {
         /// Name of the basin to manage.        
         basin: String,
 
         #[command(subcommand)]
         action: BasinActions,
+    },
+
+    ///  Operate on an S2 stream.
+    Stream {
+        /// Name of the basin.        
+        basin: String,
+
+        /// Name of the stream.
+        stream: String,
+
+        #[command(subcommand)]
+        action: StreamActions,
     },
 }
 
@@ -170,6 +191,79 @@ enum BasinActions {
         #[command(flatten)]
         config: StreamConfig,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum StreamActions {
+    /// Get the next sequence number that will be assigned by a stream.     
+    GetNextSeqNum,
+
+    /// Append records to a stream, currently only supports newline delimited records.
+    Append {
+        /// Newline delimited records to append from a file or stdin (all records are treated as plain text).
+        /// Use "-" to read from stdin.    
+        #[arg(value_parser = parse_records_input_source)]
+        records: RecordsIO,
+    },
+
+    Read {
+        /// Starting sequence number (inclusive). If not specified, the latest record.    
+        start_seq_num: Option<u64>,
+
+        /// Output records to a file or stdout.
+        /// Use "-" to write to stdout.
+        #[arg(value_parser = parse_records_output_source)]
+        output: Option<RecordsIO>,
+    },
+}
+
+/// Source of records for an append session.
+#[derive(Debug, Clone)]
+pub enum RecordsIO {
+    File(PathBuf),
+    Stdin,
+    Stdout,
+}
+
+impl RecordsIO {
+    pub async fn into_reader(&self) -> std::io::Result<Box<dyn AsyncBufRead + Send + Unpin>> {
+        match self {
+            RecordsIO::File(path) => Ok(Box::new(BufReader::new(File::open(path).await?))),
+            RecordsIO::Stdin => Ok(Box::new(BufReader::new(tokio::io::stdin()))),
+            _ => panic!("unsupported record source"),
+        }
+    }
+
+    pub async fn into_writer(&self) -> io::Result<Box<dyn AsyncWrite + Send + Unpin>> {
+        match self {
+            RecordsIO::File(path) => {
+                let file = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .await?;
+
+                Ok(Box::new(tokio::io::BufWriter::new(file)))
+            }
+            RecordsIO::Stdout => Ok(Box::new(BufWriter::new(tokio::io::stdout()))),
+            RecordsIO::Stdin => panic!("unsupported record source"),
+        }
+    }
+}
+
+fn parse_records_input_source(s: &str) -> Result<RecordsIO, std::io::Error> {
+    match s {
+        "-" => Ok(RecordsIO::Stdin),
+        _ => Ok(RecordsIO::File(PathBuf::from(s))),
+    }
+}
+
+fn parse_records_output_source(s: &str) -> Result<RecordsIO, std::io::Error> {
+    match s {
+        "-" => Ok(RecordsIO::Stdout),
+        _ => Ok(RecordsIO::File(PathBuf::from(s))),
+    }
 }
 
 fn s2_config(auth_token: String) -> ClientConfig {
@@ -355,6 +449,100 @@ async fn run() -> Result<(), S2CliError> {
                         .await?;
 
                     eprintln!("{}", "✓ Stream reconfigured successfully".green().bold());
+                }
+            }
+        }
+        Commands::Stream {
+            basin,
+            stream,
+            action,
+        } => {
+            let cfg = config::load_config(&config_path)?;
+            let basin_config = s2_config(cfg.auth_token);
+            match action {
+                StreamActions::GetNextSeqNum => {
+                    let stream_client = StreamClient::connect(basin_config, basin, stream).await?;
+                    let next_seq_num = StreamService::new(stream_client).get_next_seq_num().await?;
+                    println!("{}", next_seq_num);
+                }
+                StreamActions::Append { records } => {
+                    let stream_client = StreamClient::connect(basin_config, basin, stream).await?;
+                    let append_input_stream = RecordStream::new(
+                        records
+                            .into_reader()
+                            .await
+                            .map_err(|_| S2CliError::RecordReaderInit)?
+                            .lines(),
+                    );
+
+                    let mut append_output_stream = StreamService::new(stream_client)
+                        .append_session(append_input_stream)
+                        .await?;
+                    while let Some(append_result) = append_output_stream.next().await {
+                        append_result
+                            .map(|append_result| {
+                                eprintln!(
+                                    "{}",
+                                    format!(
+                                        "✓ [APPENDED] start: {}, end: {}, next: {}",
+                                        append_result.start_seq_num,
+                                        append_result.end_seq_num,
+                                        append_result.next_seq_num
+                                    )
+                                    .green()
+                                    .bold()
+                                );
+                            })
+                            .map_err(StreamServiceError::AppendSession)?;
+                    }
+                }
+                StreamActions::Read {
+                    start_seq_num,
+                    output,
+                } => {
+                    let stream_client = StreamClient::connect(basin_config, basin, stream).await?;
+                    let mut read_output_stream = StreamService::new(stream_client)
+                        .read_session(start_seq_num)
+                        .await?;
+                    let mut writer = match output {
+                        Some(output) => Some(output.into_writer().await.unwrap()),
+                        None => None,
+                    };
+                    while let Some(read_result) = read_output_stream.next().await {
+                        let read_result = read_result.map_err(StreamServiceError::ReadSession)?;
+                        match read_result.output {
+                            ReadOutput::Batch(sequenced_record_batch) => {
+                                for sequenced_record in sequenced_record_batch.records {
+                                    eprintln!(
+                                        "{}",
+                                        format!(
+                                            "✓ [READ] got record batch: seq_num: {}",
+                                            sequenced_record.seq_num,
+                                        )
+                                        .green()
+                                        .bold()
+                                    );
+                                    if let Some(ref mut writer) = writer {
+                                        writer.write_all(&sequenced_record.body).await.unwrap();
+                                        writer.write_all(b"\n").await.unwrap();
+                                    }
+                                }
+                            }
+                            // TODO: better message for these cases
+                            ReadOutput::FirstSeqNum(seq_num) => {
+                                eprintln!(
+                                    "{}",
+                                    format!("✓ [READ] first_seq_num: {}", seq_num).blue().bold()
+                                );
+                            }
+                            ReadOutput::NextSeqNum(seq_num) => {
+                                eprintln!(
+                                    "{}",
+                                    format!("✓ [READ] next_seq_num: {}", seq_num).blue().bold()
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }
