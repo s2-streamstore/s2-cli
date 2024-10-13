@@ -1,6 +1,6 @@
 use streamstore::{
     client::StreamClient,
-    service_error::{AppendSessionError, GetNextSeqNumError, ReadSessionError, ServiceError},
+    service_error::{AppendSessionError, CheckTailError, ReadSessionError, ServiceError},
     streams::AppendRecordStream,
     types::{AppendOutput, ReadSessionRequest, ReadSessionResponse},
     Streaming,
@@ -52,7 +52,7 @@ pub struct StreamService {
 #[derive(Debug, thiserror::Error)]
 pub enum StreamServiceError {
     #[error("Failed to get next sequence number")]
-    GetNextSeqNum(#[from] ServiceError<GetNextSeqNumError>),
+    CheckTail(#[from] ServiceError<CheckTailError>),
 
     #[error("Failed to append records")]
     AppendSession(#[from] ServiceError<AppendSessionError>),
@@ -66,8 +66,8 @@ impl StreamService {
         Self { client }
     }
 
-    pub async fn get_next_seq_num(&self) -> Result<u64, StreamServiceError> {
-        Ok(self.client.get_next_seq_num().await?)
+    pub async fn check_tail(&self) -> Result<u64, StreamServiceError> {
+        Ok(self.client.check_tail().await?)
     }
 
     pub async fn append_session(

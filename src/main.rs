@@ -196,7 +196,7 @@ enum BasinActions {
 #[derive(Subcommand, Debug)]
 enum StreamActions {
     /// Get the next sequence number that will be assigned by a stream.     
-    GetNextSeqNum,
+    CheckTail,
 
     /// Append records to a stream, currently only supports newline delimited records.
     Append {
@@ -460,9 +460,9 @@ async fn run() -> Result<(), S2CliError> {
             let cfg = config::load_config(&config_path)?;
             let basin_config = s2_config(cfg.auth_token);
             match action {
-                StreamActions::GetNextSeqNum => {
+                StreamActions::CheckTail => {
                     let stream_client = StreamClient::connect(basin_config, basin, stream).await?;
-                    let next_seq_num = StreamService::new(stream_client).get_next_seq_num().await?;
+                    let next_seq_num = StreamService::new(stream_client).check_tail().await?;
                     println!("{}", next_seq_num);
                 }
                 StreamActions::Append { records } => {
