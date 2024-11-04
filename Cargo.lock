@@ -1632,7 +1632,7 @@ checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 [[package]]
 name = "streamstore"
 version = "0.1.0"
-source = "git+ssh://git@github.com/s2-streamstore/s2-rust-sdk.git?branch=main#ecdad17414f5d69ebda409478a36b4fd02f15eb1"
+source = "git+ssh://git@github.com/s2-streamstore/s2-sdk-rust.git?branch=main#548c2316a2d958d16cd5ec516521f251045a54a0"
 dependencies = [
  "backon",
  "bytesize",
@@ -1641,6 +1641,7 @@ dependencies = [
  "prost",
  "prost-types",
  "secrecy",
+ "sync_docs",
  "thiserror",
  "tonic",
  "tonic-build",
@@ -1688,6 +1689,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "sync_docs"
+version = "0.1.0"
+source = "git+ssh://git@github.com/s2-streamstore/s2-sdk-rust.git?branch=main#548c2316a2d958d16cd5ec516521f251045a54a0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
