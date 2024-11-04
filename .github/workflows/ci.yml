@@ -19,13 +19,13 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: checkout
         uses: actions/checkout@v4      
-      - name: Install Rust
+      - name: install rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-      - name: Install Protoc
+      - name: install protoc
         uses: arduino/setup-protoc@v3
       - run: git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf https://github
       - name: Check documentation
