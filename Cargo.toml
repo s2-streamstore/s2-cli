@@ -4,22 +4,22 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-pin-project-lite = "0.2"
+async-stream = "0.3.6"
 clap = { version = "4.5.20", features = ["derive"] }
+color-print = "0.3.6"
 colored = "2.1.0"
 config = "0.14.1"
 dirs = "5.0.1"
-serde = { version = "1.0.214", features = ["derive"] }
-thiserror = "1.0.67"
-toml = "0.8.19"
-streamstore = { git = "https://github.com/s2-streamstore/s2-sdk-rust.git", branch = "main" }
-tokio = { version = "*", features = ["full"] }
 humantime = "2.1.0"
 miette = { version = "7.2.0", features = ["fancy"] }
-color-print = "0.3.6"
+pin-project-lite = "0.2"
+pin-utils = "0.1.0"
+serde = { version = "1.0.214", features = ["derive"] }
+serde_json = "1.0.132"
+streamstore = { git = "https://github.com/s2-streamstore/s2-sdk-rust.git", branch = "main" }
+thiserror = "1.0.67"
+tokio = { version = "*", features = ["full"] }
+tokio-stream = { version = "0.1.16", features = ["io-util"] }
+toml = "0.8.19"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-serde_json = "1.0.132"
-tokio-stream = { version = "0.1.16", features = ["io-util"] }
-async-stream = "0.3.6"
-pin-utils = "0.1.0"
