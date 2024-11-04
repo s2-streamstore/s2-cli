@@ -19,14 +19,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4      
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
-      - uses: Swatinem/rust-cache@v2
+      - run: git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf https://github
       - name: Check documentation
         env:
           RUSTDOCFLAGS: -D warnings
