@@ -34,9 +34,9 @@ const STYLES: styling::Styles = styling::Styles::styled()
     .placeholder(styling::AnsiColor::Cyan.on_default());
 
 const GENERAL_USAGE: &str = color_print::cstr!(
-    r#"          
+    r#"
     <dim>$</dim> <bold>s2-cli config set --auth-token ...</bold>
-    <dim>$</dim> <bold>s2-cli account list-basins --prefix "bar" --start-after "foo" --limit 100</bold>        
+    <dim>$</dim> <bold>s2-cli account list-basins --prefix "bar" --start-after "foo" --limit 100</bold>
     "#
 );
 
@@ -63,7 +63,7 @@ enum Commands {
 
     // Operate on an S2 basin.
     Basin {
-        /// Name of the basin to manage.        
+        /// Name of the basin to manage.
         basin: String,
 
         #[command(subcommand)]
@@ -72,7 +72,7 @@ enum Commands {
 
     ///  Operate on an S2 stream.
     Stream {
-        /// Name of the basin.        
+        /// Name of the basin.
         basin: String,
 
         /// Name of the stream.
@@ -102,7 +102,7 @@ enum AccountActions {
         #[arg(short, long, default_value = "")]
         prefix: Option<String>,
 
-        /// List basins names that lexicographically start after this name.        
+        /// List basins names that lexicographically start after this name.
         #[arg(short, long, default_value = "")]
         start_after: Option<String>,
 
@@ -113,7 +113,7 @@ enum AccountActions {
 
     /// Create a basin
     CreateBasin {
-        /// Basin name, which must be globally unique.        
+        /// Basin name, which must be globally unique.
         basin: String,
 
         #[command(flatten)]
@@ -122,7 +122,7 @@ enum AccountActions {
 
     /// Delete a basin
     DeleteBasin {
-        /// Basin name to delete.        
+        /// Basin name to delete.
         basin: String,
     },
 
@@ -134,10 +134,10 @@ enum AccountActions {
 
     /// Reconfigure a basin
     ReconfigureBasin {
-        /// Basin name to reconfigure.        
+        /// Basin name to reconfigure.
         basin: String,
 
-        /// Configuration to apply.        
+        /// Configuration to apply.
         #[command(flatten)]
         config: BasinConfig,
     },
@@ -151,7 +151,7 @@ enum BasinActions {
         #[arg(short, long)]
         prefix: Option<String>,
 
-        /// List stream names that lexicographically start after this name.        
+        /// List stream names that lexicographically start after this name.
         #[arg(short, long)]
         start_after: Option<String>,
 
@@ -165,7 +165,7 @@ enum BasinActions {
         /// Name of the stream to create.
         stream: String,
 
-        /// Configuration to apply.        
+        /// Configuration to apply.
         #[command(flatten)]
         config: Option<StreamConfig>,
     },
@@ -187,7 +187,7 @@ enum BasinActions {
         /// Name of the stream to reconfigure.
         stream: String,
 
-        /// Configuration to apply.        
+        /// Configuration to apply.
         #[command(flatten)]
         config: StreamConfig,
     },
@@ -195,19 +195,19 @@ enum BasinActions {
 
 #[derive(Subcommand, Debug)]
 enum StreamActions {
-    /// Get the next sequence number that will be assigned by a stream.     
+    /// Get the next sequence number that will be assigned by a stream.
     CheckTail,
 
     /// Append records to a stream, currently only supports newline delimited records.
     Append {
         /// Newline delimited records to append from a file or stdin (all records are treated as plain text).
-        /// Use "-" to read from stdin.    
+        /// Use "-" to read from stdin.
         #[arg(value_parser = parse_records_input_source)]
         records: RecordsIO,
     },
 
     Read {
-        /// Starting sequence number (inclusive). If not specified, the latest record.    
+        /// Starting sequence number (inclusive). If not specified, the latest record.
         start_seq_num: Option<u64>,
 
         /// Output records to a file or stdout.
@@ -365,17 +365,13 @@ async fn run() -> Result<(), S2CliError> {
 
                 AccountActions::ReconfigureBasin { basin, config } => {
                     let mut mask = Vec::new();
-                    match &config.default_stream_config {
-                        Some(config) => {
-                            if config.storage_class.is_some() {
-                                mask.push(STORAGE_CLASS_PATH.to_string());
-                            }
-
-                            if config.retention_policy.is_some() {
-                                mask.push(RETENTION_POLICY_PATH.to_string());
-                            }
+                    if let Some(config) = &config.default_stream_config {
+                        if config.storage_class.is_some() {
+                            mask.push(STORAGE_CLASS_PATH.to_string());
                         }
-                        None => {}
+                        if config.retention_policy.is_some() {
+                            mask.push(RETENTION_POLICY_PATH.to_string());
+                        }
                     }
 
                     account_service
