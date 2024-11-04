@@ -29,7 +29,7 @@ jobs:
         uses: arduino/setup-protoc@v3
       - run: |
             git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf https://github
-            git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf git@github
+            git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf ssh://git@github
       - name: Check documentation
         env:
           RUSTDOCFLAGS: -D warnings
