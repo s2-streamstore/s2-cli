@@ -27,7 +27,8 @@ jobs:
           toolchain: stable
       - name: install protoc
         uses: arduino/setup-protoc@v3
-      - run: |
+      - run: |            
+            git config --global --add url."https://${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}:x-oauth-basic@github".insteadOf git@github:
             git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf https://github
             git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf ssh://git@github
       - name: Check documentation
