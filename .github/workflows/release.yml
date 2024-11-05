@@ -2,6 +2,7 @@ name: release
 on:
   push:
     tags: ["[0-9]+.[0-9]+.[0-9]+*"]
+  pull_request:
   workflow_dispatch:
 jobs:
   build_binaries:
@@ -34,6 +35,8 @@ jobs:
           tool: cross
       - name: install protoc
         uses: arduino/setup-protoc@v3
+        with:
+            repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: |
           git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github.com/".insteadOf "git@github.com:"
           git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf https://github
@@ -60,26 +63,26 @@ jobs:
             *.zip
           if-no-files-found: error
 
-  create_release:
-    needs: build_binaries
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: checkout
-        uses: actions/checkout@v4
-      - name: version
-        id: version
-        uses: SebRollen/toml-action@v1.2.0
-        with:
-          file: Cargo.toml
-          field: package.version        
-      - name: download artifacts
-        uses: actions/download-artifact@v4
-      - name: create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            **/*.tar.gz
-            **/*.zip
-          name: ${{ steps.version.outputs.value }}                      
+#   create_release:
+#     needs: build_binaries
+#     runs-on: ubuntu-latest
+#     permissions:
+#       contents: write
+#     steps:
+#       - name: checkout
+#         uses: actions/checkout@v4
+#       - name: version
+#         id: version
+#         uses: SebRollen/toml-action@v1.2.0
+#         with:
+#           file: Cargo.toml
+#           field: package.version        
+#       - name: download artifacts
+#         uses: actions/download-artifact@v4
+#       - name: create Release
+#         uses: softprops/action-gh-release@v2
+#         with:
+#           files: |
+#             **/*.tar.gz
+#             **/*.zip
+#           name: ${{ steps.version.outputs.value }}                      
