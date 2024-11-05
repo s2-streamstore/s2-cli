@@ -40,7 +40,7 @@ jobs:
           git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf https://github
           git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf ssh://git@github          
       - name: Build
-        run: cargo build --release
+        run: cargo build --release --target ${{ matrix.target }}
       - name: Prepare artifacts
         shell: bash
         run: |
