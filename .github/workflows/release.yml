@@ -32,6 +32,10 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cross
+      - run: |
+          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github.com/".insteadOf "git@github.com:"
+          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf https://github
+          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf ssh://git@github          
       - name: Build
         run: cross build --release --target ${{ matrix.target }}
       - name: Prepare artifacts
