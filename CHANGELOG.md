@@ -4,8 +4,6 @@ All notable changes to this project will be documented in this file.
 
 ## [unreleased]
 
-## [0.1.0] - 2024-11-05
-
 ### Features
 
 - Implement `AccountService` ([#1](https://github.com/s2-streamstore/s2-cli/issues/1))
