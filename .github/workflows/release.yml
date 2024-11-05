@@ -89,8 +89,8 @@ jobs:
           field: package.version
       - uses: mindsers/changelog-reader-action@v2
         id: changelog_reader
-        with:          
-          version: ${{ steps.version.outputs.value }}
+        # with:          
+        #   version: ${{ steps.version.outputs.value }}
       - name: download artifacts
         uses: actions/download-artifact@v4
     #   - name: create release
