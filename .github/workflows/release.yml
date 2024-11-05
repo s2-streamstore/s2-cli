@@ -1,7 +1,7 @@
 name: release
 on:
   push:
-    tags: ["[0-9]+.[0-9]+.[0-9]+*"]  
+    tags: ["[0-9]+.[0-9]+.[0-9]+*"]
   workflow_dispatch:
 jobs:
   build_binaries:
@@ -38,7 +38,7 @@ jobs:
       - name: Install dependencies
         if: matrix.deps != ''
         run: ${{ matrix.deps }}
-        shell: bash          
+        shell: bash
       - name: install protoc
         uses: arduino/setup-protoc@v3
         with:
@@ -49,7 +49,7 @@ jobs:
       - run: |
           git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github.com/".insteadOf "git@github.com:"
           git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf https://github
-          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf ssh://git@github                          
+          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf ssh://git@github                     
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
       - name: Prepare artifacts
@@ -85,7 +85,11 @@ jobs:
         uses: SebRollen/toml-action@v1.2.0
         with:
           file: Cargo.toml
-          field: package.version        
+          field: package.version
+      - uses: mindsers/changelog-reader-action@v2
+        id: changelog_reader
+        with:          
+          version: ${{ steps.version.outputs.value }}
       - name: download artifacts
         uses: actions/download-artifact@v4
       - name: create release
@@ -94,4 +98,5 @@ jobs:
           files: |
             **/*.tar.gz
             **/*.zip
-          name: ${{ steps.version.outputs.value }}                      
+          name: ${{ steps.version.outputs.value }}
+          body: ${{ steps.changelog_reader.outputs.changes }}       
