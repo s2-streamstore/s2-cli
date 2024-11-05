@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [unreleased]
+## [0.1.0] - 2024-11-05
 
 ### Features
 
@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - Release CI ([#11](https://github.com/s2-streamstore/s2-cli/issues/11))
 - Automatically add release notes ([#12](https://github.com/s2-streamstore/s2-cli/issues/12))
 - Changelog ([#13](https://github.com/s2-streamstore/s2-cli/issues/13))
+- Release CI ([#14](https://github.com/s2-streamstore/s2-cli/issues/14))
 
 ### Miscellaneous Tasks
 
