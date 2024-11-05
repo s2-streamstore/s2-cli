@@ -30,9 +30,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           rustflags: ""
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cross
+          target: ${{ matrix.target }}      
       - name: install protoc
         uses: arduino/setup-protoc@v3
         with:
@@ -42,7 +40,7 @@ jobs:
           git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf https://github
           git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf ssh://git@github          
       - name: Build
-        run: cross build --release --target ${{ matrix.target }}
+        run: cargo build --release
       - name: Prepare artifacts
         shell: bash
         run: |
