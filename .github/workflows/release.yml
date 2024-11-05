@@ -42,6 +42,9 @@ jobs:
         uses: arduino/setup-protoc@v3
         with:
             repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
       - run: |
           git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github.com/".insteadOf "git@github.com:"
           git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf https://github
