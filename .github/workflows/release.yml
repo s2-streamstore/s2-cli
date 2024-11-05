@@ -2,79 +2,78 @@ name: release
 on:
   push:
     tags: ["[0-9]+.[0-9]+.[0-9]+*"]
-  pull_request:
   workflow_dispatch:
 jobs:
-#   build_binaries:
-#     name: ${{ matrix.target }}
-#     runs-on: ${{ matrix.os }}
-#     strategy:
-#       fail-fast: false
-#       matrix:
-#         include:
-#           - os: ubuntu-latest
-#             target: aarch64-unknown-linux-gnu
-#             deps: |
-#               sudo apt-get update
-#               sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-#             env:
-#               CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-#           - os: ubuntu-latest
-#             target: x86_64-unknown-linux-gnu
-#           - os: macos-latest
-#             target: x86_64-apple-darwin
-#           - os: macos-latest
-#             target: aarch64-apple-darwin
-#           - os: windows-latest
-#             target: x86_64-pc-windows-msvc
-#           - os: windows-latest
-#             target: aarch64-pc-windows-msvc
-#     steps:
-#       - name: checkout
-#         uses: actions/checkout@v4      
-#       - uses: actions-rust-lang/setup-rust-toolchain@v1
-#         with:
-#           rustflags: ""
-#           target: ${{ matrix.target }}
-#       - name: Install dependencies
-#         if: matrix.deps != ''
-#         run: ${{ matrix.deps }}
-#         shell: bash
-#       - name: install protoc
-#         uses: arduino/setup-protoc@v3
-#         with:
-#             repo-token: ${{ secrets.GITHUB_TOKEN }}
-#       - name: Set CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER
-#         if: matrix.target == 'aarch64-unknown-linux-gnu'
-#         run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-#       - run: |
-#           git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github.com/".insteadOf "git@github.com:"
-#           git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf https://github
-#           git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf ssh://git@github
-#       - name: Build
-#         run: cargo build --release --target ${{ matrix.target }}
-#       - name: Prepare artifacts
-#         shell: bash
-#         run: |
-#             cd target/${{ matrix.target }}/release
+  build_binaries:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            deps: |
+              sudo apt-get update
+              sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+            env:
+              CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4      
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ""
+          target: ${{ matrix.target }}
+      - name: Install dependencies
+        if: matrix.deps != ''
+        run: ${{ matrix.deps }}
+        shell: bash
+      - name: install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+            repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+      - run: |
+          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github.com/".insteadOf "git@github.com:"
+          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf https://github
+          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf ssh://git@github
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Prepare artifacts
+        shell: bash
+        run: |
+            cd target/${{ matrix.target }}/release
             
-#             if [ "${{ matrix.os }}" = "windows-latest" ]; 
-#             then
-#                 7z a ../../../$s2-cli-${{ matrix.target }}.zip s2-cli.exe
-#             else
-#                 tar -czf ../../../$s2-cli-${{ matrix.target }}.tar.gz s2-cli
-#             fi
-#       - name: upload artifacts
-#         uses: actions/upload-artifact@v4
-#         with:
-#           name: ${{ matrix.target }}
-#           path: |   
-#             *.tar.gz
-#             *.zip
-#           if-no-files-found: error
+            if [ "${{ matrix.os }}" = "windows-latest" ]; 
+            then
+                7z a ../../../$s2-cli-${{ matrix.target }}.zip s2-cli.exe
+            else
+                tar -czf ../../../$s2-cli-${{ matrix.target }}.tar.gz s2-cli
+            fi
+      - name: upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |   
+            *.tar.gz
+            *.zip
+          if-no-files-found: error
 
   create_release:
-    # needs: build_binaries
+    needs: build_binaries
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -89,15 +88,15 @@ jobs:
           field: package.version
       - uses: mindsers/changelog-reader-action@v2
         id: changelog_reader
-        # with:          
-        #   version: ${{ steps.version.outputs.value }}
+        with:          
+          version: ${{ steps.version.outputs.value }}
       - name: download artifacts
         uses: actions/download-artifact@v4
-    #   - name: create release
-    #     uses: softprops/action-gh-release@v2
-    #     with:
-    #       files: |
-    #         **/*.tar.gz
-    #         **/*.zip
-    #       name: ${{ steps.version.outputs.value }}
-    #       body: ${{ steps.changelog_reader.outputs.changes }}       
+      - name: create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            **/*.tar.gz
+            **/*.zip
+          name: ${{ steps.version.outputs.value }}
+          body: ${{ steps.changelog_reader.outputs.changes }}       
