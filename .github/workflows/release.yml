@@ -1,7 +1,7 @@
 name: release
 on:
   push:
-    tags: ["[0-9]+.[0-9]+.[0-9]+*"]
+    tags: ["[0-9]+.[0-9]+.[0-9]+*"]  
   workflow_dispatch:
 jobs:
   build_binaries:
@@ -49,7 +49,7 @@ jobs:
       - run: |
           git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github.com/".insteadOf "git@github.com:"
           git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf https://github
-          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf ssh://git@github                     
+          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf ssh://git@github
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
       - name: Prepare artifacts
