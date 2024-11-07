@@ -60,7 +60,7 @@ pub enum S2ConfigError {
 
     #[error("Failed to load config file")]
     #[diagnostic(help(
-        "Did you run `s2-cli config set`? or use `S2_AUTH_TOKEN` environment variable."
+        "Did you run `s2 config set`? or use `S2_AUTH_TOKEN` environment variable."
     ))]
     LoadError(#[from] config::ConfigError),
 

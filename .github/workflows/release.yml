@@ -59,9 +59,9 @@ jobs:
             
             if [ "${{ matrix.os }}" = "windows-latest" ]; 
             then
-                7z a ../../../$s2-cli-${{ matrix.target }}.zip s2-cli.exe
+                7z a ../../../s2-${{ matrix.target }}.zip s2.exe
             else
-                tar -czf ../../../$s2-cli-${{ matrix.target }}.tar.gz s2-cli
+                tar -czf ../../../s2-${{ matrix.target }}.tar.gz s2
             fi
       - name: upload artifacts
         uses: actions/upload-artifact@v4
