@@ -58,12 +58,12 @@ pub enum S2ConfigError {
     #[error("Failed to find a home for config directory")]
     DirNotFound,
 
-    #[error("Failed to load config file: {0}")]
+    #[error("Failed to load config file")]
     #[diagnostic(help(
         "Did you run `s2-cli config set`? or use `S2_AUTH_TOKEN` environment variable."
     ))]
     LoadError(#[from] config::ConfigError),
 
-    #[error("Failed to write config file: {0}")]
+    #[error("Failed to write config file")]
     WriteError(#[source] std::io::Error),
 }
