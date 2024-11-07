@@ -1,5 +1,5 @@
 use miette::Diagnostic;
-use streamstore::client::ClientError;
+use streamstore::client::{ClientError, InvalidHostError};
 use thiserror::Error;
 
 use crate::{
@@ -31,6 +31,10 @@ pub enum S2CliError {
     #[error("Failed to connect to s2: {0}")]
     #[diagnostic(help("Are you connected to the internet?"))]
     Connection(#[from] ClientError),
+
+    #[error("{0}")]
+    #[diagnostic(help("Are you overriding `S2_CLOUD`, `S2_CELL`, or `S2_BASIN_ZONE`?"))]
+    InvalidHost(#[from] InvalidHostError),
 
     #[error(transparent)]
     #[diagnostic(help("{}", HELP))]

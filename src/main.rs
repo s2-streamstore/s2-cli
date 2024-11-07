@@ -8,7 +8,7 @@ use config::{config_path, create_config};
 use error::S2CliError;
 use stream::{RecordStream, StreamService, StreamServiceError};
 use streamstore::{
-    client::{BasinClient, Client, ClientConfig, HostCloud, StreamClient},
+    client::{BasinClient, Client, ClientConfig, HostEndpoints, InvalidHostError, StreamClient},
     types::{BasinMetadata, ReadOutput},
 };
 use tokio::{
@@ -266,10 +266,10 @@ fn parse_records_output_source(s: &str) -> Result<RecordsIO, std::io::Error> {
     }
 }
 
-fn s2_config(auth_token: String) -> ClientConfig {
-    ClientConfig::new(auth_token.to_string())
-        .with_host_uri(HostCloud::Local)
-        .with_connection_timeout(std::time::Duration::from_secs(5))
+fn client_config(auth_token: String) -> Result<ClientConfig, InvalidHostError> {
+    Ok(ClientConfig::new(auth_token.to_string())
+        .with_host_endpoint(HostEndpoints::from_env()?)
+        .with_connection_timeout(std::time::Duration::from_secs(5)))
 }
 
 #[tokio::main]
@@ -308,8 +308,8 @@ async fn run() -> Result<(), S2CliError> {
 
         Commands::Account { action } => {
             let cfg = config::load_config(&config_path)?;
-            let account_service =
-                AccountService::new(Client::connect(s2_config(cfg.auth_token)).await?);
+            let client_config = client_config(cfg.auth_token)?;
+            let account_service = AccountService::new(Client::connect(client_config).await?);
             match action {
                 AccountActions::ListBasins {
                     prefix,
@@ -383,14 +383,14 @@ async fn run() -> Result<(), S2CliError> {
 
         Commands::Basin { basin, action } => {
             let cfg = config::load_config(&config_path)?;
-            let basin_config = s2_config(cfg.auth_token);
+            let client_config = client_config(cfg.auth_token)?;
             match action {
                 BasinActions::ListStreams {
                     prefix,
                     start_after,
                     limit,
                 } => {
-                    let basin_client = BasinClient::connect(basin_config, basin).await?;
+                    let basin_client = BasinClient::connect(client_config, basin).await?;
                     let streams = BasinService::new(basin_client)
                         .list_streams(
                             prefix.unwrap_or_default(),
@@ -404,7 +404,7 @@ async fn run() -> Result<(), S2CliError> {
                 }
 
                 BasinActions::CreateStream { stream, config } => {
-                    let basin_client = BasinClient::connect(basin_config, basin).await?;
+                    let basin_client = BasinClient::connect(client_config, basin).await?;
                     BasinService::new(basin_client)
                         .create_stream(stream, config.map(Into::into))
                         .await?;
@@ -412,7 +412,7 @@ async fn run() -> Result<(), S2CliError> {
                 }
 
                 BasinActions::DeleteStream { stream } => {
-                    let basin_client = BasinClient::connect(basin_config, basin).await?;
+                    let basin_client = BasinClient::connect(client_config, basin).await?;
                     BasinService::new(basin_client)
                         .delete_stream(stream)
                         .await?;
@@ -420,7 +420,7 @@ async fn run() -> Result<(), S2CliError> {
                 }
 
                 BasinActions::GetStreamConfig { stream } => {
-                    let basin_client = BasinClient::connect(basin_config, basin).await?;
+                    let basin_client = BasinClient::connect(client_config, basin).await?;
                     let config = BasinService::new(basin_client)
                         .get_stream_config(stream)
                         .await?;
@@ -429,7 +429,7 @@ async fn run() -> Result<(), S2CliError> {
                 }
 
                 BasinActions::ReconfigureStream { stream, config } => {
-                    let basin_client = BasinClient::connect(basin_config, basin).await?;
+                    let basin_client = BasinClient::connect(client_config, basin).await?;
                     let mut mask = Vec::new();
 
                     if config.storage_class.is_some() {
@@ -454,15 +454,15 @@ async fn run() -> Result<(), S2CliError> {
             action,
         } => {
             let cfg = config::load_config(&config_path)?;
-            let basin_config = s2_config(cfg.auth_token);
+            let client_config = client_config(cfg.auth_token)?;
             match action {
                 StreamActions::CheckTail => {
-                    let stream_client = StreamClient::connect(basin_config, basin, stream).await?;
+                    let stream_client = StreamClient::connect(client_config, basin, stream).await?;
                     let next_seq_num = StreamService::new(stream_client).check_tail().await?;
                     println!("{}", next_seq_num);
                 }
                 StreamActions::Append { records } => {
-                    let stream_client = StreamClient::connect(basin_config, basin, stream).await?;
+                    let stream_client = StreamClient::connect(client_config, basin, stream).await?;
                     let append_input_stream = RecordStream::new(
                         records
                             .into_reader()
@@ -496,7 +496,7 @@ async fn run() -> Result<(), S2CliError> {
                     start_seq_num,
                     output,
                 } => {
-                    let stream_client = StreamClient::connect(basin_config, basin, stream).await?;
+                    let stream_client = StreamClient::connect(client_config, basin, stream).await?;
                     let mut read_output_stream = StreamService::new(stream_client)
                         .read_session(start_seq_num)
                         .await?;
