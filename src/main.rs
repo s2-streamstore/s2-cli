@@ -251,7 +251,7 @@ impl RecordsIO {
             RecordsIO::Stdout => {
                 trace!("stdout writer");
                 Ok(Box::new(BufWriter::new(tokio::io::stdout())))
-            },
+            }
             RecordsIO::Stdin => panic!("unsupported record source"),
         }
     }
