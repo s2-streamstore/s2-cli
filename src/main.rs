@@ -314,7 +314,6 @@ async fn run() -> Result<(), S2CliError> {
                 let new_config = S2Config {
                     auth_token: auth_token.unwrap_or(existing_config.auth_token),
                     cell: cell.unwrap_or(existing_config.cell),
-                    basin_zone: existing_config.basin_zone,
                 };
 
                 create_config(&config_path, new_config)?;

@@ -11,8 +11,6 @@ use crate::error::S2CliError;
 pub struct S2Config {
     pub auth_token: String,
     pub cell: String,
-    #[serde(skip_serializing)]
-    pub basin_zone: Option<String>,
 }
 
 #[cfg(target_os = "windows")]
