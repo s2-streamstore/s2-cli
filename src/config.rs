@@ -32,7 +32,7 @@ pub fn config_path() -> Result<PathBuf, S2CliError> {
 pub fn load_config(path: &Path) -> Result<S2Config, S2ConfigError> {
     Config::builder()
         .add_source(config::File::new(
-            path.to_str().ok_or(S2ConfigError::PathError)?,
+            path.to_str().expect("config path is valid utf8"),
             FileFormat::Toml,
         ))
         .add_source(config::Environment::with_prefix("S2"))
@@ -57,11 +57,8 @@ pub fn create_config(config_path: &PathBuf, auth_token: String) -> Result<(), S2
 
 #[derive(Error, Debug, Diagnostic)]
 pub enum S2ConfigError {
-    #[error("Failed to find config directory")]
+    #[error("Failed to find a home for config directory")]
     DirNotFound,
-
-    #[error("Failed to find config file")]
-    PathError,
 
     #[error("Failed to load config file")]
     #[diagnostic(help(
