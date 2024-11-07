@@ -96,13 +96,13 @@ enum ConfigActions {
 #[deny(missing_docs)]
 #[derive(Subcommand, Debug)]
 enum AccountActions {
-    /// List basins
+    /// List basins.
     ListBasins {
-        /// List basin names that begin with this prefix.
+        /// Filter to basin names that begin with this prefix.
         #[arg(short, long, default_value = "")]
         prefix: Option<String>,
 
-        /// List basins names that lexicographically start after this name.
+        /// Filter to basin names that lexicographically start after this name.
         #[arg(short, long, default_value = "")]
         start_after: Option<String>,
 
@@ -111,30 +111,30 @@ enum AccountActions {
         limit: Option<usize>,
     },
 
-    /// Create a basin
+    /// Create a basin.
     CreateBasin {
-        /// Basin name, which must be globally unique.
+        /// Name of the basin to create.
         basin: String,
 
         #[command(flatten)]
         config: BasinConfig,
     },
 
-    /// Delete a basin
+    /// Delete a basin.
     DeleteBasin {
-        /// Basin name to delete.
+        /// Name of the basin to delete.
         basin: String,
     },
 
-    /// Get basin config
+    /// Get basin config.
     GetBasinConfig {
         /// Basin name to get config for.
         basin: String,
     },
 
-    /// Reconfigure a basin
+    /// Reconfigure a basin.
     ReconfigureBasin {
-        /// Basin name to reconfigure.
+        /// Name of the basin to reconfigure.
         basin: String,
 
         /// Configuration to apply.
@@ -145,13 +145,13 @@ enum AccountActions {
 
 #[derive(Subcommand, Debug)]
 enum BasinActions {
-    /// List Streams
+    /// List streams.
     ListStreams {
-        /// List stream names that begin with this prefix.
+        /// Filter to stream names that begin with this prefix.
         #[arg(short, long)]
         prefix: Option<String>,
 
-        /// List stream names that lexicographically start after this name.
+        /// Filter to stream names that lexicographically start after this name.
         #[arg(short, long)]
         start_after: Option<String>,
 
@@ -160,7 +160,7 @@ enum BasinActions {
         limit: Option<usize>,
     },
 
-    /// Create a stream
+    /// Create a stream.
     CreateStream {
         /// Name of the stream to create.
         stream: String,
@@ -170,19 +170,19 @@ enum BasinActions {
         config: Option<StreamConfig>,
     },
 
-    /// Delete a stream
+    /// Delete a stream.
     DeleteStream {
         /// Name of the stream to delete.
         stream: String,
     },
 
-    /// Get stream config
+    /// Get stream config.
     GetStreamConfig {
         /// Name of the stream to get config for.
         stream: String,
     },
 
-    /// Reconfigure a stream
+    /// Reconfigure a stream.
     ReconfigureStream {
         /// Name of the stream to reconfigure.
         stream: String,
@@ -198,7 +198,7 @@ enum StreamActions {
     /// Get the next sequence number that will be assigned by a stream.
     CheckTail,
 
-    /// Append records to a stream, currently only supports newline delimited records.
+    /// Append records to a stream. Currently, only newline delimited records are supported.
     Append {
         /// Newline delimited records to append from a file or stdin (all records are treated as plain text).
         /// Use "-" to read from stdin.
@@ -298,7 +298,7 @@ async fn run() -> Result<(), S2CliError> {
         Commands::Config { action } => match action {
             ConfigActions::Set { auth_token } => {
                 create_config(&config_path, auth_token)?;
-                eprintln!("{}", "✓ Token set successfully".green().bold());
+                eprintln!("{}", "✓ Token set".green().bold());
                 eprintln!(
                     "  Configuration saved to: {}",
                     config_path.display().to_string().cyan()
@@ -349,12 +349,12 @@ async fn run() -> Result<(), S2CliError> {
                         .create_basin(basin, storage_class, retention_policy)
                         .await?;
 
-                    eprintln!("{}", "✓ Basin created successfully".green().bold());
+                    eprintln!("{}", "✓ Basin created".green().bold());
                 }
 
                 AccountActions::DeleteBasin { basin } => {
                     account_service.delete_basin(basin).await?;
-                    eprintln!("{}", "✓ Basin deleted successfully".green().bold());
+                    eprintln!("{}", "✓ Basin deletion requested".green().bold());
                 }
 
                 AccountActions::GetBasinConfig { basin } => {
@@ -408,7 +408,7 @@ async fn run() -> Result<(), S2CliError> {
                     BasinService::new(basin_client)
                         .create_stream(stream, config.map(Into::into))
                         .await?;
-                    eprintln!("{}", "✓ Stream created successfully".green().bold());
+                    eprintln!("{}", "✓ Stream created".green().bold());
                 }
 
                 BasinActions::DeleteStream { stream } => {
@@ -416,7 +416,7 @@ async fn run() -> Result<(), S2CliError> {
                     BasinService::new(basin_client)
                         .delete_stream(stream)
                         .await?;
-                    eprintln!("{}", "✓ Stream deleted successfully".green().bold());
+                    eprintln!("{}", "✓ Stream deleted".green().bold());
                 }
 
                 BasinActions::GetStreamConfig { stream } => {
@@ -444,7 +444,7 @@ async fn run() -> Result<(), S2CliError> {
                         .reconfigure_stream(stream, config.into(), mask)
                         .await?;
 
-                    eprintln!("{}", "✓ Stream reconfigured successfully".green().bold());
+                    eprintln!("{}", "✓ Stream reconfigured".green().bold());
                 }
             }
         }
