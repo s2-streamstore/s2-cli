@@ -7,9 +7,12 @@ use thiserror::Error;
 
 use crate::error::S2CliError;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 pub struct S2Config {
     pub auth_token: String,
+    pub cell: String,
+    #[serde(skip_serializing)]
+    pub basin_zone: Option<String>,
 }
 
 #[cfg(target_os = "windows")]
@@ -41,14 +44,12 @@ pub fn load_config(path: &Path) -> Result<S2Config, S2ConfigError> {
     Ok(builder.build()?.try_deserialize::<S2Config>()?)
 }
 
-pub fn create_config(config_path: &PathBuf, auth_token: String) -> Result<(), S2ConfigError> {
-    let cfg = S2Config { auth_token };
-
+pub fn create_config(config_path: &PathBuf, config: S2Config) -> Result<(), S2ConfigError> {
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent).map_err(S2ConfigError::WriteError)?;
     }
 
-    let toml = toml::to_string(&cfg).unwrap();
+    let toml = toml::to_string(&config).unwrap();
     std::fs::write(config_path, toml).map_err(S2ConfigError::WriteError)?;
 
     Ok(())

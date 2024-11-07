@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use account::AccountService;
 use basin::BasinService;
-use clap::{builder::styling, Parser, Subcommand};
+use clap::{builder::styling, ArgGroup, Parser, Subcommand};
 use colored::*;
-use config::{config_path, create_config};
+use config::{config_path, create_config, load_config, S2Config};
 use error::S2CliError;
 use stream::{RecordStream, StreamService, StreamServiceError};
 use streamstore::{
@@ -85,11 +85,22 @@ enum Commands {
 
 #[derive(Subcommand, Debug)]
 enum ConfigActions {
-    /// Set the authentication token to be reused in subsequent commands.
-    /// Alternatively, use the S2_AUTH_TOKEN environment variable.
+    /// Set s2 configuration options.
+    #[command(group(
+        ArgGroup::new("config")
+            .required(true)
+            .args(["auth_token", "cell"]),
+    ))]
     Set {
-        #[arg(short, long)]
-        auth_token: String,
+        /// Set the authentication token to be reused in subsequent commands.
+        /// Alternatively, use the S2_AUTH_TOKEN environment variable.
+        #[arg(short, long, group = "config")]
+        auth_token: Option<String>,
+
+        /// Set the cell endpoint to be reused in subsequent commands.
+        /// Alternatively, use the S2_CELL environment variable.
+        #[arg(short, long, group = "config")]
+        cell: Option<String>,
     },
 }
 
@@ -296,13 +307,19 @@ async fn run() -> Result<(), S2CliError> {
 
     match commands.command {
         Commands::Config { action } => match action {
-            ConfigActions::Set { auth_token } => {
-                create_config(&config_path, auth_token)?;
-                eprintln!("{}", "✓ Token set successfully".green().bold());
-                eprintln!(
-                    "  Configuration saved to: {}",
-                    config_path.display().to_string().cyan()
-                );
+            ConfigActions::Set { auth_token, cell } => {
+                let existing_config =
+                    load_config(&config_path).unwrap_or_else(|_| S2Config::default());
+
+                let new_config = S2Config {
+                    auth_token: auth_token.unwrap_or(existing_config.auth_token),
+                    cell: cell.unwrap_or(existing_config.cell),
+                    basin_zone: existing_config.basin_zone,
+                };
+
+                create_config(&config_path, new_config)?;
+                eprintln!("{}", "✓ Confg set successfully".green().bold());
+                eprintln!("  Saved to: {}", config_path.display().to_string().cyan());
             }
         },
 
