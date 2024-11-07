@@ -49,19 +49,19 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Manage s2-cli configuration
+    /// Manage CLI configuration.
     Config {
         #[command(subcommand)]
         action: ConfigActions,
     },
 
-    // Operate on an S2 account.
+    /// Operate on an S2 account.
     Account {
         #[command(subcommand)]
         action: AccountActions,
     },
 
-    // Operate on an S2 basin.
+    /// Operate on an S2 basin.
     Basin {
         /// Name of the basin to manage.
         basin: String,
@@ -70,7 +70,7 @@ enum Commands {
         action: BasinActions,
     },
 
-    ///  Operate on an S2 stream.
+    /// Operate on an S2 stream.
     Stream {
         /// Name of the basin.
         basin: String,
