@@ -30,13 +30,14 @@ pub fn config_path() -> Result<PathBuf, S2CliError> {
 }
 
 pub fn load_config(path: &Path) -> Result<S2Config, S2ConfigError> {
-    let mut builder = Config::builder().add_source(config::Environment::with_prefix("S2"));
+    let mut builder = Config::builder();
     if path.exists() {
         builder = builder.add_source(config::File::new(
             path.to_str().expect("config path is valid utf8"),
             FileFormat::Toml,
         ));
     }
+    builder = builder.add_source(config::Environment::with_prefix("S2"));
     Ok(builder.build()?.try_deserialize::<S2Config>()?)
 }
 
