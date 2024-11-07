@@ -273,6 +273,7 @@ fn parse_records_output_source(s: &str) -> Result<RecordsIO, std::io::Error> {
 
 fn client_config(auth_token: String) -> Result<ClientConfig, InvalidHostError> {
     Ok(ClientConfig::new(auth_token.to_string())
+        .with_user_agent("s2-cli")
         .with_host_endpoint(HostEndpoints::from_env()?)
         .with_connection_timeout(std::time::Duration::from_secs(5)))
 }
