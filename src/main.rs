@@ -246,7 +246,7 @@ impl RecordsIO {
                     .open(path)
                     .await?;
 
-                Ok(Box::new(tokio::io::BufWriter::new(file)))
+                Ok(Box::new(BufWriter::new(file)))
             }
             RecordsIO::Stdout => {
                 trace!("stdout writer");
