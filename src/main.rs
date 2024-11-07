@@ -16,6 +16,7 @@ use tokio::{
     io::{self, AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
 };
 use tokio_stream::StreamExt;
+use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{BasinConfig, StreamConfig, RETENTION_POLICY_PATH, STORAGE_CLASS_PATH};
 
@@ -237,6 +238,7 @@ impl RecordsIO {
     pub async fn into_writer(&self) -> io::Result<Box<dyn AsyncWrite + Send + Unpin>> {
         match self {
             RecordsIO::File(path) => {
+                trace!(?path, "opening file writer");
                 let file = OpenOptions::new()
                     .write(true)
                     .create(true)
@@ -246,7 +248,10 @@ impl RecordsIO {
 
                 Ok(Box::new(tokio::io::BufWriter::new(file)))
             }
-            RecordsIO::Stdout => Ok(Box::new(BufWriter::new(tokio::io::stdout()))),
+            RecordsIO::Stdout => {
+                trace!("stdout writer");
+                Ok(Box::new(BufWriter::new(tokio::io::stdout())))
+            },
             RecordsIO::Stdin => panic!("unsupported record source"),
         }
     }
@@ -537,6 +542,9 @@ async fn run() -> Result<(), S2CliError> {
                                     format!("✓ [READ] next_seq_num: {}", seq_num).blue().bold()
                                 );
                             }
+                        }
+                        if let Some(ref mut writer) = writer {
+                            writer.flush().await.expect("writer flush");
                         }
                     }
                 }
