@@ -30,12 +30,14 @@ pub fn config_path() -> Result<PathBuf, S2CliError> {
 }
 
 pub fn load_config(path: &Path) -> Result<S2Config, S2ConfigError> {
-    Config::builder()
-        .add_source(config::File::new(
+    let mut builder = Config::builder().add_source(config::Environment::with_prefix("S2"));
+    if path.exists() {
+        builder = builder.add_source(config::File::new(
             path.to_str().ok_or(S2ConfigError::PathError)?,
             FileFormat::Toml,
-        ))
-        .add_source(config::Environment::with_prefix("S2"))
+        ));
+    }
+    builder
         .build()
         .map_err(|_| S2ConfigError::LoadError)?
         .try_deserialize::<S2Config>()
