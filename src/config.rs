@@ -33,44 +33,37 @@ pub fn load_config(path: &Path) -> Result<S2Config, S2ConfigError> {
     let mut builder = Config::builder().add_source(config::Environment::with_prefix("S2"));
     if path.exists() {
         builder = builder.add_source(config::File::new(
-            path.to_str().ok_or(S2ConfigError::PathError)?,
+            path.to_str().expect("config path is valid utf8"),
             FileFormat::Toml,
         ));
     }
-    builder
-        .build()
-        .map_err(|_| S2ConfigError::LoadError)?
-        .try_deserialize::<S2Config>()
-        .map_err(|_| S2ConfigError::LoadError)
+    Ok(builder.build()?.try_deserialize::<S2Config>()?)
 }
 
 pub fn create_config(config_path: &PathBuf, auth_token: String) -> Result<(), S2ConfigError> {
     let cfg = S2Config { auth_token };
 
     if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|_| S2ConfigError::WriteError)?;
+        std::fs::create_dir_all(parent).map_err(S2ConfigError::WriteError)?;
     }
 
     let toml = toml::to_string(&cfg).unwrap();
-    std::fs::write(config_path, toml).map_err(|_| S2ConfigError::WriteError)?;
+    std::fs::write(config_path, toml).map_err(S2ConfigError::WriteError)?;
 
     Ok(())
 }
 
 #[derive(Error, Debug, Diagnostic)]
 pub enum S2ConfigError {
-    #[error("Failed to find config directory")]
+    #[error("Failed to find a home for config directory")]
     DirNotFound,
 
-    #[error("Failed to find config file")]
-    PathError,
-
-    #[error("Failed to load config file")]
+    #[error("Failed to load config file: {0}")]
     #[diagnostic(help(
         "Did you run `s2-cli config set`? or use `S2_AUTH_TOKEN` environment variable."
     ))]
-    LoadError,
+    LoadError(#[from] config::ConfigError),
 
-    #[error("Failed to write config file")]
-    WriteError,
+    #[error("Failed to write config file: {0}")]
+    WriteError(#[source] std::io::Error),
 }
