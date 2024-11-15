@@ -1,5 +1,5 @@
 use miette::Diagnostic;
-use streamstore::client::{ClientError, InvalidHostError};
+use streamstore::client::{ClientError, ConnectionError, ParseError};
 use thiserror::Error;
 
 use crate::{
@@ -30,11 +30,11 @@ pub enum S2CliError {
 
     #[error("Failed to connect to s2: {0}")]
     #[diagnostic(help("Are you connected to the internet?"))]
-    Connection(#[from] ClientError),
+    Connection(#[from] ConnectionError),
 
     #[error("{0}")]
     #[diagnostic(help("Are you overriding `S2_CLOUD`, `S2_CELL`, or `S2_BASIN_ZONE`?"))]
-    InvalidHost(#[from] InvalidHostError),
+    HostEndpoints(#[from] ParseError),
 
     #[error(transparent)]
     #[diagnostic(help("{}", HELP))]
@@ -52,7 +52,13 @@ pub enum S2CliError {
     #[diagnostic(help("{}", BUG_HELP))]
     InvalidConfig(#[from] serde_json::Error),
 
-    #[error("Failed to initialize a `Record Reader`!")]
-    #[diagnostic(help("{}", BUG_HELP))]
-    RecordReaderInit,
+    #[error("Failed to initialize a `Record Reader`! {0}")]
+    RecordReaderInit(String),
+}
+
+pub fn s2_status(error: &ClientError) -> String {
+    match error {
+        ClientError::Service(status) => status.code().to_string(),
+        _ => error.to_string(),
+    }
 }

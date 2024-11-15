@@ -1,6 +1,5 @@
 use streamstore::{
     client::StreamClient,
-    service_error::{AppendSessionError, CheckTailError, ReadSessionError, ServiceError},
     streams::AppendRecordStream,
     types::{AppendOutput, ReadSessionRequest, ReadSessionResponse},
     Streaming,
@@ -13,6 +12,8 @@ use std::task::{Context, Poll};
 use streamstore::types::AppendRecord;
 use tokio::io::Lines;
 use tokio_stream::Stream;
+
+use crate::error::s2_status;
 
 pin_project! {
     #[derive(Debug)]
@@ -51,14 +52,14 @@ pub struct StreamService {
 
 #[derive(Debug, thiserror::Error)]
 pub enum StreamServiceError {
-    #[error("Failed to get next sequence number")]
-    CheckTail(#[from] ServiceError<CheckTailError>),
+    #[error("Failed to get next sequence number: {0}")]
+    CheckTail(String),
 
-    #[error("Failed to append records")]
-    AppendSession(#[from] ServiceError<AppendSessionError>),
+    #[error("Failed to append records: {0}")]
+    AppendSession(String),
 
-    #[error("Failed to read records")]
-    ReadSession(#[from] ServiceError<ReadSessionError>),
+    #[error("Failed to read records: {0}")]
+    ReadSession(String),
 }
 
 impl StreamService {
@@ -67,27 +68,36 @@ impl StreamService {
     }
 
     pub async fn check_tail(&self) -> Result<u64, StreamServiceError> {
-        Ok(self.client.check_tail().await?)
+        self.client
+            .check_tail()
+            .await
+            .map_err(|e| StreamServiceError::CheckTail(s2_status(&e)))
     }
 
     pub async fn append_session(
         &self,
         append_input_stream: RecordStream<Box<dyn AsyncBufRead + Send + Unpin>>,
-    ) -> Result<Streaming<AppendOutput, AppendSessionError>, StreamServiceError> {
+    ) -> Result<Streaming<AppendOutput>, StreamServiceError> {
         let append_record_stream = AppendRecordStream::new(append_input_stream, Default::default())
             .expect("stream init can't fail");
 
-        Ok(self.client.append_session(append_record_stream).await?)
+        self.client
+            .append_session(append_record_stream)
+            .await
+            .map_err(|e| StreamServiceError::AppendSession(s2_status(&e)))
     }
 
     pub async fn read_session(
         &self,
         start_seq_num: Option<u64>,
-    ) -> Result<Streaming<ReadSessionResponse, ReadSessionError>, StreamServiceError> {
+    ) -> Result<Streaming<ReadSessionResponse>, StreamServiceError> {
         let mut read_session_req = ReadSessionRequest::new();
         if let Some(start_seq_num) = start_seq_num {
             read_session_req = read_session_req.with_start_seq_num(start_seq_num);
         }
-        Ok(self.client.read_session(read_session_req).await?)
+        self.client
+            .read_session(read_session_req)
+            .await
+            .map_err(|e| StreamServiceError::ReadSession(s2_status(&e)))
     }
 }
