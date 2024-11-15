@@ -557,13 +557,22 @@ async fn run() -> Result<(), S2CliError> {
                                 }
                                 total_data_len += batch_len;
 
-                                let throughput_mibps = ((total_data_len.0 as f64
+                                let throughput_mibps = (total_data_len.0 as f64
                                     / start.unwrap().elapsed().as_secs_f64())
                                     / 1024.0
-                                    / 1024.0)
-                                    as u64;
+                                    / 1024.0;
 
-                                eprintln!("{seq_range:?} // {batch_len} bytes in {num_records} records // {throughput_mibps:?}");
+                                eprintln!(
+                                        "{}",
+                                        format!(
+                                            "✓ [READ] Batch throughput: {:.2} MiB/s ({} records in range {:?})",
+                                            throughput_mibps,
+                                            num_records,
+                                            seq_range
+                                        )
+                                        .blue()
+                                        .bold()
+                                    );
                             }
                             // TODO: better message for these cases
                             ReadOutput::FirstSeqNum(seq_num) => {
@@ -579,6 +588,22 @@ async fn run() -> Result<(), S2CliError> {
                                 );
                             }
                         }
+
+                        let total_throughput_mibps = (total_data_len.0 as f64
+                            / start.unwrap().elapsed().as_secs_f64())
+                            / 1024.0
+                            / 1024.0;
+
+                        eprintln!(
+                            "{}",
+                            format!(
+                                "✓ [READ] Total throughput: {:.2} MiB/s",
+                                total_throughput_mibps
+                            )
+                            .yellow()
+                            .bold()
+                        );
+
                         if let Some(ref mut writer) = writer {
                             writer.flush().await.expect("writer flush");
                         }
