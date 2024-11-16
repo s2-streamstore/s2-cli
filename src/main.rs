@@ -8,12 +8,14 @@ use config::{config_path, create_config};
 use error::S2CliError;
 use stream::{RecordStream, StreamService, StreamServiceError};
 use streamstore::{
-    client::{BasinClient, Client, ClientConfig, HostEndpoints, InvalidHostError, StreamClient},
-    types::{BasinMetadata, ReadOutput},
+    bytesize::ByteSize,
+    client::{BasinClient, Client, ClientConfig, HostEndpoints, ParseError, StreamClient},
+    types::{BasinMetadata, MeteredSize as _, ReadOutput},
 };
 use tokio::{
     fs::{File, OpenOptions},
     io::{self, AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
+    time::Instant,
 };
 use tokio_stream::StreamExt;
 use tracing::trace;
@@ -271,10 +273,10 @@ fn parse_records_output_source(s: &str) -> Result<RecordsIO, std::io::Error> {
     }
 }
 
-fn client_config(auth_token: String) -> Result<ClientConfig, InvalidHostError> {
+fn client_config(auth_token: String) -> Result<ClientConfig, ParseError> {
     Ok(ClientConfig::new(auth_token.to_string())
         .with_user_agent("s2-cli")
-        .with_host_endpoint(HostEndpoints::from_env()?)
+        .with_host_endpoints(HostEndpoints::from_env()?)
         .with_connection_timeout(std::time::Duration::from_secs(5)))
 }
 
@@ -315,7 +317,7 @@ async fn run() -> Result<(), S2CliError> {
         Commands::Account { action } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
-            let account_service = AccountService::new(Client::connect(client_config).await?);
+            let account_service = AccountService::new(Client::new(client_config)?);
             match action {
                 AccountActions::ListBasins {
                     prefix,
@@ -396,7 +398,7 @@ async fn run() -> Result<(), S2CliError> {
                     start_after,
                     limit,
                 } => {
-                    let basin_client = BasinClient::connect(client_config, basin).await?;
+                    let basin_client = BasinClient::new(client_config, basin)?;
                     let streams = BasinService::new(basin_client)
                         .list_streams(
                             prefix.unwrap_or_default(),
@@ -410,7 +412,7 @@ async fn run() -> Result<(), S2CliError> {
                 }
 
                 BasinActions::CreateStream { stream, config } => {
-                    let basin_client = BasinClient::connect(client_config, basin).await?;
+                    let basin_client = BasinClient::new(client_config, basin)?;
                     BasinService::new(basin_client)
                         .create_stream(stream, config.map(Into::into))
                         .await?;
@@ -418,7 +420,7 @@ async fn run() -> Result<(), S2CliError> {
                 }
 
                 BasinActions::DeleteStream { stream } => {
-                    let basin_client = BasinClient::connect(client_config, basin).await?;
+                    let basin_client = BasinClient::new(client_config, basin)?;
                     BasinService::new(basin_client)
                         .delete_stream(stream)
                         .await?;
@@ -426,7 +428,7 @@ async fn run() -> Result<(), S2CliError> {
                 }
 
                 BasinActions::GetStreamConfig { stream } => {
-                    let basin_client = BasinClient::connect(client_config, basin).await?;
+                    let basin_client = BasinClient::new(client_config, basin)?;
                     let config = BasinService::new(basin_client)
                         .get_stream_config(stream)
                         .await?;
@@ -435,7 +437,7 @@ async fn run() -> Result<(), S2CliError> {
                 }
 
                 BasinActions::ReconfigureStream { stream, config } => {
-                    let basin_client = BasinClient::connect(client_config, basin).await?;
+                    let basin_client = BasinClient::new(client_config, basin)?;
                     let mut mask = Vec::new();
 
                     if config.storage_class.is_some() {
@@ -463,17 +465,17 @@ async fn run() -> Result<(), S2CliError> {
             let client_config = client_config(cfg.auth_token)?;
             match action {
                 StreamActions::CheckTail => {
-                    let stream_client = StreamClient::connect(client_config, basin, stream).await?;
+                    let stream_client = StreamClient::new(client_config, basin, stream)?;
                     let next_seq_num = StreamService::new(stream_client).check_tail().await?;
                     println!("{}", next_seq_num);
                 }
                 StreamActions::Append { records } => {
-                    let stream_client = StreamClient::connect(client_config, basin, stream).await?;
+                    let stream_client = StreamClient::new(client_config, basin, stream)?;
                     let append_input_stream = RecordStream::new(
                         records
                             .into_reader()
                             .await
-                            .map_err(|_| S2CliError::RecordReaderInit)?
+                            .map_err(|e| S2CliError::RecordReaderInit(e.to_string()))?
                             .lines(),
                     );
 
@@ -495,14 +497,14 @@ async fn run() -> Result<(), S2CliError> {
                                     .bold()
                                 );
                             })
-                            .map_err(StreamServiceError::AppendSession)?;
+                            .map_err(|e| StreamServiceError::AppendSession(e.to_string()))?;
                     }
                 }
                 StreamActions::Read {
                     start_seq_num,
                     output,
                 } => {
-                    let stream_client = StreamClient::connect(client_config, basin, stream).await?;
+                    let stream_client = StreamClient::new(client_config, basin, stream)?;
                     let mut read_output_stream = StreamService::new(stream_client)
                         .read_session(start_seq_num)
                         .await?;
@@ -510,10 +512,30 @@ async fn run() -> Result<(), S2CliError> {
                         Some(output) => Some(output.into_writer().await.unwrap()),
                         None => None,
                     };
+
+                    let mut start = None;
+                    let mut total_data_len = ByteSize::b(0);
+
                     while let Some(read_result) = read_output_stream.next().await {
-                        let read_result = read_result.map_err(StreamServiceError::ReadSession)?;
+                        if start.is_none() {
+                            start = Some(Instant::now());
+                        }
+
+                        let read_result = read_result
+                            .map_err(|e| StreamServiceError::ReadSession(e.to_string()))?;
+
                         match read_result.output {
                             ReadOutput::Batch(sequenced_record_batch) => {
+                                let num_records = sequenced_record_batch.records.len();
+                                let mut batch_len = ByteSize::b(0);
+
+                                let seq_range = match (
+                                    sequenced_record_batch.records.first(),
+                                    sequenced_record_batch.records.last(),
+                                ) {
+                                    (Some(first), Some(last)) => first.seq_num..=last.seq_num,
+                                    _ => panic!("empty batch"),
+                                };
                                 for sequenced_record in sequenced_record_batch.records {
                                     eprintln!(
                                         "{}",
@@ -524,26 +546,60 @@ async fn run() -> Result<(), S2CliError> {
                                         .green()
                                         .bold()
                                     );
+
+                                    let data = &sequenced_record.body;
+                                    batch_len += sequenced_record.metered_size();
+
                                     if let Some(ref mut writer) = writer {
-                                        writer.write_all(&sequenced_record.body).await.unwrap();
-                                        writer.write_all(b"\n").await.unwrap();
+                                        writer
+                                            .write_all(&data)
+                                            .await
+                                            .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
+                                        writer
+                                            .write_all(b"\n")
+                                            .await
+                                            .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
                                     }
                                 }
+                                total_data_len += batch_len;
+
+                                let throughput_mibps = (total_data_len.0 as f64
+                                    / start.unwrap().elapsed().as_secs_f64())
+                                    / 1024.0
+                                    / 1024.0;
+
+                                eprintln!(
+                                        "{}",
+                                        format!(
+                                            "{throughput_mibps:.2} MiB/s ({num_records} records in range {seq_range:?})",                                                                                                                                    
+                                        )
+                                        .blue()
+                                        .bold()
+                                    );
                             }
                             // TODO: better message for these cases
                             ReadOutput::FirstSeqNum(seq_num) => {
-                                eprintln!(
-                                    "{}",
-                                    format!("✓ [READ] first_seq_num: {}", seq_num).blue().bold()
-                                );
+                                eprintln!("{}", format!("first_seq_num: {seq_num}").blue().bold());
                             }
                             ReadOutput::NextSeqNum(seq_num) => {
-                                eprintln!(
-                                    "{}",
-                                    format!("✓ [READ] next_seq_num: {}", seq_num).blue().bold()
-                                );
+                                eprintln!("{}", format!("next_seq_num: {seq_num}").blue().bold());
                             }
                         }
+
+                        let total_elapsed_time = start.unwrap().elapsed().as_secs_f64();
+
+                        let total_throughput_mibps =
+                            (total_data_len.0 as f64 / total_elapsed_time) / 1024.0 / 1024.0;
+
+                        eprintln!(
+                            "{}",
+                            format!(
+                                "{total_data_len} metered bytes in {total_elapsed_time} seconds at {total_throughput_mibps:.2} MiB/s"                                
+                            )
+                            .yellow()
+                            .bold()
+                        );
+
                         if let Some(ref mut writer) = writer {
                             writer.flush().await.expect("writer flush");
                         }
