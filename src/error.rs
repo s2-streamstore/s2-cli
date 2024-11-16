@@ -54,6 +54,9 @@ pub enum S2CliError {
 
     #[error("Failed to initialize a `Record Reader`! {0}")]
     RecordReaderInit(String),
+
+    #[error("Failed to write records: {0}")]
+    RecordWrite(String),
 }
 
 pub fn s2_status(error: &ClientError) -> String {

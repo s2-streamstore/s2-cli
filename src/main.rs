@@ -551,8 +551,14 @@ async fn run() -> Result<(), S2CliError> {
                                     batch_len += sequenced_record.metered_size();
 
                                     if let Some(ref mut writer) = writer {
-                                        writer.write_all(&data).await.unwrap();
-                                        writer.write_all(b"\n").await.unwrap();
+                                        writer
+                                            .write_all(&data)
+                                            .await
+                                            .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
+                                        writer
+                                            .write_all(b"\n")
+                                            .await
+                                            .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
                                     }
                                 }
                                 total_data_len += batch_len;
@@ -565,10 +571,7 @@ async fn run() -> Result<(), S2CliError> {
                                 eprintln!(
                                         "{}",
                                         format!(
-                                            "✓ [READ] Batch throughput: {:.2} MiB/s ({} records in range {:?})",
-                                            throughput_mibps,
-                                            num_records,
-                                            seq_range
+                                            "{throughput_mibps:.2} MiB/s ({num_records} records in range {seq_range:?})",                                                                                                                                    
                                         )
                                         .blue()
                                         .bold()
@@ -576,29 +579,22 @@ async fn run() -> Result<(), S2CliError> {
                             }
                             // TODO: better message for these cases
                             ReadOutput::FirstSeqNum(seq_num) => {
-                                eprintln!(
-                                    "{}",
-                                    format!("✓ [READ] first_seq_num: {}", seq_num).blue().bold()
-                                );
+                                eprintln!("{}", format!("first_seq_num: {seq_num}").blue().bold());
                             }
                             ReadOutput::NextSeqNum(seq_num) => {
-                                eprintln!(
-                                    "{}",
-                                    format!("✓ [READ] next_seq_num: {}", seq_num).blue().bold()
-                                );
+                                eprintln!("{}", format!("next_seq_num: {seq_num}").blue().bold());
                             }
                         }
 
-                        let total_throughput_mibps = (total_data_len.0 as f64
-                            / start.unwrap().elapsed().as_secs_f64())
-                            / 1024.0
-                            / 1024.0;
+                        let total_elapsed_time = start.unwrap().elapsed().as_secs_f64();
+
+                        let total_throughput_mibps =
+                            (total_data_len.0 as f64 / total_elapsed_time) / 1024.0 / 1024.0;
 
                         eprintln!(
                             "{}",
                             format!(
-                                "✓ [READ] Total throughput: {:.2} MiB/s",
-                                total_throughput_mibps
+                                "{total_data_len} metered bytes in {total_elapsed_time} seconds at {total_throughput_mibps:.2} MiB/s"                                
                             )
                             .yellow()
                             .bold()
