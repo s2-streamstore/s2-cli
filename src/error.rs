@@ -1,5 +1,8 @@
 use miette::Diagnostic;
-use streamstore::client::{ClientError, ConnectionError, ParseError};
+use streamstore::{
+    client::{ClientError, ParseError},
+    types::ConvertError,
+};
 use thiserror::Error;
 
 use crate::{
@@ -28,9 +31,9 @@ pub enum S2CliError {
     #[diagnostic(transparent)]
     Config(#[from] S2ConfigError),
 
-    #[error("Failed to connect to s2: {0}")]
-    #[diagnostic(help("Are you connected to the internet?"))]
-    Connection(#[from] ConnectionError),
+    #[error(transparent)]
+    #[diagnostic(help("Are you trying to operate on an invalid basin?"))]
+    ConvertError(#[from] ConvertError),
 
     #[error("{0}")]
     #[diagnostic(help("Are you overriding `S2_CLOUD`, `S2_CELL`, or `S2_BASIN_ZONE`?"))]
