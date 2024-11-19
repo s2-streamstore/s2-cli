@@ -1,8 +1,8 @@
 use streamstore::{
     client::Client,
     types::{
-        BasinConfig, BasinMetadata, CreateBasinRequest, DeleteBasinRequest, ListBasinsRequest,
-        ListBasinsResponse, ReconfigureBasinRequest, StreamConfig,
+        BasinConfig, BasinMetadata, BasinName, CreateBasinRequest, DeleteBasinRequest,
+        ListBasinsRequest, ListBasinsResponse, ReconfigureBasinRequest, StreamConfig,
     },
 };
 
@@ -54,7 +54,7 @@ impl AccountService {
 
     pub async fn create_basin(
         &self,
-        basin: String,
+        basin: BasinName,
         storage_class: Option<crate::types::StorageClass>,
         retention_policy: Option<crate::types::RetentionPolicy>,
     ) -> Result<BasinMetadata, AccountServiceError> {
@@ -77,7 +77,7 @@ impl AccountService {
             .map_err(|e| AccountServiceError::CreateBasin(s2_status(&e)))
     }
 
-    pub async fn delete_basin(&self, basin: String) -> Result<(), AccountServiceError> {
+    pub async fn delete_basin(&self, basin: BasinName) -> Result<(), AccountServiceError> {
         let delete_basin_req = DeleteBasinRequest::new(basin);
         self.client
             .delete_basin(delete_basin_req)
@@ -88,18 +88,17 @@ impl AccountService {
 
     pub async fn get_basin_config(
         &self,
-        basin: String,
+        basin: BasinName,
     ) -> Result<BasinConfig, AccountServiceError> {
-        Ok(self
-            .client
+        self.client
             .get_basin_config(basin)
             .await
-            .map_err(|e| AccountServiceError::GetBasinConfig(s2_status(&e)))?)
+            .map_err(|e| AccountServiceError::GetBasinConfig(s2_status(&e)))
     }
 
     pub async fn reconfigure_basin(
         &self,
-        basin: String,
+        basin: BasinName,
         basin_config: BasinConfig,
         mask: Vec<String>,
     ) -> Result<(), AccountServiceError> {

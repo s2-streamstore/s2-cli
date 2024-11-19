@@ -85,11 +85,10 @@ impl BasinService {
         &self,
         stream: String,
     ) -> Result<StreamConfig, BasinServiceError> {
-        Ok(self
-            .client
+        self.client
             .get_stream_config(stream)
             .await
-            .map_err(|e| BasinServiceError::GetStreamConfig(s2_status(&e)))?)
+            .map_err(|e| BasinServiceError::GetStreamConfig(s2_status(&e)))
     }
 
     pub async fn reconfigure_stream(
