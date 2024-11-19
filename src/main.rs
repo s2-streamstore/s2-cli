@@ -206,8 +206,8 @@ enum StreamActions {
     Append {
         /// Newline delimited records to append from a file or stdin (all records are treated as plain text).
         /// Use "-" to read from stdin.
-        #[arg(value_parser = parse_records_input_source)]
-        records: RecordsIO,
+        #[arg(value_parser = parse_records_input_source, default_value = "-")]
+        records: RecordsIn,
     },
 
     Read {
@@ -216,31 +216,38 @@ enum StreamActions {
 
         /// Output records to a file or stdout.
         /// Use "-" to write to stdout.
-        #[arg(value_parser = parse_records_output_source)]
-        output: Option<RecordsIO>,
+        #[arg(value_parser = parse_records_output_source, default_value = "-")]
+        output: Option<RecordsOut>,
     },
 }
 
-/// Source of records for an append session.
+ /// Source of records for an append session.
 #[derive(Debug, Clone)]
-pub enum RecordsIO {
+pub enum RecordsIn {
     File(PathBuf),
     Stdin,
+}
+
+/// Sink for records in a read session.
+#[derive(Debug, Clone)]
+pub enum RecordsOut {
+    File(PathBuf),
     Stdout,
 }
 
-impl RecordsIO {
+impl RecordsIn {
     pub async fn into_reader(&self) -> std::io::Result<Box<dyn AsyncBufRead + Send + Unpin>> {
         match self {
-            RecordsIO::File(path) => Ok(Box::new(BufReader::new(File::open(path).await?))),
-            RecordsIO::Stdin => Ok(Box::new(BufReader::new(tokio::io::stdin()))),
-            _ => panic!("unsupported record source"),
+            RecordsIn::File(path) => Ok(Box::new(BufReader::new(File::open(path).await?))),
+            RecordsIn::Stdin => Ok(Box::new(BufReader::new(tokio::io::stdin()))),            
         }
     }
+}
 
+impl RecordsOut {
     pub async fn into_writer(&self) -> io::Result<Box<dyn AsyncWrite + Send + Unpin>> {
         match self {
-            RecordsIO::File(path) => {
+            RecordsOut::File(path) => {
                 trace!(?path, "opening file writer");
                 let file = OpenOptions::new()
                     .write(true)
@@ -251,26 +258,25 @@ impl RecordsIO {
 
                 Ok(Box::new(BufWriter::new(file)))
             }
-            RecordsIO::Stdout => {
+            RecordsOut::Stdout => {
                 trace!("stdout writer");
                 Ok(Box::new(BufWriter::new(tokio::io::stdout())))
-            }
-            RecordsIO::Stdin => panic!("unsupported record source"),
+            }            
         }
     }
 }
 
-fn parse_records_input_source(s: &str) -> Result<RecordsIO, std::io::Error> {
+fn parse_records_input_source(s: &str) -> Result<RecordsIn, std::io::Error> {
     match s {
-        "-" => Ok(RecordsIO::Stdin),
-        _ => Ok(RecordsIO::File(PathBuf::from(s))),
+        "" | "-" => Ok(RecordsIn::Stdin),
+        _ => Ok(RecordsIn::File(PathBuf::from(s))),
     }
 }
 
-fn parse_records_output_source(s: &str) -> Result<RecordsIO, std::io::Error> {
+fn parse_records_output_source(s: &str) -> Result<RecordsOut, std::io::Error> {
     match s {
-        "-" => Ok(RecordsIO::Stdout),
-        _ => Ok(RecordsIO::File(PathBuf::from(s))),
+        "" | "-" => Ok(RecordsOut::Stdout),
+        _ => Ok(RecordsOut::File(PathBuf::from(s))),
     }
 }
 
