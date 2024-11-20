@@ -5,7 +5,7 @@ use streamstore::{
 };
 use thiserror::Error;
 
-use crate::{basin::BasinServiceError, config::S2ConfigError, stream::StreamServiceError};
+use crate::{config::S2ConfigError, stream::StreamServiceError};
 
 const HELP: &str = color_print::cstr!(
     "\n<cyan><bold>Notice something wrong?</bold></cyan>\n\n\
@@ -38,13 +38,10 @@ pub enum S2CliError {
 
     #[error(transparent)]
     #[diagnostic(help("{}", HELP))]
-    BasinService(#[from] BasinServiceError),
-
-    #[error(transparent)]
-    #[diagnostic(help("{}", HELP))]
     StreamService(#[from] StreamServiceError),
 
     #[error(transparent)]
+    #[diagnostic(help("{}", HELP))]
     ServiceError(#[from] ServiceError),
 
     #[error(transparent)]
@@ -82,12 +79,12 @@ impl From<ClientError> for RequestStatus {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("Failed to {operation} {entity}{plural} {extra}: \n{error}", plural = plural.map_or("", |p| p))]
+#[error("Failed to {operation} {entity}{plural} {context}: \n{error}", plural = plural.map_or("", |p| p))]
 pub struct ServiceError {
     entity: String,
     operation: String,
     error: RequestStatus,
-    extra: String,
+    context: String,
     plural: Option<&'static str>,
 }
 
@@ -101,14 +98,14 @@ impl ServiceError {
             entity: entity.into(),
             operation: operation.into(),
             error: error.into(),
-            extra: String::new(),
+            context: String::new(),
             plural: None,
         }
     }
 
-    pub fn with_extra(self, extra: impl Into<String>) -> Self {
+    pub fn with_context(self, context: impl Into<String>) -> Self {
         Self {
-            extra: extra.into(),
+            context: context.into(),
             ..self
         }
     }

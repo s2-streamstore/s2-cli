@@ -6,31 +6,14 @@ use streamstore::{
     },
 };
 
-use crate::error::s2_status;
+use crate::error::ServiceError;
 
 pub struct BasinService {
     client: BasinClient,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum BasinServiceError {
-    #[error("Failed to list streams: {0}")]
-    ListStreams(String),
-
-    #[error("Failed to create stream: {0}")]
-    CreateStream(String),
-
-    #[error("Failed to delete stream: {0}")]
-    DeleteStream(String),
-
-    #[error("Failed to get stream config: {0}")]
-    GetStreamConfig(String),
-
-    #[error("Failed to reconfigure stream: {0}")]
-    ReconfigureStream(String),
-}
-
 impl BasinService {
+    const ENTITY: &'static str = "stream";
     pub fn new(client: BasinClient) -> Self {
         Self { client }
     }
@@ -40,7 +23,8 @@ impl BasinService {
         prefix: String,
         start_after: String,
         limit: usize,
-    ) -> Result<Vec<String>, BasinServiceError> {
+    ) -> Result<Vec<String>, ServiceError> {
+        const OPERATION: &str = "list";
         let list_streams_req = ListStreamsRequest::new()
             .with_prefix(prefix)
             .with_start_after(start_after)
@@ -50,7 +34,7 @@ impl BasinService {
             .client
             .list_streams(list_streams_req)
             .await
-            .map_err(|e| BasinServiceError::ListStreams(s2_status(&e)))?;
+            .map_err(|e| ServiceError::new(Self::ENTITY, OPERATION, e).with_plural())?;
 
         Ok(streams)
     }
@@ -59,7 +43,8 @@ impl BasinService {
         &self,
         stream: String,
         config: Option<StreamConfig>,
-    ) -> Result<(), BasinServiceError> {
+    ) -> Result<(), ServiceError> {
+        const OPERATION: &str = "create";
         let mut create_stream_req = CreateStreamRequest::new(stream);
 
         if let Some(config) = config {
@@ -69,26 +54,23 @@ impl BasinService {
         self.client
             .create_stream(create_stream_req)
             .await
-            .map_err(|e| BasinServiceError::CreateStream(s2_status(&e)))?;
-        Ok(())
+            .map_err(|e| ServiceError::new(Self::ENTITY, OPERATION, e))
     }
 
-    pub async fn delete_stream(&self, stream: String) -> Result<(), BasinServiceError> {
+    pub async fn delete_stream(&self, stream: String) -> Result<(), ServiceError> {
+        const OPERATION: &str = "delete";
         self.client
             .delete_stream(DeleteStreamRequest::new(stream))
             .await
-            .map_err(|e| BasinServiceError::DeleteStream(s2_status(&e)))?;
-        Ok(())
+            .map_err(|e| ServiceError::new(Self::ENTITY, OPERATION, e))
     }
 
-    pub async fn get_stream_config(
-        &self,
-        stream: String,
-    ) -> Result<StreamConfig, BasinServiceError> {
+    pub async fn get_stream_config(&self, stream: String) -> Result<StreamConfig, ServiceError> {
+        const OPERATION: &str = "get";
         self.client
             .get_stream_config(stream)
             .await
-            .map_err(|e| BasinServiceError::GetStreamConfig(s2_status(&e)))
+            .map_err(|e| ServiceError::new(Self::ENTITY, OPERATION, e).with_context("config"))
     }
 
     pub async fn reconfigure_stream(
@@ -96,7 +78,8 @@ impl BasinService {
         stream: String,
         config: StreamConfig,
         mask: Vec<String>,
-    ) -> Result<(), BasinServiceError> {
+    ) -> Result<(), ServiceError> {
+        const OPERATION: &str = "reconfigure";
         let reconfigure_stream_req = ReconfigureStreamRequest::new(stream)
             .with_config(config)
             .with_mask(mask);
@@ -104,7 +87,6 @@ impl BasinService {
         self.client
             .reconfigure_stream(reconfigure_stream_req)
             .await
-            .map_err(|e| BasinServiceError::ReconfigureStream(s2_status(&e)))?;
-        Ok(())
+            .map_err(|e| ServiceError::new(Self::ENTITY, OPERATION, e))
     }
 }

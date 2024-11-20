@@ -81,7 +81,7 @@ impl AccountService {
         self.client
             .get_basin_config(basin)
             .await
-            .map_err(|e| ServiceError::new(Self::ENTITY, OPERATION, e).with_extra("config"))
+            .map_err(|e| ServiceError::new(Self::ENTITY, OPERATION, e).with_context("config"))
     }
 
     pub async fn reconfigure_basin(
