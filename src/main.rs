@@ -212,16 +212,21 @@ enum StreamActions {
 
     Read {
         /// Starting sequence number (inclusive). If not specified, the latest record.
-        start_seq_num: Option<u64>,
+        start: u64,
 
         /// Output records to a file or stdout.
         /// Use "-" to write to stdout.
         #[arg(value_parser = parse_records_output_source, default_value = "-")]
         output: Option<RecordsOut>,
+
+        // Limit the number of records to read.
+        limit_count: Option<u64>,
+
+        // Limit the number of bytes to read.
+        limit_bytes: Option<u64>,
     },
 }
 
- /// Source of records for an append session.
 #[derive(Debug, Clone)]
 pub enum RecordsIn {
     File(PathBuf),
@@ -239,7 +244,7 @@ impl RecordsIn {
     pub async fn into_reader(&self) -> std::io::Result<Box<dyn AsyncBufRead + Send + Unpin>> {
         match self {
             RecordsIn::File(path) => Ok(Box::new(BufReader::new(File::open(path).await?))),
-            RecordsIn::Stdin => Ok(Box::new(BufReader::new(tokio::io::stdin()))),            
+            RecordsIn::Stdin => Ok(Box::new(BufReader::new(tokio::io::stdin()))),
         }
     }
 }
@@ -261,7 +266,7 @@ impl RecordsOut {
             RecordsOut::Stdout => {
                 trace!("stdout writer");
                 Ok(Box::new(BufWriter::new(tokio::io::stdout())))
-            }            
+            }
         }
     }
 }
@@ -510,12 +515,14 @@ async fn run() -> Result<(), S2CliError> {
                     }
                 }
                 StreamActions::Read {
-                    start_seq_num,
+                    start,
                     output,
-                } => {
+                    limit_count,
+                    limit_bytes,
+                } => {                    
                     let stream_client = StreamClient::new(client_config, basin, stream);
                     let mut read_output_stream = StreamService::new(stream_client)
-                        .read_session(start_seq_num)
+                        .read_session(start, limit_count, limit_bytes)
                         .await?;
                     let mut writer = match output {
                         Some(output) => Some(output.into_writer().await.unwrap()),
@@ -545,17 +552,7 @@ async fn run() -> Result<(), S2CliError> {
                                     (Some(first), Some(last)) => first.seq_num..=last.seq_num,
                                     _ => panic!("empty batch"),
                                 };
-                                for sequenced_record in sequenced_record_batch.records {
-                                    eprintln!(
-                                        "{}",
-                                        format!(
-                                            "✓ [READ] got record batch: seq_num: {}",
-                                            sequenced_record.seq_num,
-                                        )
-                                        .green()
-                                        .bold()
-                                    );
-
+                                for sequenced_record in sequenced_record_batch.records {                                    
                                     let data = &sequenced_record.body;
                                     batch_len += sequenced_record.metered_size();
 
@@ -580,7 +577,7 @@ async fn run() -> Result<(), S2CliError> {
                                 eprintln!(
                                     "{}",
                                     format!(
-                                        "{throughput_mibps:.2} MiB/s \
+                                        "✓ {throughput_mibps:.2} MiB/s \
                                             ({num_records} records in range {seq_range:?})",
                                     )
                                     .blue()
