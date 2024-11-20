@@ -35,7 +35,7 @@ pub enum S2CliError {
     #[diagnostic(help("Are you trying to operate on an invalid basin?"))]
     ConvertError(#[from] ConvertError),
 
-    #[error("{0}")]
+    #[error(transparent)]
     #[diagnostic(help("Are you overriding `S2_CLOUD`, `S2_CELL`, or `S2_BASIN_ZONE`?"))]
     HostEndpoints(#[from] ParseError),
 

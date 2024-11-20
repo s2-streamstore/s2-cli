@@ -222,14 +222,14 @@ enum StreamActions {
         /// Output records to a file or stdout.
         /// Use "-" to write to stdout.
         #[arg(value_parser = parse_records_output_source, default_value = "-")]
-        output: Option<RecordsOut>,
+        output: RecordsOut,
 
         /// Limit the number of records returned.
-        #[arg(long)]
+        #[arg(short = 'n', long)]
         limit_count: Option<u64>,
 
         /// Limit the number of bytes returned.
-        #[arg(long)]
+        #[arg(short = 'b', long)]
         limit_bytes: Option<ByteSize>,
     },
 }
@@ -531,10 +531,7 @@ async fn run() -> Result<(), S2CliError> {
                     let mut read_output_stream = StreamService::new(stream_client)
                         .read_session(start, limit_count, limit_bytes)
                         .await?;
-                    let mut writer = match output {
-                        Some(output) => Some(output.into_writer().await.unwrap()),
-                        None => None,
-                    };
+                    let mut writer = output.into_writer().await.unwrap();
 
                     let mut start = None;
                     let mut total_data_len = ByteSize::b(0);
@@ -563,16 +560,14 @@ async fn run() -> Result<(), S2CliError> {
                                     let data = &sequenced_record.body;
                                     batch_len += sequenced_record.metered_size();
 
-                                    if let Some(ref mut writer) = writer {
-                                        writer
-                                            .write_all(data)
-                                            .await
-                                            .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
-                                        writer
-                                            .write_all(b"\n")
-                                            .await
-                                            .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
-                                    }
+                                    writer
+                                        .write_all(data)
+                                        .await
+                                        .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
+                                    writer
+                                        .write_all(b"\n")
+                                        .await
+                                        .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
                                 }
                                 total_data_len += batch_len;
 
@@ -616,9 +611,7 @@ async fn run() -> Result<(), S2CliError> {
                             .bold()
                         );
 
-                        if let Some(ref mut writer) = writer {
-                            writer.flush().await.expect("writer flush");
-                        }
+                        writer.flush().await.expect("writer flush");
                     }
                 }
             }
