@@ -14,6 +14,7 @@ use tokio::io::Lines;
 use tokio_stream::Stream;
 
 use crate::error::s2_status;
+use crate::ByteSize;
 
 pin_project! {
     #[derive(Debug)]
@@ -91,25 +92,17 @@ impl StreamService {
         &self,
         start: u64,
         limit_count: Option<u64>,
-        limit_bytes: Option<u64>,
+        limit_bytes: Option<ByteSize>,
     ) -> Result<Streaming<ReadOutput>, StreamServiceError> {
-        let read_limit = match (limit_count, limit_bytes) {
-            (Some(count), Some(bytes)) => Some(ReadLimit { count, bytes }),
-            (Some(count), None) => Some(ReadLimit {
-                count,
-                bytes: 1024 * 1024,
-            }),
-
-            (None, Some(bytes)) => Some(ReadLimit { count: 1000, bytes }),
-            _ => None,
+        let read_session_req = ReadSessionRequest {
+            start_seq_num: Some(start),
+            limit: match (limit_count, limit_bytes.map(|b| b.as_u64())) {
+                (Some(count), Some(bytes)) => Some(ReadLimit { count, bytes }),
+                (Some(count), None) => Some(ReadLimit { count, bytes: 0 }),
+                (None, Some(bytes)) => Some(ReadLimit { count: 0, bytes }),
+                (None, None) => None,
+            },
         };
-
-        let mut read_session_req = ReadSessionRequest::new()            
-            .with_start_seq_num(start);
-
-        if let Some(read_limit) = read_limit {
-            read_session_req = read_session_req.with_limit(read_limit);
-        }
 
         self.client
             .read_session(read_session_req)

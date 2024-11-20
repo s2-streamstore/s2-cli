@@ -204,12 +204,16 @@ enum StreamActions {
 
     /// Append records to a stream. Currently, only newline delimited records are supported.
     Append {
-        /// Newline delimited records to append from a file or stdin (all records are treated as plain text).
+        /// Input newline delimited records to append from a file or stdin.
+        /// All records are treated as plain text.
         /// Use "-" to read from stdin.
         #[arg(value_parser = parse_records_input_source, default_value = "-")]
         records: RecordsIn,
     },
 
+    /// Read records from a stream.
+    /// If a limit if specified, reading will stop when the limit is reached or there are no more records on the stream.
+    /// If a limit is not specified, the reader will keep tailing and wait for new records.
     Read {
         /// Starting sequence number (inclusive). If not specified, the latest record.
         start: u64,
@@ -219,11 +223,11 @@ enum StreamActions {
         #[arg(value_parser = parse_records_output_source, default_value = "-")]
         output: Option<RecordsOut>,
 
-        // Limit the number of records to read.
+        /// Limit the number of records returned.
         limit_count: Option<u64>,
 
-        // Limit the number of bytes to read.
-        limit_bytes: Option<u64>,
+        /// Limit the number of bytes returned
+        limit_bytes: Option<ByteSize>,
     },
 }
 
@@ -519,7 +523,7 @@ async fn run() -> Result<(), S2CliError> {
                     output,
                     limit_count,
                     limit_bytes,
-                } => {                    
+                } => {
                     let stream_client = StreamClient::new(client_config, basin, stream);
                     let mut read_output_stream = StreamService::new(stream_client)
                         .read_session(start, limit_count, limit_bytes)
@@ -552,7 +556,7 @@ async fn run() -> Result<(), S2CliError> {
                                     (Some(first), Some(last)) => first.seq_num..=last.seq_num,
                                     _ => panic!("empty batch"),
                                 };
-                                for sequenced_record in sequenced_record_batch.records {                                    
+                                for sequenced_record in sequenced_record_batch.records {
                                     let data = &sequenced_record.body;
                                     batch_len += sequenced_record.metered_size();
 
@@ -577,7 +581,7 @@ async fn run() -> Result<(), S2CliError> {
                                 eprintln!(
                                     "{}",
                                     format!(
-                                        "✓ {throughput_mibps:.2} MiB/s \
+                                        "⦿ {throughput_mibps:.2} MiB/s \
                                             ({num_records} records in range {seq_range:?})",
                                     )
                                     .blue()
