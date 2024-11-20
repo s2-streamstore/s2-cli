@@ -5,7 +5,7 @@ use streamstore::{
 };
 use thiserror::Error;
 
-use crate::{config::S2ConfigError, stream::StreamServiceError};
+use crate::config::S2ConfigError;
 
 const HELP: &str = color_print::cstr!(
     "\n<cyan><bold>Notice something wrong?</bold></cyan>\n\n\
@@ -38,11 +38,7 @@ pub enum S2CliError {
 
     #[error(transparent)]
     #[diagnostic(help("{}", HELP))]
-    StreamService(#[from] StreamServiceError),
-
-    #[error(transparent)]
-    #[diagnostic(help("{}", HELP))]
-    ServiceError(#[from] ServiceError),
+    ServiceError(Box<ServiceError>),
 
     #[error(transparent)]
     #[diagnostic(help("{}", BUG_HELP))]
@@ -58,12 +54,12 @@ pub enum S2CliError {
 // Error for holding relevant info from `tonic::Status`
 #[derive(Error, Debug, Default)]
 #[error("{status}: \n{message}")]
-pub struct RequestStatus {
+pub struct Status {
     pub message: String,
     pub status: String,
 }
 
-impl From<ClientError> for RequestStatus {
+impl From<ClientError> for Status {
     fn from(error: ClientError) -> Self {
         match error {
             ClientError::Service(status) => Self {
@@ -79,25 +75,31 @@ impl From<ClientError> for RequestStatus {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("Failed to {operation} {entity}{plural} {context}: \n{error}", plural = plural.map_or("", |p| p))]
+#[error("Failed to {operation} {entity}{plural} {context} \n{status}", plural = plural.map_or("", |p| p))]
 pub struct ServiceError {
     entity: String,
     operation: String,
-    error: RequestStatus,
+    status: Status,
     context: String,
     plural: Option<&'static str>,
+}
+
+impl From<ServiceError> for S2CliError {
+    fn from(error: ServiceError) -> Self {
+        S2CliError::ServiceError(Box::new(error))
+    }
 }
 
 impl ServiceError {
     pub fn new(
         entity: impl Into<String>,
         operation: impl Into<String>,
-        error: impl Into<RequestStatus>,
+        status: impl Into<Status>,
     ) -> Self {
         Self {
             entity: entity.into(),
             operation: operation.into(),
-            error: error.into(),
+            status: status.into(),
             context: String::new(),
             plural: None,
         }
@@ -120,12 +122,5 @@ impl ServiceError {
             plural: Some(plural),
             ..self
         }
-    }
-}
-
-pub fn s2_status(error: &ClientError) -> String {
-    match error {
-        ClientError::Service(status) => status.code().to_string(),
-        _ => error.to_string(),
     }
 }
