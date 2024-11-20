@@ -62,11 +62,12 @@ pub enum S2CliError {
     RecordWrite(String),
 }
 
+// Error for holding relevant info from `tonic::Status`
 #[derive(Error, Debug, Default)]
 #[error("{status}: \n{message}")]
 pub struct S2ServiceError {
     pub message: String,
-    pub status: String,    
+    pub status: String,
 }
 
 impl From<ClientError> for S2ServiceError {
@@ -74,9 +75,9 @@ impl From<ClientError> for S2ServiceError {
         match error {
             ClientError::Service(status) => Self {
                 message: status.message().to_string(),
-                status: status.code().to_string(),                
+                status: status.code().to_string(),
             },
-            _ => Self {                
+            _ => Self {
                 message: error.to_string(),
                 ..Default::default()
             },

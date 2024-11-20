@@ -19,6 +19,15 @@ pub struct AccountServiceError {
     error: S2ServiceError,
 }
 
+impl AccountServiceError {
+    pub fn new(operation: impl Into<String>, error: impl Into<S2ServiceError>) -> Self {
+        Self {
+            operation: operation.into(),
+            error: error.into(),
+        }
+    }
+}
+
 impl AccountService {
     pub fn new(client: Client) -> Self {
         Self { client }
@@ -38,10 +47,7 @@ impl AccountService {
         self.client
             .list_basins(list_basins_req)
             .await
-            .map_err(|e| AccountServiceError {
-                operation: "list".to_string(),
-                error: S2ServiceError::from(e),
-            })
+            .map_err(|e| AccountServiceError::new("list", e))
     }
 
     pub async fn create_basin(
@@ -66,10 +72,7 @@ impl AccountService {
         self.client
             .create_basin(create_basin_req)
             .await
-            .map_err(|e| AccountServiceError {
-                operation: "create".to_string(),
-                error: S2ServiceError::from(e),
-            })
+            .map_err(|e| AccountServiceError::new("create", e))
     }
 
     pub async fn delete_basin(&self, basin: BasinName) -> Result<(), AccountServiceError> {
@@ -77,11 +80,7 @@ impl AccountService {
         self.client
             .delete_basin(delete_basin_req)
             .await
-            .map_err(|e| AccountServiceError {
-                operation: "delete".to_string(),
-                error: S2ServiceError::from(e),
-            })?;
-        Ok(())
+            .map_err(|e| AccountServiceError::new("delete", e))
     }
 
     pub async fn get_basin_config(
@@ -91,10 +90,7 @@ impl AccountService {
         self.client
             .get_basin_config(basin)
             .await
-            .map_err(|e| AccountServiceError {
-                operation: "get".to_string(),
-                error: S2ServiceError::from(e),
-            })
+            .map_err(|e| AccountServiceError::new("get", e))
     }
 
     pub async fn reconfigure_basin(
@@ -109,10 +105,6 @@ impl AccountService {
         self.client
             .reconfigure_basin(reconfigure_basin_req)
             .await
-            .map_err(|e| AccountServiceError {
-                operation: "reconfigure".to_string(),
-                error: S2ServiceError::from(e),
-            })?;
-        Ok(())
+            .map_err(|e| AccountServiceError::new("reconfigure", e))
     }
 }
