@@ -51,8 +51,8 @@ pub enum S2CliError {
     Service(#[from] ServiceError),
 }
 
-// Error for holding relevant info from `tonic::Status`
-#[derive(Error, Debug, Default)]
+/// Error for holding relevant info from `tonic::Status`
+#[derive(thiserror::Error, Debug, Default)]
 #[error("{status}: \n{message}")]
 pub struct ServiceStatus {
     pub message: String,
