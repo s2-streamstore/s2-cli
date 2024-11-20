@@ -62,6 +62,28 @@ pub enum S2CliError {
     RecordWrite(String),
 }
 
+#[derive(Error, Debug, Default)]
+#[error("{status}: \n{message}")]
+pub struct S2ServiceError {
+    pub message: String,
+    pub status: String,    
+}
+
+impl From<ClientError> for S2ServiceError {
+    fn from(error: ClientError) -> Self {
+        match error {
+            ClientError::Service(status) => Self {
+                message: status.message().to_string(),
+                status: status.code().to_string(),                
+            },
+            _ => Self {                
+                message: error.to_string(),
+                ..Default::default()
+            },
+        }
+    }
+}
+
 pub fn s2_status(error: &ClientError) -> String {
     match error {
         ClientError::Service(status) => status.code().to_string(),

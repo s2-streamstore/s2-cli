@@ -6,28 +6,17 @@ use streamstore::{
     },
 };
 
-use crate::error::s2_status;
+use crate::error::S2ServiceError;
 
 pub struct AccountService {
     client: Client,
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum AccountServiceError {
-    #[error("Failed to list basins: {0}")]
-    ListBasins(String),
-
-    #[error("Failed to create basin: {0}")]
-    CreateBasin(String),
-
-    #[error("Failed to delete basin: {0}")]
-    DeleteBasin(String),
-
-    #[error("Failed to get basin config: {0}")]
-    GetBasinConfig(String),
-
-    #[error("Failed to reconfigure basin: {0}")]
-    ReconfigureBasin(String),
+#[error("Failed to {operation} basin(s): \n{error}")]
+pub struct AccountServiceError {
+    operation: String,
+    error: S2ServiceError,
 }
 
 impl AccountService {
@@ -49,7 +38,10 @@ impl AccountService {
         self.client
             .list_basins(list_basins_req)
             .await
-            .map_err(|e| AccountServiceError::ListBasins(s2_status(&e)))
+            .map_err(|e| AccountServiceError {
+                operation: "list".to_string(),
+                error: S2ServiceError::from(e),
+            })
     }
 
     pub async fn create_basin(
@@ -74,7 +66,10 @@ impl AccountService {
         self.client
             .create_basin(create_basin_req)
             .await
-            .map_err(|e| AccountServiceError::CreateBasin(s2_status(&e)))
+            .map_err(|e| AccountServiceError {
+                operation: "create".to_string(),
+                error: S2ServiceError::from(e),
+            })
     }
 
     pub async fn delete_basin(&self, basin: BasinName) -> Result<(), AccountServiceError> {
@@ -82,7 +77,10 @@ impl AccountService {
         self.client
             .delete_basin(delete_basin_req)
             .await
-            .map_err(|e| AccountServiceError::DeleteBasin(s2_status(&e)))?;
+            .map_err(|e| AccountServiceError {
+                operation: "delete".to_string(),
+                error: S2ServiceError::from(e),
+            })?;
         Ok(())
     }
 
@@ -93,7 +91,10 @@ impl AccountService {
         self.client
             .get_basin_config(basin)
             .await
-            .map_err(|e| AccountServiceError::GetBasinConfig(s2_status(&e)))
+            .map_err(|e| AccountServiceError {
+                operation: "get".to_string(),
+                error: S2ServiceError::from(e),
+            })
     }
 
     pub async fn reconfigure_basin(
@@ -108,7 +109,10 @@ impl AccountService {
         self.client
             .reconfigure_basin(reconfigure_basin_req)
             .await
-            .map_err(|e| AccountServiceError::ReconfigureBasin(s2_status(&e)))?;
+            .map_err(|e| AccountServiceError {
+                operation: "reconfigure".to_string(),
+                error: S2ServiceError::from(e),
+            })?;
         Ok(())
     }
 }
