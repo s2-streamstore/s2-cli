@@ -1,7 +1,7 @@
 use streamstore::{
     batching::AppendRecordsBatchingStream,
     client::StreamClient,
-    types::{AppendOutput, ReadOutput, ReadSessionRequest},
+    types::{AppendOutput, ReadLimit, ReadOutput, ReadSessionRequest},
     Streaming,
 };
 use tokio::io::AsyncBufRead;
@@ -14,6 +14,7 @@ use tokio::io::Lines;
 use tokio_stream::Stream;
 
 use crate::error::s2_status;
+use crate::ByteSize;
 
 pin_project! {
     #[derive(Debug)]
@@ -89,12 +90,20 @@ impl StreamService {
 
     pub async fn read_session(
         &self,
-        start_seq_num: Option<u64>,
+        start_seq_num: u64,
+        limit_count: Option<u64>,
+        limit_bytes: Option<ByteSize>,
     ) -> Result<Streaming<ReadOutput>, StreamServiceError> {
-        let mut read_session_req = ReadSessionRequest::new();
-        if let Some(start_seq_num) = start_seq_num {
-            read_session_req = read_session_req.with_start_seq_num(start_seq_num);
-        }
+        let read_session_req = ReadSessionRequest {
+            start_seq_num: Some(start_seq_num),
+            limit: match (limit_count, limit_bytes.map(|b| b.as_u64())) {
+                (Some(count), Some(bytes)) => Some(ReadLimit { count, bytes }),
+                (Some(count), None) => Some(ReadLimit { count, bytes: 0 }),
+                (None, Some(bytes)) => Some(ReadLimit { count: 0, bytes }),
+                (None, None) => None,
+            },
+        };
+
         self.client
             .read_session(read_session_req)
             .await
