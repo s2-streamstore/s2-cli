@@ -37,10 +37,6 @@ pub enum S2CliError {
     HostEndpoints(#[from] ParseError),
 
     #[error(transparent)]
-    #[diagnostic(help("{}", HELP))]
-    ServiceError(Box<ServiceError>),
-
-    #[error(transparent)]
     #[diagnostic(help("{}", BUG_HELP))]
     InvalidConfig(#[from] serde_json::Error),
 
@@ -49,17 +45,21 @@ pub enum S2CliError {
 
     #[error("Failed to write records: {0}")]
     RecordWrite(String),
+
+    #[error(transparent)]
+    #[diagnostic(help("{}", HELP))]
+    Service(#[from] ServiceError),
 }
 
 // Error for holding relevant info from `tonic::Status`
 #[derive(Error, Debug, Default)]
 #[error("{status}: \n{message}")]
-pub struct Status {
+pub struct ServiceStatus {
     pub message: String,
     pub status: String,
 }
 
-impl From<ClientError> for Status {
+impl From<ClientError> for ServiceStatus {
     fn from(error: ClientError) -> Self {
         match error {
             ClientError::Service(status) => Self {
@@ -75,52 +75,47 @@ impl From<ClientError> for Status {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("Failed to {operation} {entity}{plural} {context} \n{status}", plural = plural.map_or("", |p| p))]
-pub struct ServiceError {
-    entity: String,
-    operation: String,
-    status: Status,
-    context: String,
-    plural: Option<&'static str>,
+pub enum ErrorKind {
+    #[error("Failed to list basins")]
+    ListBasins,
+    #[error("Failed to create basin")]
+    CreateBasin,
+    #[error("Failed to delete basin")]
+    DeleteBasin,
+    #[error("Failed to get basin config")]
+    GetBasinConfig,
+    #[error("Failed to reconfigure basin")]
+    ReconfigureBasin,
+    #[error("Failed to list streams")]
+    ListStreams,
+    #[error("Failed to create stream")]
+    CreateStream,
+    #[error("Failed to delete stream")]
+    DeleteStream,
+    #[error("Failed to get stream config")]
+    GetStreamConfig,
+    #[error("Failed to check tail")]
+    CheckTail,
+    #[error("Failed to append session")]
+    AppendSession,
+    #[error("Failed to read session")]
+    ReadSession,
+    #[error("Failed to write session")]
+    ReconfigureStream,
 }
 
-impl From<ServiceError> for S2CliError {
-    fn from(error: ServiceError) -> Self {
-        S2CliError::ServiceError(Box::new(error))
-    }
+#[derive(Debug, thiserror::Error)]
+#[error("{kind}:\n {status}")]
+pub struct ServiceError {
+    kind: ErrorKind,
+    status: ServiceStatus,
 }
 
 impl ServiceError {
-    pub fn new(
-        entity: impl Into<String>,
-        operation: impl Into<String>,
-        status: impl Into<Status>,
-    ) -> Self {
+    pub fn new(kind: ErrorKind, status: impl Into<ServiceStatus>) -> Self {
         Self {
-            entity: entity.into(),
-            operation: operation.into(),
+            kind,
             status: status.into(),
-            context: String::new(),
-            plural: None,
-        }
-    }
-
-    pub fn with_context(self, context: impl Into<String>) -> Self {
-        Self {
-            context: context.into(),
-            ..self
-        }
-    }
-
-    pub fn with_plural(self) -> Self {
-        let plural = if self.operation.ends_with('s') {
-            "es"
-        } else {
-            "s"
-        };
-        Self {
-            plural: Some(plural),
-            ..self
         }
     }
 }

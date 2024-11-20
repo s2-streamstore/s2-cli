@@ -13,7 +13,7 @@ use streamstore::types::AppendRecord;
 use tokio::io::Lines;
 use tokio_stream::Stream;
 
-use crate::error::ServiceError;
+use crate::error::{ErrorKind, ServiceError};
 use crate::ByteSize;
 
 pin_project! {
@@ -52,31 +52,28 @@ pub struct StreamService {
 }
 
 impl StreamService {
-    const ENTITY: &'static str = "stream";
     pub fn new(client: StreamClient) -> Self {
         Self { client }
     }
 
     pub async fn check_tail(&self) -> Result<u64, ServiceError> {
-        const OPERATION: &str = "check tail";
         self.client
             .check_tail()
             .await
-            .map_err(|e| ServiceError::new(Self::ENTITY, OPERATION, e))
+            .map_err(|e| ServiceError::new(ErrorKind::CheckTail, e))
     }
 
     pub async fn append_session(
         &self,
         append_input_stream: RecordStream<Box<dyn AsyncBufRead + Send + Unpin>>,
     ) -> Result<Streaming<AppendOutput>, ServiceError> {
-        const OPERATION: &str = "append to";
         let append_record_stream =
             AppendRecordsBatchingStream::new(append_input_stream, Default::default());
 
         self.client
             .append_session(append_record_stream)
             .await
-            .map_err(|e| ServiceError::new(Self::ENTITY, OPERATION, e))
+            .map_err(|e| ServiceError::new(ErrorKind::AppendSession, e))
     }
 
     pub async fn read_session(
@@ -85,7 +82,6 @@ impl StreamService {
         limit_count: Option<u64>,
         limit_bytes: Option<ByteSize>,
     ) -> Result<Streaming<ReadOutput>, ServiceError> {
-        const OPERATION: &str = "read from";
         let read_session_req = ReadSessionRequest {
             start_seq_num: Some(start_seq_num),
             limit: match (limit_count, limit_bytes.map(|b| b.as_u64())) {
@@ -99,6 +95,6 @@ impl StreamService {
         self.client
             .read_session(read_session_req)
             .await
-            .map_err(|e| ServiceError::new(Self::ENTITY, OPERATION, e))
+            .map_err(|e| ServiceError::new(ErrorKind::ReadSession, e))
     }
 }

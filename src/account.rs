@@ -6,15 +6,13 @@ use streamstore::{
     },
 };
 
-use crate::error::ServiceError;
+use crate::error::{ErrorKind, ServiceError};
 
 pub struct AccountService {
     client: Client,
 }
 
 impl AccountService {
-    const ENTITY: &'static str = "basin";
-
     pub fn new(client: Client) -> Self {
         Self { client }
     }
@@ -25,8 +23,6 @@ impl AccountService {
         start_after: String,
         limit: usize,
     ) -> Result<ListBasinsResponse, ServiceError> {
-        const OPERATION: &str = "list";
-
         let list_basins_req = ListBasinsRequest::new()
             .with_prefix(prefix)
             .with_start_after(start_after)
@@ -35,7 +31,7 @@ impl AccountService {
         self.client
             .list_basins(list_basins_req)
             .await
-            .map_err(|e| ServiceError::new(Self::ENTITY, OPERATION, e).with_plural())
+            .map_err(|e| ServiceError::new(ErrorKind::ListBasins, e))
     }
 
     pub async fn create_basin(
@@ -44,8 +40,6 @@ impl AccountService {
         storage_class: Option<crate::types::StorageClass>,
         retention_policy: Option<crate::types::RetentionPolicy>,
     ) -> Result<BasinMetadata, ServiceError> {
-        const OPERATION: &str = "create";
-
         let mut stream_config = StreamConfig::new();
 
         if let Some(storage_class) = storage_class {
@@ -62,26 +56,22 @@ impl AccountService {
         self.client
             .create_basin(create_basin_req)
             .await
-            .map_err(|e| ServiceError::new(Self::ENTITY, OPERATION, e))
+            .map_err(|e| ServiceError::new(ErrorKind::CreateBasin, e))
     }
 
     pub async fn delete_basin(&self, basin: BasinName) -> Result<(), ServiceError> {
-        const OPERATION: &str = "delete";
-
         let delete_basin_req = DeleteBasinRequest::new(basin);
         self.client
             .delete_basin(delete_basin_req)
             .await
-            .map_err(|e| ServiceError::new(Self::ENTITY, OPERATION, e))
+            .map_err(|e| ServiceError::new(ErrorKind::DeleteBasin, e))
     }
 
     pub async fn get_basin_config(&self, basin: BasinName) -> Result<BasinConfig, ServiceError> {
-        const OPERATION: &str = "get";
-
         self.client
             .get_basin_config(basin)
             .await
-            .map_err(|e| ServiceError::new(Self::ENTITY, OPERATION, e).with_context("config"))
+            .map_err(|e| ServiceError::new(ErrorKind::GetBasinConfig, e))
     }
 
     pub async fn reconfigure_basin(
@@ -90,13 +80,12 @@ impl AccountService {
         basin_config: BasinConfig,
         mask: Vec<String>,
     ) -> Result<(), ServiceError> {
-        const OPERATION: &str = "reconfigure";
         let reconfigure_basin_req = ReconfigureBasinRequest::new(basin)
             .with_config(basin_config)
             .with_mask(mask);
         self.client
             .reconfigure_basin(reconfigure_basin_req)
             .await
-            .map_err(|e| ServiceError::new(Self::ENTITY, OPERATION, e))
+            .map_err(|e| ServiceError::new(ErrorKind::ReconfigureBasin, e))
     }
 }
