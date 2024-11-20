@@ -216,6 +216,7 @@ enum StreamActions {
     /// If a limit is not specified, the reader will keep tailing and wait for new records.
     Read {
         /// Starting sequence number (inclusive). If not specified, the latest record.
+        #[arg(short, long)]
         start: u64,
 
         /// Output records to a file or stdout.
@@ -224,9 +225,11 @@ enum StreamActions {
         output: Option<RecordsOut>,
 
         /// Limit the number of records returned.
+        #[arg(long)]
         limit_count: Option<u64>,
 
-        /// Limit the number of bytes returned
+        /// Limit the number of bytes returned.
+        #[arg(long)]
         limit_bytes: Option<ByteSize>,
     },
 }
