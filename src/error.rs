@@ -5,10 +5,7 @@ use streamstore::{
 };
 use thiserror::Error;
 
-use crate::{
-    account::AccountServiceError, basin::BasinServiceError, config::S2ConfigError,
-    stream::StreamServiceError,
-};
+use crate::{basin::BasinServiceError, config::S2ConfigError, stream::StreamServiceError};
 
 const HELP: &str = color_print::cstr!(
     "\n<cyan><bold>Notice something wrong?</bold></cyan>\n\n\
@@ -41,15 +38,14 @@ pub enum S2CliError {
 
     #[error(transparent)]
     #[diagnostic(help("{}", HELP))]
-    AccountService(#[from] AccountServiceError),
-
-    #[error(transparent)]
-    #[diagnostic(help("{}", HELP))]
     BasinService(#[from] BasinServiceError),
 
     #[error(transparent)]
     #[diagnostic(help("{}", HELP))]
     StreamService(#[from] StreamServiceError),
+
+    #[error(transparent)]
+    ServiceError(#[from] ServiceError),
 
     #[error(transparent)]
     #[diagnostic(help("{}", BUG_HELP))]
@@ -65,12 +61,12 @@ pub enum S2CliError {
 // Error for holding relevant info from `tonic::Status`
 #[derive(Error, Debug, Default)]
 #[error("{status}: \n{message}")]
-pub struct S2ServiceError {
+pub struct RequestStatus {
     pub message: String,
     pub status: String,
 }
 
-impl From<ClientError> for S2ServiceError {
+impl From<ClientError> for RequestStatus {
     fn from(error: ClientError) -> Self {
         match error {
             ClientError::Service(status) => Self {
@@ -81,6 +77,51 @@ impl From<ClientError> for S2ServiceError {
                 message: error.to_string(),
                 ..Default::default()
             },
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Failed to {operation} {entity}{plural} {extra}: \n{error}", plural = plural.map_or("", |p| p))]
+pub struct ServiceError {
+    entity: String,
+    operation: String,
+    error: RequestStatus,
+    extra: String,
+    plural: Option<&'static str>,
+}
+
+impl ServiceError {
+    pub fn new(
+        entity: impl Into<String>,
+        operation: impl Into<String>,
+        error: impl Into<RequestStatus>,
+    ) -> Self {
+        Self {
+            entity: entity.into(),
+            operation: operation.into(),
+            error: error.into(),
+            extra: String::new(),
+            plural: None,
+        }
+    }
+
+    pub fn with_extra(self, extra: impl Into<String>) -> Self {
+        Self {
+            extra: extra.into(),
+            ..self
+        }
+    }
+
+    pub fn with_plural(self) -> Self {
+        let plural = if self.operation.ends_with('s') {
+            "es"
+        } else {
+            "s"
+        };
+        Self {
+            plural: Some(plural),
+            ..self
         }
     }
 }
