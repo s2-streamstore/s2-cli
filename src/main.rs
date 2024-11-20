@@ -207,7 +207,7 @@ enum StreamActions {
         /// Input newline delimited records to append from a file or stdin.
         /// All records are treated as plain text.
         /// Use "-" to read from stdin.
-        #[arg(short, long, value_parser = parse_records_input_source, default_value = "-")]
+        #[arg(short = 'i', long, value_parser = parse_records_input_source, default_value = "-")]
         input: RecordsIn,
     },
 
@@ -221,7 +221,7 @@ enum StreamActions {
 
         /// Output records to a file or stdout.
         /// Use "-" to write to stdout.
-        #[arg(short, long, value_parser = parse_records_output_source, default_value = "-")]
+        #[arg(short = 'o', long, value_parser = parse_records_output_source, default_value = "-")]
         output: RecordsOut,
 
         /// Limit the number of records returned.
