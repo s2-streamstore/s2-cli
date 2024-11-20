@@ -207,8 +207,8 @@ enum StreamActions {
         /// Input newline delimited records to append from a file or stdin.
         /// All records are treated as plain text.
         /// Use "-" to read from stdin.
-        #[arg(value_parser = parse_records_input_source, default_value = "-")]
-        records: RecordsIn,
+        #[arg(short, long, value_parser = parse_records_input_source, default_value = "-")]
+        input: RecordsIn,
     },
 
     /// Read records from a stream.
@@ -216,12 +216,12 @@ enum StreamActions {
     /// If a limit is not specified, the reader will keep tailing and wait for new records.
     Read {
         /// Starting sequence number (inclusive). If not specified, the latest record.
-        #[arg(short, long)]
-        start: u64,
+        #[arg(short = 's', long)]
+        start_seq_num: u64,
 
         /// Output records to a file or stdout.
         /// Use "-" to write to stdout.
-        #[arg(value_parser = parse_records_output_source, default_value = "-")]
+        #[arg(short, long, value_parser = parse_records_output_source, default_value = "-")]
         output: RecordsOut,
 
         /// Limit the number of records returned.
@@ -490,10 +490,10 @@ async fn run() -> Result<(), S2CliError> {
                     let next_seq_num = StreamService::new(stream_client).check_tail().await?;
                     println!("{}", next_seq_num);
                 }
-                StreamActions::Append { records } => {
+                StreamActions::Append { input } => {
                     let stream_client = StreamClient::new(client_config, basin, stream);
                     let append_input_stream = RecordStream::new(
-                        records
+                        input
                             .into_reader()
                             .await
                             .map_err(|e| S2CliError::RecordReaderInit(e.to_string()))?
@@ -522,14 +522,14 @@ async fn run() -> Result<(), S2CliError> {
                     }
                 }
                 StreamActions::Read {
-                    start,
+                    start_seq_num,
                     output,
                     limit_count,
                     limit_bytes,
                 } => {
                     let stream_client = StreamClient::new(client_config, basin, stream);
                     let mut read_output_stream = StreamService::new(stream_client)
-                        .read_session(start, limit_count, limit_bytes)
+                        .read_session(start_seq_num, limit_count, limit_bytes)
                         .await?;
                     let mut writer = output.into_writer().await.unwrap();
 

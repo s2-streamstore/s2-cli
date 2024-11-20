@@ -90,12 +90,12 @@ impl StreamService {
 
     pub async fn read_session(
         &self,
-        start: u64,
+        start_seq_num: u64,
         limit_count: Option<u64>,
         limit_bytes: Option<ByteSize>,
     ) -> Result<Streaming<ReadOutput>, StreamServiceError> {
         let read_session_req = ReadSessionRequest {
-            start_seq_num: Some(start),
+            start_seq_num: Some(start_seq_num),
             limit: match (limit_count, limit_bytes.map(|b| b.as_u64())) {
                 (Some(count), Some(bytes)) => Some(ReadLimit { count, bytes }),
                 (Some(count), None) => Some(ReadLimit { count, bytes: 0 }),
