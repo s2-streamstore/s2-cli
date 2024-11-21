@@ -17,7 +17,7 @@ pin-project-lite = "0.2"
 pin-utils = "0.1.0"
 serde = { version = "1.0.214", features = ["derive"] }
 serde_json = "1.0.132"
-streamstore = { git = "https://github.com/s2-streamstore/s2-sdk-rust.git", rev = "f39cb52c15869b0d02c92e441b2828a27dfeac72" }
+streamstore = { git = "https://github.com/s2-streamstore/s2-sdk-rust.git", rev = "63b4964b66503f705e7c73ae07ba47f81019b79a" }
 thiserror = "1.0.67"
 tokio = { version = "*", features = ["full"] }
 tokio-stream = { version = "0.1.16", features = ["io-util"] }

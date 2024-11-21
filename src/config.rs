@@ -45,11 +45,11 @@ pub fn create_config(config_path: &PathBuf, auth_token: String) -> Result<(), S2
     let cfg = S2Config { auth_token };
 
     if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent).map_err(S2ConfigError::WriteError)?;
+        std::fs::create_dir_all(parent).map_err(S2ConfigError::Write)?;
     }
 
     let toml = toml::to_string(&cfg).unwrap();
-    std::fs::write(config_path, toml).map_err(S2ConfigError::WriteError)?;
+    std::fs::write(config_path, toml).map_err(S2ConfigError::Write)?;
 
     Ok(())
 }
@@ -63,8 +63,8 @@ pub enum S2ConfigError {
     #[diagnostic(help(
         "Did you run `s2 config set`? or use `S2_AUTH_TOKEN` environment variable."
     ))]
-    LoadError(#[from] config::ConfigError),
+    Load(#[from] config::ConfigError),
 
     #[error("Failed to write config file")]
-    WriteError(#[source] std::io::Error),
+    Write(#[source] std::io::Error),
 }
