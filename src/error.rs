@@ -5,10 +5,7 @@ use streamstore::{
 };
 use thiserror::Error;
 
-use crate::{
-    account::AccountServiceError, basin::BasinServiceError, config::S2ConfigError,
-    stream::StreamServiceError,
-};
+use crate::config::S2ConfigError;
 
 const HELP: &str = color_print::cstr!(
     "\n<cyan><bold>Notice something wrong?</bold></cyan>\n\n\
@@ -40,18 +37,6 @@ pub enum S2CliError {
     HostEndpoints(#[from] ParseError),
 
     #[error(transparent)]
-    #[diagnostic(help("{}", HELP))]
-    AccountService(#[from] AccountServiceError),
-
-    #[error(transparent)]
-    #[diagnostic(help("{}", HELP))]
-    BasinService(#[from] BasinServiceError),
-
-    #[error(transparent)]
-    #[diagnostic(help("{}", HELP))]
-    StreamService(#[from] StreamServiceError),
-
-    #[error(transparent)]
     #[diagnostic(help("{}", BUG_HELP))]
     InvalidConfig(#[from] serde_json::Error),
 
@@ -60,11 +45,84 @@ pub enum S2CliError {
 
     #[error("Failed to write records: {0}")]
     RecordWrite(String),
+
+    #[error(transparent)]
+    #[diagnostic(help("{}", HELP))]
+    Service(#[from] ServiceError),
 }
 
-pub fn s2_status(error: &ClientError) -> String {
-    match error {
-        ClientError::Service(status) => status.code().to_string(),
-        _ => error.to_string(),
+#[derive(Debug)]
+pub enum ServiceErrorContext {
+    ListBasins,
+    CreateBasin,
+    DeleteBasin,
+    GetBasinConfig,
+    ReconfigureBasin,
+    ListStreams,
+    CreateStream,
+    DeleteStream,
+    GetStreamConfig,
+    CheckTail,
+    AppendSession,
+    ReadSession,
+    ReconfigureStream,
+}
+
+impl std::fmt::Display for ServiceErrorContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ServiceErrorContext::ListBasins => write!(f, "Failed to list basins"),
+            ServiceErrorContext::CreateBasin => write!(f, "Failed to create basin"),
+            ServiceErrorContext::DeleteBasin => write!(f, "Failed to delete basin"),
+            ServiceErrorContext::GetBasinConfig => write!(f, "Failed to get basin config"),
+            ServiceErrorContext::ReconfigureBasin => write!(f, "Failed to reconfigure basin"),
+            ServiceErrorContext::ListStreams => write!(f, "Failed to list streams"),
+            ServiceErrorContext::CreateStream => write!(f, "Failed to create stream"),
+            ServiceErrorContext::DeleteStream => write!(f, "Failed to delete stream"),
+            ServiceErrorContext::GetStreamConfig => write!(f, "Failed to get stream config"),
+            ServiceErrorContext::CheckTail => write!(f, "Failed to check tail"),
+            ServiceErrorContext::AppendSession => write!(f, "Failed to append session"),
+            ServiceErrorContext::ReadSession => write!(f, "Failed to read session"),
+            ServiceErrorContext::ReconfigureStream => write!(f, "Failed to reconfigure stream"),
+        }
+    }
+}
+
+/// Error for holding relevant info from `tonic::Status`
+#[derive(thiserror::Error, Debug, Default)]
+#[error("{status}: \n{message}")]
+pub struct ServiceStatus {
+    pub message: String,
+    pub status: String,
+}
+
+impl From<ClientError> for ServiceStatus {
+    fn from(error: ClientError) -> Self {
+        match error {
+            ClientError::Service(status) => Self {
+                message: status.message().to_string(),
+                status: status.code().to_string(),
+            },
+            _ => Self {
+                message: error.to_string(),
+                ..Default::default()
+            },
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{kind}:\n {status}")]
+pub struct ServiceError {
+    kind: ServiceErrorContext,
+    status: ServiceStatus,
+}
+
+impl ServiceError {
+    pub fn new(kind: ServiceErrorContext, status: impl Into<ServiceStatus>) -> Self {
+        Self {
+            kind,
+            status: status.into(),
+        }
     }
 }

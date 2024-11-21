@@ -6,28 +6,10 @@ use streamstore::{
     },
 };
 
-use crate::error::s2_status;
+use crate::error::{ServiceError, ServiceErrorContext};
 
 pub struct AccountService {
     client: Client,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum AccountServiceError {
-    #[error("Failed to list basins: {0}")]
-    ListBasins(String),
-
-    #[error("Failed to create basin: {0}")]
-    CreateBasin(String),
-
-    #[error("Failed to delete basin: {0}")]
-    DeleteBasin(String),
-
-    #[error("Failed to get basin config: {0}")]
-    GetBasinConfig(String),
-
-    #[error("Failed to reconfigure basin: {0}")]
-    ReconfigureBasin(String),
 }
 
 impl AccountService {
@@ -40,7 +22,7 @@ impl AccountService {
         prefix: String,
         start_after: String,
         limit: usize,
-    ) -> Result<ListBasinsResponse, AccountServiceError> {
+    ) -> Result<ListBasinsResponse, ServiceError> {
         let list_basins_req = ListBasinsRequest::new()
             .with_prefix(prefix)
             .with_start_after(start_after)
@@ -49,7 +31,7 @@ impl AccountService {
         self.client
             .list_basins(list_basins_req)
             .await
-            .map_err(|e| AccountServiceError::ListBasins(s2_status(&e)))
+            .map_err(|e| ServiceError::new(ServiceErrorContext::ListBasins, e))
     }
 
     pub async fn create_basin(
@@ -57,7 +39,7 @@ impl AccountService {
         basin: BasinName,
         storage_class: Option<crate::types::StorageClass>,
         retention_policy: Option<crate::types::RetentionPolicy>,
-    ) -> Result<BasinMetadata, AccountServiceError> {
+    ) -> Result<BasinMetadata, ServiceError> {
         let mut stream_config = StreamConfig::new();
 
         if let Some(storage_class) = storage_class {
@@ -74,26 +56,22 @@ impl AccountService {
         self.client
             .create_basin(create_basin_req)
             .await
-            .map_err(|e| AccountServiceError::CreateBasin(s2_status(&e)))
+            .map_err(|e| ServiceError::new(ServiceErrorContext::CreateBasin, e))
     }
 
-    pub async fn delete_basin(&self, basin: BasinName) -> Result<(), AccountServiceError> {
+    pub async fn delete_basin(&self, basin: BasinName) -> Result<(), ServiceError> {
         let delete_basin_req = DeleteBasinRequest::new(basin);
         self.client
             .delete_basin(delete_basin_req)
             .await
-            .map_err(|e| AccountServiceError::DeleteBasin(s2_status(&e)))?;
-        Ok(())
+            .map_err(|e| ServiceError::new(ServiceErrorContext::DeleteBasin, e))
     }
 
-    pub async fn get_basin_config(
-        &self,
-        basin: BasinName,
-    ) -> Result<BasinConfig, AccountServiceError> {
+    pub async fn get_basin_config(&self, basin: BasinName) -> Result<BasinConfig, ServiceError> {
         self.client
             .get_basin_config(basin)
             .await
-            .map_err(|e| AccountServiceError::GetBasinConfig(s2_status(&e)))
+            .map_err(|e| ServiceError::new(ServiceErrorContext::GetBasinConfig, e))
     }
 
     pub async fn reconfigure_basin(
@@ -101,14 +79,13 @@ impl AccountService {
         basin: BasinName,
         basin_config: BasinConfig,
         mask: Vec<String>,
-    ) -> Result<(), AccountServiceError> {
+    ) -> Result<(), ServiceError> {
         let reconfigure_basin_req = ReconfigureBasinRequest::new(basin)
             .with_config(basin_config)
             .with_mask(mask);
         self.client
             .reconfigure_basin(reconfigure_basin_req)
             .await
-            .map_err(|e| AccountServiceError::ReconfigureBasin(s2_status(&e)))?;
-        Ok(())
+            .map_err(|e| ServiceError::new(ServiceErrorContext::ReconfigureBasin, e))
     }
 }

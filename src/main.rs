@@ -5,8 +5,8 @@ use basin::BasinService;
 use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
-use error::S2CliError;
-use stream::{RecordStream, StreamService, StreamServiceError};
+use error::{S2CliError, ServiceError, ServiceErrorContext};
+use stream::{RecordStream, StreamService};
 use streamstore::{
     bytesize::ByteSize,
     client::{BasinClient, Client, ClientConfig, HostEndpoints, ParseError, StreamClient},
@@ -518,7 +518,9 @@ async fn run() -> Result<(), S2CliError> {
                                     .bold()
                                 );
                             })
-                            .map_err(|e| StreamServiceError::AppendSession(e.to_string()))?;
+                            .map_err(|e| {
+                                ServiceError::new(ServiceErrorContext::AppendSession, e)
+                            })?;
                     }
                 }
                 StreamActions::Read {
@@ -542,7 +544,7 @@ async fn run() -> Result<(), S2CliError> {
                         }
 
                         let read_result = read_result
-                            .map_err(|e| StreamServiceError::ReadSession(e.to_string()))?;
+                            .map_err(|e| ServiceError::new(ServiceErrorContext::ReadSession, e))?;
 
                         match read_result {
                             ReadOutput::Batch(sequenced_record_batch) => {
