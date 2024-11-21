@@ -6,7 +6,7 @@ use streamstore::{
     },
 };
 
-use crate::error::{ErrorKind, ServiceError};
+use crate::error::{ServiceError, ServiceErrorContext};
 
 pub struct BasinService {
     client: BasinClient,
@@ -32,7 +32,7 @@ impl BasinService {
             .client
             .list_streams(list_streams_req)
             .await
-            .map_err(|e| ServiceError::new(ErrorKind::ListStreams, e))?;
+            .map_err(|e| ServiceError::new(ServiceErrorContext::ListStreams, e))?;
 
         Ok(streams)
     }
@@ -51,21 +51,21 @@ impl BasinService {
         self.client
             .create_stream(create_stream_req)
             .await
-            .map_err(|e| ServiceError::new(ErrorKind::CreateStream, e))
+            .map_err(|e| ServiceError::new(ServiceErrorContext::CreateStream, e))
     }
 
     pub async fn delete_stream(&self, stream: String) -> Result<(), ServiceError> {
         self.client
             .delete_stream(DeleteStreamRequest::new(stream))
             .await
-            .map_err(|e| ServiceError::new(ErrorKind::DeleteStream, e))
+            .map_err(|e| ServiceError::new(ServiceErrorContext::DeleteStream, e))
     }
 
     pub async fn get_stream_config(&self, stream: String) -> Result<StreamConfig, ServiceError> {
         self.client
             .get_stream_config(stream)
             .await
-            .map_err(|e| ServiceError::new(ErrorKind::GetStreamConfig, e))
+            .map_err(|e| ServiceError::new(ServiceErrorContext::GetStreamConfig, e))
     }
 
     pub async fn reconfigure_stream(
@@ -81,6 +81,6 @@ impl BasinService {
         self.client
             .reconfigure_stream(reconfigure_stream_req)
             .await
-            .map_err(|e| ServiceError::new(ErrorKind::ReconfigureStream, e))
+            .map_err(|e| ServiceError::new(ServiceErrorContext::ReconfigureStream, e))
     }
 }

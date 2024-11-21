@@ -6,7 +6,7 @@ use streamstore::{
     },
 };
 
-use crate::error::{ErrorKind, ServiceError};
+use crate::error::{ServiceError, ServiceErrorContext};
 
 pub struct AccountService {
     client: Client,
@@ -31,7 +31,7 @@ impl AccountService {
         self.client
             .list_basins(list_basins_req)
             .await
-            .map_err(|e| ServiceError::new(ErrorKind::ListBasins, e))
+            .map_err(|e| ServiceError::new(ServiceErrorContext::ListBasins, e))
     }
 
     pub async fn create_basin(
@@ -56,7 +56,7 @@ impl AccountService {
         self.client
             .create_basin(create_basin_req)
             .await
-            .map_err(|e| ServiceError::new(ErrorKind::CreateBasin, e))
+            .map_err(|e| ServiceError::new(ServiceErrorContext::CreateBasin, e))
     }
 
     pub async fn delete_basin(&self, basin: BasinName) -> Result<(), ServiceError> {
@@ -64,14 +64,14 @@ impl AccountService {
         self.client
             .delete_basin(delete_basin_req)
             .await
-            .map_err(|e| ServiceError::new(ErrorKind::DeleteBasin, e))
+            .map_err(|e| ServiceError::new(ServiceErrorContext::DeleteBasin, e))
     }
 
     pub async fn get_basin_config(&self, basin: BasinName) -> Result<BasinConfig, ServiceError> {
         self.client
             .get_basin_config(basin)
             .await
-            .map_err(|e| ServiceError::new(ErrorKind::GetBasinConfig, e))
+            .map_err(|e| ServiceError::new(ServiceErrorContext::GetBasinConfig, e))
     }
 
     pub async fn reconfigure_basin(
@@ -86,6 +86,6 @@ impl AccountService {
         self.client
             .reconfigure_basin(reconfigure_basin_req)
             .await
-            .map_err(|e| ServiceError::new(ErrorKind::ReconfigureBasin, e))
+            .map_err(|e| ServiceError::new(ServiceErrorContext::ReconfigureBasin, e))
     }
 }

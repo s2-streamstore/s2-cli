@@ -13,7 +13,7 @@ use streamstore::types::AppendRecord;
 use tokio::io::Lines;
 use tokio_stream::Stream;
 
-use crate::error::{ErrorKind, ServiceError};
+use crate::error::{ServiceError, ServiceErrorContext};
 use crate::ByteSize;
 
 pin_project! {
@@ -60,7 +60,7 @@ impl StreamService {
         self.client
             .check_tail()
             .await
-            .map_err(|e| ServiceError::new(ErrorKind::CheckTail, e))
+            .map_err(|e| ServiceError::new(ServiceErrorContext::CheckTail, e))
     }
 
     pub async fn append_session(
@@ -73,7 +73,7 @@ impl StreamService {
         self.client
             .append_session(append_record_stream)
             .await
-            .map_err(|e| ServiceError::new(ErrorKind::AppendSession, e))
+            .map_err(|e| ServiceError::new(ServiceErrorContext::AppendSession, e))
     }
 
     pub async fn read_session(
@@ -95,6 +95,6 @@ impl StreamService {
         self.client
             .read_session(read_session_req)
             .await
-            .map_err(|e| ServiceError::new(ErrorKind::ReadSession, e))
+            .map_err(|e| ServiceError::new(ServiceErrorContext::ReadSession, e))
     }
 }

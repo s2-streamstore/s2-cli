@@ -51,6 +51,43 @@ pub enum S2CliError {
     Service(#[from] ServiceError),
 }
 
+#[derive(Debug)]
+pub enum ServiceErrorContext {
+    ListBasins,
+    CreateBasin,
+    DeleteBasin,
+    GetBasinConfig,
+    ReconfigureBasin,
+    ListStreams,
+    CreateStream,
+    DeleteStream,
+    GetStreamConfig,
+    CheckTail,
+    AppendSession,
+    ReadSession,
+    ReconfigureStream,
+}
+
+impl std::fmt::Display for ServiceErrorContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ServiceErrorContext::ListBasins => write!(f, "Failed to list basins"),
+            ServiceErrorContext::CreateBasin => write!(f, "Failed to create basin"),
+            ServiceErrorContext::DeleteBasin => write!(f, "Failed to delete basin"),
+            ServiceErrorContext::GetBasinConfig => write!(f, "Failed to get basin config"),
+            ServiceErrorContext::ReconfigureBasin => write!(f, "Failed to reconfigure basin"),
+            ServiceErrorContext::ListStreams => write!(f, "Failed to list streams"),
+            ServiceErrorContext::CreateStream => write!(f, "Failed to create stream"),
+            ServiceErrorContext::DeleteStream => write!(f, "Failed to delete stream"),
+            ServiceErrorContext::GetStreamConfig => write!(f, "Failed to get stream config"),
+            ServiceErrorContext::CheckTail => write!(f, "Failed to check tail"),
+            ServiceErrorContext::AppendSession => write!(f, "Failed to append session"),
+            ServiceErrorContext::ReadSession => write!(f, "Failed to read session"),
+            ServiceErrorContext::ReconfigureStream => write!(f, "Failed to reconfigure stream"),
+        }
+    }
+}
+
 /// Error for holding relevant info from `tonic::Status`
 #[derive(thiserror::Error, Debug, Default)]
 #[error("{status}: \n{message}")]
@@ -75,44 +112,14 @@ impl From<ClientError> for ServiceStatus {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ErrorKind {
-    #[error("Failed to list basins")]
-    ListBasins,
-    #[error("Failed to create basin")]
-    CreateBasin,
-    #[error("Failed to delete basin")]
-    DeleteBasin,
-    #[error("Failed to get basin config")]
-    GetBasinConfig,
-    #[error("Failed to reconfigure basin")]
-    ReconfigureBasin,
-    #[error("Failed to list streams")]
-    ListStreams,
-    #[error("Failed to create stream")]
-    CreateStream,
-    #[error("Failed to delete stream")]
-    DeleteStream,
-    #[error("Failed to get stream config")]
-    GetStreamConfig,
-    #[error("Failed to check tail")]
-    CheckTail,
-    #[error("Failed to append session")]
-    AppendSession,
-    #[error("Failed to read session")]
-    ReadSession,
-    #[error("Failed to write session")]
-    ReconfigureStream,
-}
-
-#[derive(Debug, thiserror::Error)]
 #[error("{kind}:\n {status}")]
 pub struct ServiceError {
-    kind: ErrorKind,
+    kind: ServiceErrorContext,
     status: ServiceStatus,
 }
 
 impl ServiceError {
-    pub fn new(kind: ErrorKind, status: impl Into<ServiceStatus>) -> Self {
+    pub fn new(kind: ServiceErrorContext, status: impl Into<ServiceStatus>) -> Self {
         Self {
             kind,
             status: status.into(),
