@@ -9,7 +9,7 @@ use error::{S2CliError, ServiceError, ServiceErrorContext};
 use stream::{RecordStream, StreamService};
 use streamstore::{
     bytesize::ByteSize,
-    client::{BasinClient, Client, ClientConfig, HostEndpoints, ParseError, StreamClient},
+    client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{BasinMetadata, BasinName, MeteredSize as _, ReadOutput},
     HeaderValue,
 };
@@ -292,11 +292,12 @@ fn parse_records_output_source(s: &str) -> Result<RecordsOut, std::io::Error> {
     }
 }
 
-fn client_config(auth_token: String) -> Result<ClientConfig, ParseError> {
-    Ok(ClientConfig::new(auth_token.to_string())
+fn client_config(auth_token: String) -> Result<ClientConfig, S2CliError> {
+    let endpoints = S2Endpoints::from_env().map_err(S2CliError::EndpointsFromEnv)?;
+    let client_config = ClientConfig::new(auth_token.to_string())
         .with_user_agent("s2-cli".parse::<HeaderValue>().expect("valid user agent"))
-        .with_host_endpoints(HostEndpoints::from_env()?)
-        .with_connection_timeout(std::time::Duration::from_secs(5)))
+        .with_endpoints(endpoints);
+    Ok(client_config)
 }
 
 #[tokio::main]

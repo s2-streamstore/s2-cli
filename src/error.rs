@@ -1,8 +1,5 @@
 use miette::Diagnostic;
-use streamstore::{
-    client::{ClientError, ParseError},
-    types::ConvertError,
-};
+use streamstore::{client::ClientError, types::ConvertError};
 use thiserror::Error;
 
 use crate::config::S2ConfigError;
@@ -32,9 +29,12 @@ pub enum S2CliError {
     #[diagnostic(help("Are you trying to operate on an invalid basin?"))]
     ConvertError(#[from] ConvertError),
 
-    #[error(transparent)]
-    #[diagnostic(help("Are you overriding `S2_CLOUD`, `S2_CELL`, or `S2_BASIN_ZONE`?"))]
-    HostEndpoints(#[from] ParseError),
+    #[error("Unable to load S2 endpoints from environment")]
+    #[diagnostic(help(
+        "Are you overriding `S2_CLOUD`, `S2_ACCOUNT_ENDPOINT` or `S2_BASIN_ENDPOINT`?
+            Make sure the values are in the expected format."
+    ))]
+    EndpointsFromEnv(String),
 
     #[error(transparent)]
     #[diagnostic(help("{}", BUG_HELP))]
