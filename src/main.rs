@@ -6,6 +6,8 @@ use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
 use error::{S2CliError, ServiceError, ServiceErrorContext};
+use signal_hook::consts::{SIGINT, SIGTERM, SIGTSTP};
+use signal_hook_tokio::Signals;
 use stream::{RecordStream, StreamService};
 use streamstore::{
     bytesize::ByteSize,
@@ -16,6 +18,7 @@ use streamstore::{
 use tokio::{
     fs::{File, OpenOptions},
     io::{self, AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
+    select,
     time::Instant,
 };
 use tokio_stream::StreamExt;
@@ -501,27 +504,50 @@ async fn run() -> Result<(), S2CliError> {
                             .lines(),
                     );
 
+                    let mut signals =
+                        Signals::new([SIGTSTP, SIGINT, SIGTERM]).expect("valid signals");
+
                     let mut append_output_stream = StreamService::new(stream_client)
                         .append_session(append_input_stream)
                         .await?;
-                    while let Some(append_result) = append_output_stream.next().await {
-                        append_result
-                            .map(|append_result| {
-                                eprintln!(
-                                    "{}",
-                                    format!(
-                                        "✓ [APPENDED] start: {}, end: {}, next: {}",
-                                        append_result.start_seq_num,
-                                        append_result.end_seq_num,
-                                        append_result.next_seq_num
-                                    )
-                                    .green()
-                                    .bold()
-                                );
-                            })
-                            .map_err(|e| {
-                                ServiceError::new(ServiceErrorContext::AppendSession, e)
-                            })?;
+                    loop {
+                        select! {
+                            maybe_append_result = append_output_stream.next() => {
+                                match maybe_append_result {
+                                    Some(append_result) => {
+                                        append_result
+                                            .map(|append_result| {
+                                                eprintln!(
+                                                    "{}",
+                                                    format!(
+                                                        "✓ [APPENDED] start: {}, end: {}, next: {}",
+                                                        append_result.start_seq_num,
+                                                        append_result.end_seq_num,
+                                                        append_result.next_seq_num
+                                                    )
+                                                    .green()
+                                                    .bold()
+                                                );
+                                            })
+                                            .map_err(|e| {
+                                                ServiceError::new(ServiceErrorContext::AppendSession, e)
+                                            })?;
+                                    }
+                                    None => break,
+                                }
+                            }
+
+                            Some(signal) = signals.next() => {
+                                match signal {
+                                    SIGTSTP | SIGINT | SIGTERM => {
+                                        drop(append_output_stream);
+                                        eprintln!("{}", "■ [ABORTED]".red().bold());
+                                        return Ok(());
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
                     }
                 }
                 StreamActions::Read {
@@ -531,6 +557,8 @@ async fn run() -> Result<(), S2CliError> {
                     limit_bytes,
                 } => {
                     let stream_client = StreamClient::new(client_config, basin, stream);
+                    let mut signals =
+                        Signals::new([SIGTSTP, SIGINT, SIGTERM]).expect("valid signals");
                     let mut read_output_stream = StreamService::new(stream_client)
                         .read_session(start_seq_num, limit_count, limit_bytes)
                         .await?;
@@ -539,65 +567,84 @@ async fn run() -> Result<(), S2CliError> {
                     let mut start = None;
                     let mut total_data_len = ByteSize::b(0);
 
-                    while let Some(read_result) = read_output_stream.next().await {
-                        if start.is_none() {
-                            start = Some(Instant::now());
-                        }
+                    loop {
+                        select! {
+                            maybe_read_result = read_output_stream.next() => {
+                                match maybe_read_result {
+                                    Some(read_result) => {
+                                            if start.is_none() {
+                                                start = Some(Instant::now());
+                                            }
+                                        match read_result {
+                                            Ok(ReadOutput::Batch(sequenced_record_batch)) => {
+                                                let num_records = sequenced_record_batch.records.len();
+                                                let mut batch_len = ByteSize::b(0);
 
-                        let read_result = read_result
-                            .map_err(|e| ServiceError::new(ServiceErrorContext::ReadSession, e))?;
+                                                let seq_range = match (
+                                                    sequenced_record_batch.records.first(),
+                                                    sequenced_record_batch.records.last(),
+                                                ) {
+                                                    (Some(first), Some(last)) => first.seq_num..=last.seq_num,
+                                                    _ => panic!("empty batch"),
+                                                };
+                                                for sequenced_record in sequenced_record_batch.records {
+                                                    let data = &sequenced_record.body;
+                                                    batch_len += sequenced_record.metered_size();
 
-                        match read_result {
-                            ReadOutput::Batch(sequenced_record_batch) => {
-                                let num_records = sequenced_record_batch.records.len();
-                                let mut batch_len = ByteSize::b(0);
+                                                    writer
+                                                        .write_all(data)
+                                                        .await
+                                                        .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
+                                                    writer
+                                                        .write_all(b"\n")
+                                                        .await
+                                                        .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
+                                                }
+                                                total_data_len += batch_len;
 
-                                let seq_range = match (
-                                    sequenced_record_batch.records.first(),
-                                    sequenced_record_batch.records.last(),
-                                ) {
-                                    (Some(first), Some(last)) => first.seq_num..=last.seq_num,
-                                    _ => panic!("empty batch"),
-                                };
-                                for sequenced_record in sequenced_record_batch.records {
-                                    let data = &sequenced_record.body;
-                                    batch_len += sequenced_record.metered_size();
+                                                let throughput_mibps = (total_data_len.0 as f64
+                                                    / start.unwrap().elapsed().as_secs_f64())
+                                                    / 1024.0
+                                                    / 1024.0;
 
-                                    writer
-                                        .write_all(data)
-                                        .await
-                                        .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
-                                    writer
-                                        .write_all(b"\n")
-                                        .await
-                                        .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
+                                                eprintln!(
+                                                    "{}",
+                                                    format!(
+                                                        "⦿ {throughput_mibps:.2} MiB/s \
+                                                            ({num_records} records in range {seq_range:?})",
+                                                    )
+                                                    .blue()
+                                                    .bold()
+                                                );
+                                            }
+
+                                            Ok(ReadOutput::FirstSeqNum(seq_num)) => {
+                                                eprintln!("{}", format!("first_seq_num: {seq_num}").blue().bold());
+                                            }
+
+                                            Ok(ReadOutput::NextSeqNum(seq_num)) => {
+                                                eprintln!("{}", format!("next_seq_num: {seq_num}").blue().bold());
+                                            }
+
+                                            Err(e) => {
+                                                return Err(ServiceError::new(ServiceErrorContext::ReadSession, e).into());
+                                            }
+                                        }
+                                    }
+                                    None => break,
                                 }
-                                total_data_len += batch_len;
-
-                                let throughput_mibps = (total_data_len.0 as f64
-                                    / start.unwrap().elapsed().as_secs_f64())
-                                    / 1024.0
-                                    / 1024.0;
-
-                                eprintln!(
-                                    "{}",
-                                    format!(
-                                        "⦿ {throughput_mibps:.2} MiB/s \
-                                            ({num_records} records in range {seq_range:?})",
-                                    )
-                                    .blue()
-                                    .bold()
-                                );
-                            }
-                            // TODO: better message for these cases
-                            ReadOutput::FirstSeqNum(seq_num) => {
-                                eprintln!("{}", format!("first_seq_num: {seq_num}").blue().bold());
-                            }
-                            ReadOutput::NextSeqNum(seq_num) => {
-                                eprintln!("{}", format!("next_seq_num: {seq_num}").blue().bold());
+                            },
+                            Some(signal) = signals.next() => {
+                                match signal {
+                                    SIGTSTP | SIGINT | SIGTERM => {
+                                        drop(read_output_stream);
+                                        eprintln!("{}", "■ [ABORTED]".red().bold());
+                                        return Ok(());
+                                    }
+                                    _ => {}
+                                }
                             }
                         }
-
                         let total_elapsed_time = start.unwrap().elapsed().as_secs_f64();
 
                         let total_throughput_mibps =
