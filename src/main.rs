@@ -515,8 +515,8 @@ async fn run() -> Result<(), S2CliError> {
                             maybe_append_result = append_output_stream.next() => {
                                 match maybe_append_result {
                                     Some(append_result) => {
-                                        append_result
-                                            .map(|append_result| {
+                                        match append_result {
+                                            Ok(append_result) => {
                                                 eprintln!(
                                                     "{}",
                                                     format!(
@@ -528,10 +528,11 @@ async fn run() -> Result<(), S2CliError> {
                                                     .green()
                                                     .bold()
                                                 );
-                                            })
-                                            .map_err(|e| {
-                                                ServiceError::new(ServiceErrorContext::AppendSession, e)
-                                            })?;
+                                            },
+                                            Err(e) => {
+                                                return Err(ServiceError::new(ServiceErrorContext::AppendSession, e).into());
+                                            }
+                                        }
                                     }
                                     None => break,
                                 }
