@@ -543,7 +543,7 @@ async fn run() -> Result<(), S2CliError> {
                                     SIGTSTP | SIGINT | SIGTERM => {
                                         drop(append_output_stream);
                                         eprintln!("{}", "■ [ABORTED]".red().bold());
-                                        return Ok(());
+                                        break;
                                     }
                                     _ => {}
                                 }
@@ -640,7 +640,7 @@ async fn run() -> Result<(), S2CliError> {
                                     SIGTSTP | SIGINT | SIGTERM => {
                                         drop(read_output_stream);
                                         eprintln!("{}", "■ [ABORTED]".red().bold());
-                                        return Ok(());
+                                        break;
                                     }
                                     _ => {}
                                 }
@@ -668,5 +668,5 @@ async fn run() -> Result<(), S2CliError> {
             }
         }
     }
-    Ok(())
+    std::process::exit(0);
 }
