@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    time::{Duration, UNIX_EPOCH},
+};
 
 use account::AccountService;
 use basin::BasinService;
@@ -12,7 +15,7 @@ use stream::{RecordStream, StreamService};
 use streamstore::{
     bytesize::ByteSize,
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
-    types::{BasinInfo, BasinName, MeteredSize as _, ReadOutput},
+    types::{BasinInfo, BasinName, MeteredSize as _, ReadOutput, StreamInfo},
     HeaderValue,
 };
 use tokio::{
@@ -430,8 +433,26 @@ async fn run() -> Result<(), S2CliError> {
                             limit.unwrap_or_default(),
                         )
                         .await?;
-                    for stream in streams {
-                        println!("{}", stream);
+                    for StreamInfo {
+                        name,
+                        created_at,
+                        deleted_at,
+                    } in streams
+                    {
+                        let date_time = |time: u32| {
+                            humantime::format_rfc3339_seconds(
+                                UNIX_EPOCH + Duration::from_secs(time as u64),
+                            )
+                        };
+
+                        println!(
+                            "{} {} {}",
+                            name,
+                            date_time(created_at).to_string().green(),
+                            deleted_at
+                                .map(|d| date_time(d).to_string().red())
+                                .unwrap_or_default()
+                        );
                     }
                 }
 

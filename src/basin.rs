@@ -2,7 +2,7 @@ use streamstore::{
     client::BasinClient,
     types::{
         CreateStreamRequest, DeleteStreamRequest, ListStreamsRequest, ListStreamsResponse,
-        ReconfigureStreamRequest, StreamConfig,
+        ReconfigureStreamRequest, StreamConfig, StreamInfo,
     },
 };
 
@@ -22,7 +22,7 @@ impl BasinService {
         prefix: String,
         start_after: String,
         limit: usize,
-    ) -> Result<Vec<String>, ServiceError> {
+    ) -> Result<Vec<StreamInfo>, ServiceError> {
         let list_streams_req = ListStreamsRequest::new()
             .with_prefix(prefix)
             .with_start_after(start_after)
@@ -34,7 +34,7 @@ impl BasinService {
             .await
             .map_err(|e| ServiceError::new(ServiceErrorContext::ListStreams, e))?;
 
-        Ok(streams.into_iter().map(|s| s.name).collect())
+        Ok(streams)
     }
 
     pub async fn create_stream(
