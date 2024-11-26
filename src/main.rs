@@ -12,7 +12,7 @@ use stream::{RecordStream, StreamService};
 use streamstore::{
     bytesize::ByteSize,
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
-    types::{BasinMetadata, BasinName, MeteredSize as _, ReadOutput},
+    types::{BasinInfo, BasinName, MeteredSize as _, ReadOutput},
     HeaderValue,
 };
 use tokio::{
@@ -355,8 +355,8 @@ async fn run() -> Result<(), S2CliError> {
                         )
                         .await?;
 
-                    for basin_metadata in response.basins {
-                        let BasinMetadata { name, state, .. } = basin_metadata;
+                    for basin_info in response.basins {
+                        let BasinInfo { name, state, .. } = basin_info;
 
                         let state = match state {
                             streamstore::types::BasinState::Active => state.to_string().green(),

@@ -36,7 +36,13 @@ impl<R: AsyncBufRead> Stream for RecordStream<R> {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
         match this.inner.as_mut().poll_next_line(cx) {
-            Poll::Ready(Ok(Some(line))) => Poll::Ready(Some(AppendRecord::new(line))),
+            Poll::Ready(Ok(Some(line))) => match AppendRecord::new(line) {
+                Ok(record) => Poll::Ready(Some(record)),
+                Err(e) => {
+                    eprintln!("Error parsing line: {}", e);
+                    Poll::Ready(None)
+                }
+            },
             Poll::Ready(Ok(None)) => Poll::Ready(None),
             Poll::Ready(Err(e)) => {
                 eprintln!("Error reading line: {}", e);

@@ -34,7 +34,7 @@ impl BasinService {
             .await
             .map_err(|e| ServiceError::new(ServiceErrorContext::ListStreams, e))?;
 
-        Ok(streams)
+        Ok(streams.into_iter().map(|s| s.name).collect())
     }
 
     pub async fn create_stream(

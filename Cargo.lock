@@ -1695,7 +1695,7 @@ checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 [[package]]
 name = "streamstore"
 version = "0.1.0"
-source = "git+https://github.com/s2-streamstore/s2-sdk-rust.git?rev=63b4964b66503f705e7c73ae07ba47f81019b79a#63b4964b66503f705e7c73ae07ba47f81019b79a"
+source = "git+https://github.com/s2-streamstore/s2-sdk-rust.git?rev=35cf0314dbc230f8f96c860a2ca8f5217f68151e#35cf0314dbc230f8f96c860a2ca8f5217f68151e"
 dependencies = [
  "async-stream",
  "backon",
@@ -1711,9 +1711,13 @@ dependencies = [
  "sync_docs",
  "thiserror",
  "tokio",
+ "tokio-muxt",
+ "tokio-stream",
  "tonic",
  "tonic-build",
+ "tonic-side-effect",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -1763,7 +1767,7 @@ dependencies = [
 [[package]]
 name = "sync_docs"
 version = "0.1.0"
-source = "git+https://github.com/s2-streamstore/s2-sdk-rust.git?rev=63b4964b66503f705e7c73ae07ba47f81019b79a#63b4964b66503f705e7c73ae07ba47f81019b79a"
+source = "git+https://github.com/s2-streamstore/s2-sdk-rust.git?rev=35cf0314dbc230f8f96c860a2ca8f5217f68151e#35cf0314dbc230f8f96c860a2ca8f5217f68151e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1885,6 +1889,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-muxt"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90bcb9cad7875779f3bc8ecbae7da36287f194302a7da6dac4a8264d8c1ad921"
+dependencies = [
+ "pin-project",
+ "tokio",
+]
+
+[[package]]
 name = "tokio-rustls"
 version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1998,6 +2012,18 @@ dependencies = [
  "prost-types",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tonic-side-effect"
+version = "0.2.0"
+source = "git+https://github.com/s2-streamstore/tonic-side-effect.git?rev=33c85a508a3dcb8f05194a7851592a83cec058d8#33c85a508a3dcb8f05194a7851592a83cec058d8"
+dependencies = [
+ "http",
+ "hyper",
+ "pin-project-lite",
+ "tonic",
+ "tower-service",
 ]
 
 [[package]]

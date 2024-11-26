@@ -1,7 +1,7 @@
 use streamstore::{
     client::Client,
     types::{
-        BasinConfig, BasinMetadata, BasinName, CreateBasinRequest, DeleteBasinRequest,
+        BasinConfig, BasinInfo, BasinName, CreateBasinRequest, DeleteBasinRequest,
         ListBasinsRequest, ListBasinsResponse, ReconfigureBasinRequest, StreamConfig,
     },
 };
@@ -39,7 +39,7 @@ impl AccountService {
         basin: BasinName,
         storage_class: Option<crate::types::StorageClass>,
         retention_policy: Option<crate::types::RetentionPolicy>,
-    ) -> Result<BasinMetadata, ServiceError> {
+    ) -> Result<BasinInfo, ServiceError> {
         let mut stream_config = StreamConfig::new();
 
         if let Some(storage_class) = storage_class {
@@ -86,6 +86,8 @@ impl AccountService {
         self.client
             .reconfigure_basin(reconfigure_basin_req)
             .await
-            .map_err(|e| ServiceError::new(ServiceErrorContext::ReconfigureBasin, e))
+            .map_err(|e| ServiceError::new(ServiceErrorContext::ReconfigureBasin, e))?;
+
+        Ok(())
     }
 }
