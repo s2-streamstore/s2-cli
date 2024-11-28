@@ -216,7 +216,7 @@ enum StreamActions {
         fencing_token: Option<FencingToken>,
 
         /// Enforce that the sequence number issued to the first record matches.
-        #[arg(short = 's', long)]
+        #[arg(short = 'm', long)]
         match_seq_num: Option<u64>,
 
         /// Input newline delimited records to append from a file or stdin.
