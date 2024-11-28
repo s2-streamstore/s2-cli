@@ -15,7 +15,7 @@ use stream::{RecordStream, StreamService};
 use streamstore::{
     bytesize::ByteSize,
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
-    types::{BasinInfo, BasinName, MeteredSize as _, ReadOutput, StreamInfo},
+    types::{BasinInfo, BasinName, FencingToken, MeteredSize as _, ReadOutput, StreamInfo},
     HeaderValue,
 };
 use tokio::{
@@ -210,6 +210,15 @@ enum StreamActions {
 
     /// Append records to a stream. Currently, only newline delimited records are supported.
     Append {
+        /// Enforce a fencing token which must have been previously set by a
+        /// `fence` command record.
+        #[arg(short = 'f', long)]
+        fencing_token: Option<FencingToken>,
+
+        /// Enforce that the sequence number issued to the first record matches.
+        #[arg(short = 's', long)]
+        match_seq_num: Option<u64>,
+
         /// Input newline delimited records to append from a file or stdin.
         /// All records are treated as plain text.
         /// Use "-" to read from stdin.
@@ -515,7 +524,11 @@ async fn run() -> Result<(), S2CliError> {
                     let next_seq_num = StreamService::new(stream_client).check_tail().await?;
                     println!("{}", next_seq_num);
                 }
-                StreamActions::Append { input } => {
+                StreamActions::Append {
+                    input,
+                    fencing_token,
+                    match_seq_num,
+                } => {
                     let stream_client = StreamClient::new(client_config, basin, stream);
                     let append_input_stream = RecordStream::new(
                         input
@@ -529,7 +542,7 @@ async fn run() -> Result<(), S2CliError> {
                         Signals::new([SIGTSTP, SIGINT, SIGTERM]).expect("valid signals");
 
                     let mut append_output_stream = StreamService::new(stream_client)
-                        .append_session(append_input_stream)
+                        .append_session(append_input_stream, fencing_token, match_seq_num)
                         .await?;
                     loop {
                         select! {

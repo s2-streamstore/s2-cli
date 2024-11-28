@@ -1,7 +1,7 @@
 use streamstore::{
-    batching::AppendRecordsBatchingStream,
+    batching::{AppendRecordsBatchingOpts, AppendRecordsBatchingStream},
     client::StreamClient,
-    types::{AppendOutput, ReadLimit, ReadOutput, ReadSessionRequest},
+    types::{AppendOutput, FencingToken, ReadLimit, ReadOutput, ReadSessionRequest},
     Streaming,
 };
 use tokio::io::AsyncBufRead;
@@ -72,9 +72,14 @@ impl StreamService {
     pub async fn append_session(
         &self,
         append_input_stream: RecordStream<Box<dyn AsyncBufRead + Send + Unpin>>,
+        fencing_token: Option<FencingToken>,
+        match_seq_num: Option<u64>,
     ) -> Result<Streaming<AppendOutput>, ServiceError> {
-        let append_record_stream =
-            AppendRecordsBatchingStream::new(append_input_stream, Default::default());
+        let opts = AppendRecordsBatchingOpts::default()
+            .with_fencing_token(fencing_token)
+            .with_match_seq_num(match_seq_num);
+
+        let append_record_stream = AppendRecordsBatchingStream::new(append_input_stream, opts);
 
         self.client
             .append_session(append_record_stream)
