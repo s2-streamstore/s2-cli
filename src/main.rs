@@ -13,9 +13,8 @@ use signal_hook::consts::{SIGINT, SIGTERM, SIGTSTP};
 use signal_hook_tokio::Signals;
 use stream::{RecordStream, StreamService};
 use streamstore::{
-    bytesize::ByteSize,
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
-    types::{BasinInfo, BasinName, FencingToken, MeteredSize as _, ReadOutput, StreamInfo},
+    types::{BasinInfo, BasinName, FencingToken, MeteredBytes as _, ReadOutput, StreamInfo},
     HeaderValue,
 };
 use tokio::{
@@ -245,7 +244,7 @@ enum StreamActions {
 
         /// Limit the number of bytes returned.
         #[arg(short = 'b', long)]
-        limit_bytes: Option<ByteSize>,
+        limit_bytes: Option<u64>,
     },
 }
 
@@ -600,7 +599,7 @@ async fn run() -> Result<(), S2CliError> {
                     let mut writer = output.into_writer().await.unwrap();
 
                     let mut start = None;
-                    let mut total_data_len = ByteSize::b(0);
+                    let mut total_data_len = 0;
 
                     loop {
                         select! {
@@ -613,7 +612,7 @@ async fn run() -> Result<(), S2CliError> {
                                         match read_result {
                                             Ok(ReadOutput::Batch(sequenced_record_batch)) => {
                                                 let num_records = sequenced_record_batch.records.len();
-                                                let mut batch_len = ByteSize::b(0);
+                                                let mut batch_len = 0;
 
                                                 let seq_range = match (
                                                     sequenced_record_batch.records.first(),
@@ -624,7 +623,7 @@ async fn run() -> Result<(), S2CliError> {
                                                 };
                                                 for sequenced_record in sequenced_record_batch.records {
                                                     let data = &sequenced_record.body;
-                                                    batch_len += sequenced_record.metered_size();
+                                                    batch_len += sequenced_record.metered_bytes();
 
                                                     writer
                                                         .write_all(data)
@@ -637,7 +636,7 @@ async fn run() -> Result<(), S2CliError> {
                                                 }
                                                 total_data_len += batch_len;
 
-                                                let throughput_mibps = (total_data_len.0 as f64
+                                                let throughput_mibps = (total_data_len as f64
                                                     / start.unwrap().elapsed().as_secs_f64())
                                                     / 1024.0
                                                     / 1024.0;
@@ -683,7 +682,7 @@ async fn run() -> Result<(), S2CliError> {
                         let total_elapsed_time = start.unwrap().elapsed().as_secs_f64();
 
                         let total_throughput_mibps =
-                            (total_data_len.0 as f64 / total_elapsed_time) / 1024.0 / 1024.0;
+                            (total_data_len as f64 / total_elapsed_time) / 1024.0 / 1024.0;
 
                         eprintln!(
                             "{}",
