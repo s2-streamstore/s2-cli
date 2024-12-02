@@ -231,7 +231,7 @@ enum StreamActions {
     Read {
         /// Starting sequence number (inclusive). If not specified, the latest record.
         #[arg(short = 's', long)]
-        start_seq_num: u64,
+        start_seq_num: Option<u64>,
 
         /// Output records to a file or stdout.
         /// Use "-" to write to stdout.
