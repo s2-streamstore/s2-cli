@@ -1689,7 +1689,7 @@ checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 [[package]]
 name = "streamstore"
 version = "0.1.0"
-source = "git+https://github.com/s2-streamstore/s2-sdk-rust.git?rev=d40de3df1c76ba71361f9e9f5327aee1619763cb#d40de3df1c76ba71361f9e9f5327aee1619763cb"
+source = "git+https://github.com/s2-streamstore/s2-sdk-rust.git?rev=53a6bac01e951965f79153bb9c37d81931eb430d#53a6bac01e951965f79153bb9c37d81931eb430d"
 dependencies = [
  "async-stream",
  "backon",
@@ -1762,7 +1762,7 @@ dependencies = [
 [[package]]
 name = "sync_docs"
 version = "0.1.0"
-source = "git+https://github.com/s2-streamstore/s2-sdk-rust.git?rev=d40de3df1c76ba71361f9e9f5327aee1619763cb#d40de3df1c76ba71361f9e9f5327aee1619763cb"
+source = "git+https://github.com/s2-streamstore/s2-sdk-rust.git?rev=53a6bac01e951965f79153bb9c37d81931eb430d#53a6bac01e951965f79153bb9c37d81931eb430d"
 dependencies = [
  "proc-macro2",
  "quote",
