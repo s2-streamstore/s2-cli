@@ -550,7 +550,7 @@ async fn run() -> Result<(), S2CliError> {
                     StreamService::new(stream_client)
                         .append_command_record(CommandRecord::trim(trim_point))
                         .await?;
-                    eprintln!("{}", "✓ Trim point set".green().bold());
+                    eprintln!("{}", "✓ Trim requested".green().bold());
                 }
                 StreamActions::Fence { fencing_token } => {
                     let stream_client = StreamClient::new(client_config, basin, stream);
