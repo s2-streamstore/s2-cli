@@ -109,23 +109,23 @@ impl From<ClientError> for ServiceStatus {
             },
             ClientError::Conversion(conv) => Self {
                 message: conv.to_string(),
-                status: "Internal error".to_string(),
+                status: "Failed to convert SDK type".to_string(),
             },
         }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("{kind}:\n {status}")]
+#[error("{context}:\n {status}")]
 pub struct ServiceError {
-    kind: ServiceErrorContext,
+    context: ServiceErrorContext,
     status: ServiceStatus,
 }
 
 impl ServiceError {
-    pub fn new(kind: ServiceErrorContext, status: impl Into<ServiceStatus>) -> Self {
+    pub fn new(context: ServiceErrorContext, status: impl Into<ServiceStatus>) -> Self {
         Self {
-            kind,
+            context,
             status: status.into(),
         }
     }
