@@ -9,8 +9,6 @@ use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
 use error::{S2CliError, ServiceError, ServiceErrorContext};
-use signal_hook::consts::{SIGINT, SIGTERM, SIGTSTP};
-use signal_hook_tokio::Signals;
 use stream::{RecordStream, StreamService};
 use streamstore::{
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
@@ -20,6 +18,7 @@ use streamstore::{
     },
     HeaderValue,
 };
+use tokio::signal;
 use tokio::{
     fs::{File, OpenOptions},
     io::{self, AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
@@ -573,9 +572,6 @@ async fn run() -> Result<(), S2CliError> {
                             .lines(),
                     );
 
-                    let mut signals =
-                        Signals::new([SIGTSTP, SIGINT, SIGTERM]).expect("valid signals");
-
                     let mut append_output_stream = StreamService::new(stream_client)
                         .append_session(append_input_stream, fencing_token, match_seq_num)
                         .await?;
@@ -607,16 +603,11 @@ async fn run() -> Result<(), S2CliError> {
                                 }
                             }
 
-                            Some(signal) = signals.next() => {
-                                match signal {
-                                    SIGTSTP | SIGINT | SIGTERM => {
-                                        drop(append_output_stream);
-                                        eprintln!("{}", "■ [ABORTED]".red().bold());
-                                        break;
-                                    }
-                                    _ => {}
+                            _ = signal::ctrl_c() => {
+                                    drop(append_output_stream);
+                                    eprintln!("{}", "■ [ABORTED]".red().bold());
+                                    break;
                                 }
-                            }
                         }
                     }
                 }
@@ -627,8 +618,6 @@ async fn run() -> Result<(), S2CliError> {
                     limit_bytes,
                 } => {
                     let stream_client = StreamClient::new(client_config, basin, stream);
-                    let mut signals =
-                        Signals::new([SIGTSTP, SIGINT, SIGTERM]).expect("valid signals");
                     let mut read_output_stream = StreamService::new(stream_client)
                         .read_session(start_seq_num, limit_count, limit_bytes)
                         .await?;
@@ -704,15 +693,10 @@ async fn run() -> Result<(), S2CliError> {
                                     None => break,
                                 }
                             },
-                            Some(signal) = signals.next() => {
-                                match signal {
-                                    SIGTSTP | SIGINT | SIGTERM => {
-                                        drop(read_output_stream);
-                                        eprintln!("{}", "■ [ABORTED]".red().bold());
-                                        break;
-                                    }
-                                    _ => {}
-                                }
+                            _ = signal::ctrl_c() => {
+                                drop(read_output_stream);
+                                eprintln!("{}", "■ [ABORTED]".red().bold());
+                                break;
                             }
                         }
                         let total_elapsed_time = start.unwrap().elapsed().as_secs_f64();
