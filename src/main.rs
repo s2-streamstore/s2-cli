@@ -503,10 +503,10 @@ async fn run() -> Result<(), S2CliError> {
 
                 BasinActions::GetStreamConfig { stream } => {
                     let basin_client = BasinClient::new(client_config, basin);
-                    let config = BasinService::new(basin_client)
+                    let config: StreamConfig = BasinService::new(basin_client)
                         .get_stream_config(stream)
-                        .await?;
-                    let config: StreamConfig = config.into();
+                        .await?
+                        .into();
                     println!("{}", serde_json::to_string_pretty(&config)?);
                 }
 
@@ -522,11 +522,13 @@ async fn run() -> Result<(), S2CliError> {
                         mask.push("retention_policy".to_string());
                     };
 
-                    BasinService::new(basin_client)
+                    let config: StreamConfig = BasinService::new(basin_client)
                         .reconfigure_stream(stream, config.into(), mask)
-                        .await?;
+                        .await?
+                        .into();
 
                     eprintln!("{}", "✓ Stream reconfigured".green().bold());
+                    println!("{}", serde_json::to_string_pretty(&config)?);
                 }
             }
         }
