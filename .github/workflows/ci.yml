@@ -66,8 +66,8 @@ jobs:
           echo "${{ secrets.MACOS_PEM }}" | base64 -d -o macos.pem
           echo "${{ secrets.MACOS_CERTIFICATE_DER }}" | base64 -d -o certificate.der
       - name: why???
-        run: ./target/debug/s2
-      - name: Sign macos binary        
+        run: cargo build
+      - name: Sign macos binary      
         uses: indygreg/apple-code-sign-action@v1
         with:
           input_path: ./target/debug/s2
