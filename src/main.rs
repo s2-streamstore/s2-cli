@@ -14,7 +14,10 @@ use signal_hook_tokio::Signals;
 use stream::{RecordStream, StreamService};
 use streamstore::{
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
-    types::{BasinInfo, BasinName, FencingToken, MeteredBytes as _, ReadOutput, StreamInfo},
+    types::{
+        BasinInfo, BasinName, CommandRecord, FencingToken, MeteredBytes as _, ReadOutput,
+        StreamInfo,
+    },
     HeaderValue,
 };
 use tokio::{
@@ -206,6 +209,25 @@ enum BasinActions {
 enum StreamActions {
     /// Get the next sequence number that will be assigned by a stream.
     CheckTail,
+
+    /// Set the trim point for the stream.
+    /// Trimming is eventually consistent, and trimmed records may be visible
+    /// for a brief period.
+    Trim {
+        /// Trim point.
+        /// This sequence number is only allowed to advance, and any regression
+        /// will be ignored.
+        trim_point: u64,
+    },
+
+    /// Set the fencing token for the stream.
+    /// Fencing is strongly consistent, and subsequent appends that specify a
+    /// fencing token will be rejected if it does not match.
+    Fence {
+        /// Payload upto 16 bytes to set as the fencing token.
+        /// An empty payload clears the token.
+        fencing_token: Option<FencingToken>,
+    },
 
     /// Append records to a stream. Currently, only newline delimited records are supported.
     Append {
@@ -522,6 +544,20 @@ async fn run() -> Result<(), S2CliError> {
                     let stream_client = StreamClient::new(client_config, basin, stream);
                     let next_seq_num = StreamService::new(stream_client).check_tail().await?;
                     println!("{}", next_seq_num);
+                }
+                StreamActions::Trim { trim_point } => {
+                    let stream_client = StreamClient::new(client_config, basin, stream);
+                    StreamService::new(stream_client)
+                        .append_command_record(CommandRecord::trim(trim_point))
+                        .await?;
+                    eprintln!("{}", "✓ Trim requested".green().bold());
+                }
+                StreamActions::Fence { fencing_token } => {
+                    let stream_client = StreamClient::new(client_config, basin, stream);
+                    StreamService::new(stream_client)
+                        .append_command_record(CommandRecord::fence(fencing_token))
+                        .await?;
+                    eprintln!("{}", "✓ Fencing token set".green().bold());
                 }
                 StreamActions::Append {
                     input,

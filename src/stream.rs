@@ -1,7 +1,10 @@
 use streamstore::{
     batching::{AppendRecordsBatchingOpts, AppendRecordsBatchingStream},
-    client::StreamClient,
-    types::{AppendOutput, FencingToken, ReadLimit, ReadOutput, ReadSessionRequest},
+    client::{ClientError, StreamClient},
+    types::{
+        AppendInput, AppendOutput, AppendRecordBatch, CommandRecord, FencingToken, ReadLimit,
+        ReadOutput, ReadSessionRequest,
+    },
     Streaming,
 };
 use tokio::io::AsyncBufRead;
@@ -66,6 +69,23 @@ impl StreamService {
             .check_tail()
             .await
             .map_err(|e| ServiceError::new(ServiceErrorContext::CheckTail, e))
+    }
+
+    pub async fn append_command_record(
+        &self,
+        cmd: CommandRecord,
+    ) -> Result<AppendOutput, ServiceError> {
+        let context = match &cmd {
+            CommandRecord::Fence { .. } => ServiceErrorContext::Fence,
+            CommandRecord::Trim { .. } => ServiceErrorContext::Trim,
+        };
+        let record = AppendRecord::try_from(cmd)
+            .map_err(|e| ServiceError::new(context, ClientError::Conversion(e)))?;
+        let batch = AppendRecordBatch::try_from_iter([record]).expect("single valid append record");
+        self.client
+            .append(AppendInput::new(batch))
+            .await
+            .map_err(|e| ServiceError::new(context, e))
     }
 
     pub async fn append_session(

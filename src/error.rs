@@ -51,7 +51,7 @@ pub enum S2CliError {
     Service(#[from] ServiceError),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ServiceErrorContext {
     ListBasins,
     CreateBasin,
@@ -63,6 +63,8 @@ pub enum ServiceErrorContext {
     DeleteStream,
     GetStreamConfig,
     CheckTail,
+    Trim,
+    Fence,
     AppendSession,
     ReadSession,
     ReconfigureStream,
@@ -81,6 +83,8 @@ impl std::fmt::Display for ServiceErrorContext {
             ServiceErrorContext::DeleteStream => write!(f, "Failed to delete stream"),
             ServiceErrorContext::GetStreamConfig => write!(f, "Failed to get stream config"),
             ServiceErrorContext::CheckTail => write!(f, "Failed to check tail"),
+            ServiceErrorContext::Trim => write!(f, "Failed to trim"),
+            ServiceErrorContext::Fence => write!(f, "Failed to set fencing token"),
             ServiceErrorContext::AppendSession => write!(f, "Failed to append session"),
             ServiceErrorContext::ReadSession => write!(f, "Failed to read session"),
             ServiceErrorContext::ReconfigureStream => write!(f, "Failed to reconfigure stream"),
@@ -90,7 +94,7 @@ impl std::fmt::Display for ServiceErrorContext {
 
 /// Error for holding relevant info from `tonic::Status`
 #[derive(thiserror::Error, Debug, Default)]
-#[error("{status}: \n{message}")]
+#[error("{status}:\n {message}")]
 pub struct ServiceStatus {
     pub message: String,
     pub status: String,
@@ -103,25 +107,25 @@ impl From<ClientError> for ServiceStatus {
                 message: status.message().to_string(),
                 status: status.code().to_string(),
             },
-            _ => Self {
-                message: error.to_string(),
-                ..Default::default()
+            ClientError::Conversion(conv) => Self {
+                message: conv.to_string(),
+                status: "Failed to convert SDK type".to_string(),
             },
         }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("{kind}:\n {status}")]
+#[error("{context}:\n {status}")]
 pub struct ServiceError {
-    kind: ServiceErrorContext,
+    context: ServiceErrorContext,
     status: ServiceStatus,
 }
 
 impl ServiceError {
-    pub fn new(kind: ServiceErrorContext, status: impl Into<ServiceStatus>) -> Self {
+    pub fn new(context: ServiceErrorContext, status: impl Into<ServiceStatus>) -> Self {
         Self {
-            kind,
+            context,
             status: status.into(),
         }
     }
