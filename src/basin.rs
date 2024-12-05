@@ -73,7 +73,7 @@ impl BasinService {
         stream: String,
         config: StreamConfig,
         mask: Vec<String>,
-    ) -> Result<(), ServiceError> {
+    ) -> Result<StreamConfig, ServiceError> {
         let reconfigure_stream_req = ReconfigureStreamRequest::new(stream)
             .with_config(config)
             .with_mask(mask);

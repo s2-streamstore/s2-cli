@@ -24,6 +24,7 @@ pub struct StreamConfig {
 }
 
 #[derive(ValueEnum, Debug, Clone, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum StorageClass {
     Unspecified,
     Standard,
