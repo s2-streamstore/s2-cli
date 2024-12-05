@@ -79,7 +79,7 @@ jobs:
         shell: bash
         run: |
             cd target/debug                        
-            zip -r ../../../s2.zip s2            
+            zip -r ../../s2.zip s2            
       - name: App store connect api key
         run: echo "${{ secrets.APP_STORE_CONNECT_API_KEY }}" | base64 -d -o app_store_connect_api_key.json
       - name: Notarize macos binary                
