@@ -52,13 +52,18 @@ jobs:
           git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf ssh://git@github
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
+      - name: Create pem and certificate.der files
+        if: matrix.os == 'macos-latest'
+        run: |
+          echo "${{ secrets.MACOS_PEM }}" | base64 -d -o macos.pem
+          echo "${{ secrets.MACOS_CERTIFICATE_DER }}" | base64 -d -o certificate.der
       - name: Sign macos binary
         if: matrix.os == 'macos-latest'
         uses: indygreg/apple-code-sign-action@v1
         with:
           input_path: target/${{ matrix.target }}/release/s2
-          pem_file: ${{ secrets.MACOS_PEM_FILE }}
-          certificate_der_file: ${{ secrets.MACOS_CERTIFICATE_DER_FILE }}
+          pem_file: macos.pem
+          certificate_der_file: certificate.der
           sign: true
           sign_args: "--code-signature-flags=runtime"
       - name: Prepare artifacts

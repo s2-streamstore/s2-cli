@@ -28,7 +28,7 @@ jobs:
         run: exit 1
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
   lint:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -59,3 +59,30 @@ jobs:
         run: cargo clippy --workspace --all-features --all-targets -- -D warnings --allow deprecated
       - name: Check Cargo.toml sorting
         run: cargo sort --workspace --check
+      - name: Create pem and certificate.der files        
+        run: |
+          echo "${{ secrets.MACOS_PEM }}" | base64 -d -o macos.pem
+          echo "${{ secrets.MACOS_CERTIFICATE_DER }}" | base64 -d -o certificate.der
+      - name: Sign macos binary        
+        uses: indygreg/apple-code-sign-action@v1
+        with:
+          input_path: target/debug/s2
+          pem_file: macos.pem
+          certificate_der_file: certificate.der
+          sign: true
+          sign_args: "--code-signature-flags=runtime"
+      - name: Prepare artifacts
+        shell: bash
+        run: |
+            cd target/debug                        
+            zip -r ../../../s2.zip s2            
+
+      - name: App store connect api key
+        run: echo "${{ secrets.APP_STORE_CONNECT_API_KEY }}" > app_store_connect_api_key.json
+      - name: Notarize macos binary                
+        uses: indygreg/apple-notarize-action@v1
+        with:          
+          input_path: target/debug/s2
+          sign: false
+          notarize: true
+          app_store_connect_api_key_json_file: app_store_connect_api_key.json
