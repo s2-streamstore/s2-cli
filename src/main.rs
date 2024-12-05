@@ -253,9 +253,9 @@ enum Commands {
         /// Name of the stream.
         stream: String,
 
-        /// Starting sequence number (inclusive). If not specified, the latest record.
-        #[arg(short = 's', long)]
-        start_seq_num: Option<u64>,
+        /// Starting sequence number (inclusive).
+        #[arg(short = 's', long, default_value_t = 0)]
+        start_seq_num: u64,
 
         /// Output records to a file or stdout.
         /// Use "-" to write to stdout.
