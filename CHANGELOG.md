@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2024-12-05
+
+### Features
+
+- Return reconfigured stream ([#53](https://github.com/s2-streamstore/s2-cli/issues/53))
+- Stderr `CommandRecord` when reading ([#45](https://github.com/s2-streamstore/s2-cli/issues/45)) ([#55](https://github.com/s2-streamstore/s2-cli/issues/55))
+- Sign and notarize apple binaries ([#54](https://github.com/s2-streamstore/s2-cli/issues/54))
+- Flatten commands ([#52](https://github.com/s2-streamstore/s2-cli/issues/52)) ([#56](https://github.com/s2-streamstore/s2-cli/issues/56))
+
 ## [0.2.0] - 2024-12-05
 
 ### Features
