@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.2.0] - 2024-12-04
+## [0.2.0] - 2024-12-05
 
 ### Features
 
@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - Exercise limits for read session ([#27](https://github.com/s2-streamstore/s2-cli/issues/27))
 - Better error reporting ([#30](https://github.com/s2-streamstore/s2-cli/issues/30))
 - Appends with `fencing_token` and `match_seq_num` ([#38](https://github.com/s2-streamstore/s2-cli/issues/38))
+- Stream `fence` and `trim` commands ([#46](https://github.com/s2-streamstore/s2-cli/issues/46))
 
 ### Bug Fixes
 
@@ -18,6 +19,7 @@ All notable changes to this project will be documented in this file.
 - Flush BufWriter ([#22](https://github.com/s2-streamstore/s2-cli/issues/22))
 - Handle common signals for streams ([#32](https://github.com/s2-streamstore/s2-cli/issues/32))
 - Optional `start_seq_num` in `StreamService/ReadSession` ([#42](https://github.com/s2-streamstore/s2-cli/issues/42))
+- Catch `ctrl-c` signal on windows ([#50](https://github.com/s2-streamstore/s2-cli/issues/50))
 
 ### Documentation
 
