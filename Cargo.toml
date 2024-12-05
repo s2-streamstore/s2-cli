@@ -26,4 +26,4 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 
 [dependencies.streamstore]
 git = "https://github.com/s2-streamstore/s2-sdk-rust.git"
-rev = "1754135396dcc0ab1bb7256c8d83a46de2adebde"
+rev = "924594f84c33562aae67ee465dfd9cdfd9917230"

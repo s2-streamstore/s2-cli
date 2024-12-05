@@ -649,17 +649,31 @@ async fn run() -> Result<(), S2CliError> {
                                                     _ => panic!("empty batch"),
                                                 };
                                                 for sequenced_record in sequenced_record_batch.records {
-                                                    let data = &sequenced_record.body;
                                                     batch_len += sequenced_record.metered_bytes();
 
-                                                    writer
-                                                        .write_all(data)
-                                                        .await
-                                                        .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
-                                                    writer
-                                                        .write_all(b"\n")
-                                                        .await
-                                                        .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
+                                                    if let Some(command_record) = sequenced_record.as_command_record() {
+                                                        let (cmd, description) = match command_record {
+                                                            CommandRecord::Fence { fencing_token } => (
+                                                                "fence",
+                                                                format!("{fencing_token:?}"),
+                                                            ),
+                                                            CommandRecord::Trim { seq_num } => (
+                                                                "trim",
+                                                                format!("TrimPoint({seq_num})"),
+                                                            ),
+                                                        };
+                                                        eprintln!("{} with {}", cmd.bold(), description.green().bold());
+                                                    } else {
+                                                        let data = &sequenced_record.body;
+                                                        writer
+                                                            .write_all(data)
+                                                            .await
+                                                            .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
+                                                        writer
+                                                            .write_all(b"\n")
+                                                            .await
+                                                            .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
+                                                    }
                                                 }
                                                 total_data_len += batch_len;
 
