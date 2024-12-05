@@ -254,7 +254,7 @@ enum Commands {
         stream: String,
 
         /// Starting sequence number (inclusive). If not specified, `0`.
-        #[arg(short = 's', long, default_value_t=0)]
+        #[arg(short = 's', long, default_value_t = 0)]
         start_seq_num: u64,
 
         /// Output records to a file or stdout.
