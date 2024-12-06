@@ -211,7 +211,7 @@ enum Commands {
         /// Name of the stream.
         stream: String,
 
-        /// Payload upto 16 bytes to set as the fencing token.
+        /// Payload upto 16 bytes in hex to set as the fencing token.
         /// An empty payload clears the token.
         fencing_token: Option<FencingToken>,
     },
@@ -226,8 +226,8 @@ enum Commands {
         /// Name of the stream.
         stream: String,
 
-        /// Enforce a fencing token which must have been previously set by a
-        /// `fence` command record.
+        /// Enforce a fencing token specified in hex,
+        /// which must have been previously set by a `fence` command.
         #[arg(short = 'f', long)]
         fencing_token: Option<FencingToken>,
 
