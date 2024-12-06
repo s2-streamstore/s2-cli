@@ -751,7 +751,7 @@ async fn run() -> Result<(), S2CliError> {
                                                 let (cmd, description) = match command_record {
                                                     CommandRecord::Fence { fencing_token } => (
                                                         "fence",
-                                                        format!("{fencing_token:?}"),
+                                                        format!("FencingToken({})", base16ct::lower::encode_string(fencing_token.as_ref())),
                                                     ),
                                                     CommandRecord::Trim { seq_num } => (
                                                         "trim",
