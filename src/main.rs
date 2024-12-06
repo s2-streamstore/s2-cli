@@ -13,8 +13,8 @@ use stream::{RecordStream, StreamService};
 use streamstore::{
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
-        BasinInfo, BasinName, CommandRecord, FencingToken, MeteredBytes as _, ReadOutput,
-        StreamInfo,
+        BasinInfo, BasinName, CommandRecord, ConvertError, FencingToken, MeteredBytes as _,
+        ReadOutput, StreamInfo,
     },
     HeaderValue,
 };
@@ -194,16 +194,27 @@ enum Commands {
         /// Name of the stream.
         stream: String,
 
-        /// Trim point.
-        /// This sequence number is only allowed to advance, and any regression
-        /// will be ignored.
+        /// Earliest sequence number that should be retained.
+        /// This sequence number is only allowed to advance,
+        /// and any regression will be ignored.
         trim_point: u64,
+
+        /// Enforce fencing token specified in hex.
+        #[arg(short = 'f', long, value_parser = parse_fencing_token)]
+        fencing_token: Option<FencingToken>,
+
+        /// Enforce that the sequence number issued to the first record matches.
+        #[arg(short = 'm', long)]
+        match_seq_num: Option<u64>,
     },
 
-    /// Set the fencing token for the stream.
+    /// Set a fencing token for the stream.
     ///
     /// Fencing is strongly consistent, and subsequent appends that specify a
-    /// fencing token will be rejected if it does not match.
+    /// token will be rejected if it does not match.
+    ///
+    /// Note that fencing is a cooperative mechanism,
+    /// and it is only enforced when a token is provided.
     Fence {
         /// Name of the basin.
         basin: BasinName,
@@ -211,9 +222,18 @@ enum Commands {
         /// Name of the stream.
         stream: String,
 
-        /// Payload upto 16 bytes in hex to set as the fencing token.
-        /// An empty payload clears the token.
+        /// New fencing token specified in hex.
+        /// It may be upto 16 bytes, and can be empty.
+        #[arg(value_parser = parse_fencing_token)]
+        new_fencing_token: FencingToken,
+
+        /// Enforce existing fencing token, specified in hex.
+        #[arg(short = 'f', long, value_parser = parse_fencing_token)]
         fencing_token: Option<FencingToken>,
+
+        /// Enforce that the sequence number issued to this command matches.
+        #[arg(short = 'm', long)]
+        match_seq_num: Option<u64>,
     },
 
     /// Append records to a stream.
@@ -226,9 +246,8 @@ enum Commands {
         /// Name of the stream.
         stream: String,
 
-        /// Enforce a fencing token specified in hex,
-        /// which must have been previously set by a `fence` command.
-        #[arg(short = 'f', long)]
+        /// Enforce fencing token specified in hex.
+        #[arg(short = 'f', long, value_parser = parse_fencing_token)]
         fencing_token: Option<FencingToken>,
 
         /// Enforce that the sequence number issued to the first record matches.
@@ -338,6 +357,12 @@ fn parse_records_output_source(s: &str) -> Result<RecordsOut, std::io::Error> {
         "" | "-" => Ok(RecordsOut::Stdout),
         _ => Ok(RecordsOut::File(PathBuf::from(s))),
     }
+}
+
+fn parse_fencing_token(s: &str) -> Result<FencingToken, ConvertError> {
+    base16ct::mixed::decode_vec(s)
+        .map_err(|_| "invalid hex")?
+        .try_into()
 }
 
 fn client_config(auth_token: String) -> Result<ClientConfig, S2CliError> {
@@ -576,28 +601,50 @@ async fn run() -> Result<(), S2CliError> {
             basin,
             stream,
             trim_point,
+            fencing_token,
+            match_seq_num,
         } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
-            StreamService::new(stream_client)
-                .append_command_record(CommandRecord::trim(trim_point))
+            let out = StreamService::new(stream_client)
+                .append_command_record(
+                    CommandRecord::trim(trim_point),
+                    fencing_token,
+                    match_seq_num,
+                )
                 .await?;
-            eprintln!("{}", "✓ Trim requested".green().bold());
+            eprintln!(
+                "{}",
+                format!("✓ Trim requested at seq_num={}", out.start_seq_num)
+                    .green()
+                    .bold()
+            );
         }
 
         Commands::Fence {
             basin,
             stream,
+            new_fencing_token,
             fencing_token,
+            match_seq_num,
         } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
-            StreamService::new(stream_client)
-                .append_command_record(CommandRecord::fence(fencing_token))
+            let out = StreamService::new(stream_client)
+                .append_command_record(
+                    CommandRecord::fence(new_fencing_token),
+                    fencing_token,
+                    match_seq_num,
+                )
                 .await?;
-            eprintln!("{}", "✓ Fencing token set".green().bold());
+            eprintln!(
+                "{}",
+                format!("✓ Fencing token set at seq_num: {}", out.start_seq_num)
+                    .green()
+                    .bold()
+            );
         }
 
         Commands::Append {
@@ -704,7 +751,7 @@ async fn run() -> Result<(), S2CliError> {
                                                 let (cmd, description) = match command_record {
                                                     CommandRecord::Fence { fencing_token } => (
                                                         "fence",
-                                                        format!("{fencing_token:?}"),
+                                                        format!("FencingToken({})", base16ct::lower::encode_string(fencing_token.as_ref())),
                                                     ),
                                                     CommandRecord::Trim { seq_num } => (
                                                         "trim",

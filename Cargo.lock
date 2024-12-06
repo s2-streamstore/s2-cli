@@ -233,6 +233,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "base16ct"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c7f02d4ea65f2c1853089ffd8d2787bdbc63de2f0d29dedbcf8ccdfa0ccd4cf"
+
+[[package]]
 name = "base64"
 version = "0.21.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -276,9 +282,9 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "bytes"
-version = "1.8.0"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ac0150caa2ae65ca5bd83f25c7de183dea78d4d366469f148435e2acfbad0da"
+checksum = "325918d6fe32f23b19878fe4b34794ae41fc19ddbe53b10571a4874d44ffd39b"
 
 [[package]]
 name = "cc"
@@ -1514,6 +1520,7 @@ name = "s2"
 version = "0.3.0"
 dependencies = [
  "async-stream",
+ "base16ct",
  "clap",
  "color-print",
  "colored",
@@ -1665,7 +1672,7 @@ checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 [[package]]
 name = "streamstore"
 version = "0.2.0"
-source = "git+https://github.com/s2-streamstore/s2-sdk-rust.git?rev=b1547bcd55a4f3b5b76104a6ffd374014671d617#b1547bcd55a4f3b5b76104a6ffd374014671d617"
+source = "git+https://github.com/s2-streamstore/s2-sdk-rust.git?rev=8f6995159a79f0d2334d071115dfecf9965fda73#8f6995159a79f0d2334d071115dfecf9965fda73"
 dependencies = [
  "async-stream",
  "backon",
@@ -1738,7 +1745,7 @@ dependencies = [
 [[package]]
 name = "sync_docs"
 version = "0.1.0"
-source = "git+https://github.com/s2-streamstore/s2-sdk-rust.git?rev=b1547bcd55a4f3b5b76104a6ffd374014671d617#b1547bcd55a4f3b5b76104a6ffd374014671d617"
+source = "git+https://github.com/s2-streamstore/s2-sdk-rust.git?rev=8f6995159a79f0d2334d071115dfecf9965fda73#8f6995159a79f0d2334d071115dfecf9965fda73"
 dependencies = [
  "proc-macro2",
  "quote",
