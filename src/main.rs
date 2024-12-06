@@ -1,6 +1,6 @@
 use std::{
     path::PathBuf,
-    time::{Duration, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use account::AccountService;
@@ -13,18 +13,18 @@ use stream::{RecordStream, StreamService};
 use streamstore::{
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
-        BasinInfo, BasinName, CommandRecord, FencingToken, MeteredBytes as _, ReadOutput,
-        StreamInfo,
+        AppendRecord, BasinInfo, BasinName, CommandRecord, FencingToken, Header, MeteredBytes as _,
+        ReadOutput, SequencedRecordBatch, StreamInfo,
     },
     HeaderValue,
 };
-use tokio::signal;
 use tokio::{
     fs::{File, OpenOptions},
     io::{self, AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
     select,
     time::Instant,
 };
+use tokio::{signal, sync::mpsc};
 use tokio_stream::StreamExt;
 use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
@@ -269,6 +269,23 @@ enum Commands {
         /// Limit the number of bytes returned.
         #[arg(short = 'b', long)]
         limit_bytes: Option<u64>,
+    },
+
+    /// Pingtest
+    Pingtest {
+        /// Name of the basin.
+        basin: BasinName,
+
+        /// Name of the stream.
+        stream: String,
+
+        /// Number of records.
+        #[arg(short = 'n', long, default_value_t = 1000)]
+        record_count: usize,
+
+        /// Size of the record in bytes.
+        #[arg(short = 'b', long, default_value_t = 16 * 1000)]
+        record_bytes: u64,
     },
 }
 
@@ -619,7 +636,7 @@ async fn run() -> Result<(), S2CliError> {
             );
 
             let mut append_output_stream = StreamService::new(stream_client)
-                .append_session(append_input_stream, fencing_token, match_seq_num)
+                .append_session(append_input_stream, fencing_token, match_seq_num, None)
                 .await?;
             loop {
                 select! {
@@ -682,9 +699,9 @@ async fn run() -> Result<(), S2CliError> {
                     maybe_read_result = read_output_stream.next() => {
                         match maybe_read_result {
                             Some(read_result) => {
-                                    if start.is_none() {
-                                        start = Some(Instant::now());
-                                    }
+                                if start.is_none() {
+                                    start = Some(Instant::now());
+                                }
                                 match read_result {
                                     Ok(ReadOutput::Batch(sequenced_record_batch)) => {
                                         let num_records = sequenced_record_batch.records.len();
@@ -782,6 +799,134 @@ async fn run() -> Result<(), S2CliError> {
 
                 writer.flush().await.expect("writer flush");
             }
+        }
+
+        Commands::Pingtest {
+            basin,
+            stream,
+            record_count,
+            record_bytes,
+        } => {
+            let cfg = config::load_config(&config_path)?;
+            let client_config = client_config(cfg.auth_token)?;
+            let stream_client = StreamService::new(StreamClient::new(client_config, basin, stream));
+
+            let tail = stream_client.check_tail().await?;
+
+            let mut read_stream = stream_client.read_session(tail, None, None).await?;
+
+            let reads_handle = tokio::spawn(async move {
+                let mut reads = Vec::with_capacity(record_count);
+
+                for _ in 0..record_count {
+                    select! {
+                        next = read_stream.next() => {
+                            match next {
+                                None => break,
+                                Some(Err(e)) => {
+                                    return Err(ServiceError::new(ServiceErrorContext::ReadSession, e).into());
+                                }
+                                Some(Ok(output)) => {
+                                    if let ReadOutput::Batch(SequencedRecordBatch { mut records }) = output {
+                                        if records.len() != 1 {
+                                            return Err(S2CliError::PingtestStreamMutated);
+                                        }
+
+                                        let mut record = records.pop().unwrap();
+
+                                        if record.headers.len() != 1 {
+                                            return Err(S2CliError::PingtestStreamMutated);
+                                        }
+
+                                        let header = record.headers.pop().unwrap();
+
+                                        if header.name.as_ref() != b"timestamp" {
+                                            return Err(S2CliError::PingtestStreamMutated);
+                                        }
+
+                                        let append_timestamp = f64::from_be_bytes(
+                                            header
+                                                .value
+                                                .as_ref()
+                                                .try_into()
+                                                .map_err(|_| S2CliError::PingtestStreamMutated)?,
+                                        );
+                                        let append_timestamp = Duration::from_secs_f64(append_timestamp);
+
+                                        let now_timestamp = SystemTime::now()
+                                            .duration_since(UNIX_EPOCH)
+                                            .expect("valid duration");
+
+                                        reads.push(now_timestamp - append_timestamp);
+                                    } else {
+                                        return Err(S2CliError::PingtestStreamMutated);
+                                    }
+                                }
+                            }
+                        }
+                        _ = signal::ctrl_c() => {
+                            break;
+                        }
+                    }
+                }
+
+                Result::<Vec<Duration>, S2CliError>::Ok(reads)
+            });
+
+            let (tx, rx) = mpsc::channel::<AppendRecord>(1);
+
+            let append_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+
+            let mut append_stream = stream_client
+                .append_session(append_stream, None, None, Some(1))
+                .await?;
+
+            let mut appends = Vec::with_capacity(record_count);
+
+            for _ in 0..record_count {
+                let body = String::from_iter(std::iter::repeat_n('a', record_bytes as usize));
+
+                let start = SystemTime::now();
+                let timestamp = start
+                    .duration_since(UNIX_EPOCH)
+                    .expect("valid duration")
+                    .as_secs_f64();
+                let rec = AppendRecord::new(body)?.with_headers(vec![Header::new(
+                    b"timestamp".to_vec(),
+                    timestamp.to_be_bytes().to_vec(),
+                )])?;
+
+                select! {
+                    send = tx.send(rec) => {
+                        if send.is_ok() {
+                            // This is not a correct representation of acknowledgement latency
+                            // since the future is only polled later on.
+                            // FIXME: Figure out how to send timestamp over to calculate ack latencies.
+                            let _ = append_stream
+                                .next()
+                                .await
+                                .expect("acknowledgement")
+                                .map_err(|e| ServiceError::new(ServiceErrorContext::AppendSession, e))?;
+                            let elapsed = start.elapsed().expect("valid duration");
+                            appends.push(elapsed);
+                        } else {
+                            // Receiver closed due to some error.
+                            break;
+                        }
+                    }
+
+                    _ = signal::ctrl_c() => {
+                        eprintln!("{}", "■ [ABORTED]".red().bold());
+                        std::mem::drop(tx);
+                        break;
+                    }
+                }
+            }
+
+            let reads = reads_handle.await.expect("task panic")?;
+
+            println!("appends = {appends:#?}");
+            println!("reads = {reads:#?}");
         }
     }
     std::process::exit(0);
