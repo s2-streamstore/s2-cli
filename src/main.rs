@@ -13,8 +13,8 @@ use stream::{RecordStream, StreamService};
 use streamstore::{
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
-        BasinInfo, BasinName, CommandRecord, FencingToken, MeteredBytes as _, ReadOutput,
-        StreamInfo,
+        BasinInfo, BasinName, CommandRecord, ConvertError, FencingToken, MeteredBytes as _,
+        ReadOutput, StreamInfo,
     },
     HeaderValue,
 };
@@ -200,7 +200,7 @@ enum Commands {
         trim_point: u64,
 
         /// Enforce fencing token specified in hex.
-        #[arg(short = 'f', long)]
+        #[arg(short = 'f', long, value_parser = parse_fencing_token)]
         fencing_token: Option<FencingToken>,
 
         /// Enforce that the sequence number issued to the first record matches.
@@ -224,10 +224,11 @@ enum Commands {
 
         /// New fencing token specified in hex.
         /// It may be upto 16 bytes, and can be empty.
+        #[arg(value_parser = parse_fencing_token)]
         new_fencing_token: FencingToken,
 
         /// Enforce existing fencing token, specified in hex.
-        #[arg(short = 'f', long)]
+        #[arg(short = 'f', long, value_parser = parse_fencing_token)]
         fencing_token: Option<FencingToken>,
 
         /// Enforce that the sequence number issued to this command matches.
@@ -246,7 +247,7 @@ enum Commands {
         stream: String,
 
         /// Enforce fencing token specified in hex.
-        #[arg(short = 'f', long)]
+        #[arg(short = 'f', long, value_parser = parse_fencing_token)]
         fencing_token: Option<FencingToken>,
 
         /// Enforce that the sequence number issued to the first record matches.
@@ -356,6 +357,12 @@ fn parse_records_output_source(s: &str) -> Result<RecordsOut, std::io::Error> {
         "" | "-" => Ok(RecordsOut::Stdout),
         _ => Ok(RecordsOut::File(PathBuf::from(s))),
     }
+}
+
+fn parse_fencing_token(s: &str) -> Result<FencingToken, ConvertError> {
+    base16ct::mixed::decode_vec(s)
+        .map_err(|_| "invalid hex")?
+        .try_into()
 }
 
 fn client_config(auth_token: String) -> Result<ClientConfig, S2CliError> {
