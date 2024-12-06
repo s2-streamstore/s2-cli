@@ -69,15 +69,15 @@ enum Commands {
     /// List basins.
     ListBasins {
         /// Filter to basin names that begin with this prefix.
-        #[arg(short, long, default_value = "")]
+        #[arg(short = 'p', long, default_value = "")]
         prefix: Option<String>,
 
         /// Filter to basin names that lexicographically start after this name.
-        #[arg(short, long, default_value = "")]
+        #[arg(short = 's', long, default_value = "")]
         start_after: Option<String>,
 
         /// Number of results, upto a maximum of 1000.
-        #[arg(short, long, default_value = "0")]
+        #[arg(short = 'n', long, default_value = "0")]
         limit: Option<usize>,
     },
 
@@ -118,15 +118,15 @@ enum Commands {
         basin: BasinName,
 
         /// Filter to stream names that begin with this prefix.
-        #[arg(short, long)]
+        #[arg(short = 'p', long)]
         prefix: Option<String>,
 
         /// Filter to stream names that lexicographically start after this name.
-        #[arg(short, long)]
+        #[arg(short = 's', long)]
         start_after: Option<String>,
 
         /// Number of results, upto a maximum of 1000.
-        #[arg(short, long)]
+        #[arg(short = 'n', long)]
         limit: Option<usize>,
     },
 
@@ -277,7 +277,7 @@ enum ConfigActions {
     /// Set the authentication token to be reused in subsequent commands.
     /// Alternatively, use the S2_AUTH_TOKEN environment variable.
     Set {
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         auth_token: String,
     },
 }

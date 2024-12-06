@@ -15,10 +15,10 @@ pub struct BasinConfig {
 
 #[derive(Parser, Debug, Clone, Serialize)]
 pub struct StreamConfig {
-    #[arg(short, long)]
+    #[arg(short = 's', long)]
     /// Storage class for a stream.
     pub storage_class: Option<StorageClass>,
-    #[arg(short, long, help("Example: 1d, 1w, 1y"))]
+    #[arg(short = 'r', long, help("Example: 1d, 1w, 1y"))]
     /// Retention policy for a stream.
     pub retention_policy: Option<RetentionPolicy>,
 }
