@@ -600,14 +600,19 @@ async fn run() -> Result<(), S2CliError> {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
-            StreamService::new(stream_client)
+            let out = StreamService::new(stream_client)
                 .append_command_record(
                     CommandRecord::trim(trim_point),
                     fencing_token,
                     match_seq_num,
                 )
                 .await?;
-            eprintln!("{}", "✓ Trim requested".green().bold());
+            eprintln!(
+                "{}",
+                format!("✓ Trim requested at seq_num={}", out.start_seq_num)
+                    .green()
+                    .bold()
+            );
         }
 
         Commands::Fence {
@@ -620,14 +625,19 @@ async fn run() -> Result<(), S2CliError> {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
-            StreamService::new(stream_client)
+            let out = StreamService::new(stream_client)
                 .append_command_record(
                     CommandRecord::fence(new_fencing_token),
                     fencing_token,
                     match_seq_num,
                 )
                 .await?;
-            eprintln!("{}", "✓ Fencing token set".green().bold());
+            eprintln!(
+                "{}",
+                format!("✓ Fencing token set at seq_num: {}", out.start_seq_num)
+                    .green()
+                    .bold()
+            );
         }
 
         Commands::Append {
