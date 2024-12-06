@@ -47,7 +47,7 @@ const STYLES: styling::Styles = styling::Styles::styled()
 const GENERAL_USAGE: &str = color_print::cstr!(
     r#"
     <dim>$</dim> <bold>s2 config set --auth-token ...</bold>
-    <dim>$</dim> <bold>s2 account list-basins --prefix "bar" --start-after "foo" --limit 100</bold>
+    <dim>$</dim> <bold>s2 list-basins --prefix "foo" --limit 100</bold>
     "#
 );
 
