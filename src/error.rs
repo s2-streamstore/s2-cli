@@ -103,15 +103,6 @@ pub struct ServiceStatus {
     pub status: String,
 }
 
-impl ServiceStatus {
-    pub fn new(status: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            status: status.into(),
-        }
-    }
-}
-
 impl From<ClientError> for ServiceStatus {
     fn from(error: ClientError) -> Self {
         match error {
