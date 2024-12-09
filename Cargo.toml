@@ -11,8 +11,10 @@ clap = { version = "4.5.20", features = ["derive"] }
 color-print = "0.3.6"
 colored = "2.1.0"
 config = "0.14.1"
+defer = "0.2.1"
 dirs = "5.0.1"
 humantime = "2.1.0"
+indicatif = "0.17.9"
 miette = { version = "7.2.0", features = ["fancy"] }
 pin-project-lite = "0.2"
 pin-utils = "0.1.0"

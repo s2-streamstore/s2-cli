@@ -96,18 +96,8 @@ impl StreamService {
     pub async fn append_session(
         &self,
         stream: impl 'static + Send + Stream<Item = AppendRecord> + Unpin,
-        fencing_token: Option<FencingToken>,
-        match_seq_num: Option<u64>,
-        max_batch_records: Option<usize>,
+        opts: AppendRecordsBatchingOpts,
     ) -> Result<Streaming<AppendOutput>, ServiceError> {
-        let mut opts = AppendRecordsBatchingOpts::default()
-            .with_fencing_token(fencing_token)
-            .with_match_seq_num(match_seq_num);
-
-        if let Some(n) = max_batch_records {
-            opts = opts.with_max_batch_records(n);
-        }
-
         let append_record_stream = AppendRecordsBatchingStream::new(stream, opts);
 
         self.client
