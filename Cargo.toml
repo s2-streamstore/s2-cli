@@ -6,6 +6,7 @@ license = "Apache-2.0"
 
 [dependencies]
 async-stream = "0.3.6"
+base16ct = { version = "0.2.0", features = ["alloc"] }
 clap = { version = "4.5.20", features = ["derive"] }
 color-print = "0.3.6"
 colored = "2.1.0"
@@ -27,4 +28,4 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 
 [dependencies.streamstore]
 git = "https://github.com/s2-streamstore/s2-sdk-rust.git"
-rev = "b1547bcd55a4f3b5b76104a6ffd374014671d617"
+rev = "8f6995159a79f0d2334d071115dfecf9965fda73"

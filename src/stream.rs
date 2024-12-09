@@ -74,14 +74,21 @@ impl StreamService {
     pub async fn append_command_record(
         &self,
         cmd: CommandRecord,
+        fencing_token: Option<FencingToken>,
+        match_seq_num: Option<u64>,
     ) -> Result<AppendOutput, ServiceError> {
         let context = match &cmd {
             CommandRecord::Fence { .. } => ServiceErrorContext::Fence,
             CommandRecord::Trim { .. } => ServiceErrorContext::Trim,
         };
-        let batch = AppendRecordBatch::try_from_iter([cmd]).expect("single valid append record");
+        let records = AppendRecordBatch::try_from_iter([cmd]).expect("single valid append record");
+        let append_input = AppendInput {
+            records,
+            fencing_token,
+            match_seq_num,
+        };
         self.client
-            .append(AppendInput::new(batch))
+            .append(append_input)
             .await
             .map_err(|e| ServiceError::new(context, e))
     }
