@@ -305,7 +305,7 @@ enum Commands {
         record_count: NonZeroU32,
 
         /// Size of the record in bytes.
-        #[arg(short = 'b', long, default_value_t = 16 * 1000)]
+        #[arg(short = 'b', long, default_value_t = 16 * 1024)]
         record_bytes: u64,
     },
 }
@@ -971,10 +971,9 @@ async fn run() -> Result<(), S2CliError> {
                 .map(|(a, s)| *a - *s)
                 .collect::<Vec<_>>();
 
-            eprintln!(
-                "mean ack: {:?}",
-                ack.into_iter().sum::<Duration>() / record_count as u32
-            );
+            LatencyStatsReport::generate(ack).print("Append acknowledgement");
+
+            eprintln!(); // Empty line
 
             let e2e = reads
                 .iter()
@@ -982,12 +981,84 @@ async fn run() -> Result<(), S2CliError> {
                 .map(|(r, s)| *r - *s)
                 .collect::<Vec<_>>();
 
-            eprintln!(
-                "mean e2e: {:?}",
-                e2e.into_iter().sum::<Duration>() / record_count as u32
-            );
+            LatencyStatsReport::generate(e2e).print("End to end");
         }
     };
 
     std::process::exit(0);
+}
+
+struct LatencyStatsReport {
+    pub mean: Duration,
+    pub median: Duration,
+    pub p95: Duration,
+    pub p99: Duration,
+    pub max: Duration,
+    pub min: Duration,
+    pub stddev: Duration,
+}
+
+impl LatencyStatsReport {
+    pub fn generate(mut data: Vec<Duration>) -> Self {
+        data.sort_unstable();
+
+        let n = data.len();
+
+        let mean = data.iter().sum::<Duration>() / n as u32;
+
+        let median = if data.len() / 2 == 0 {
+            (data[n / 2 - 1] + data[n / 2]) / 2
+        } else {
+            data[n / 2]
+        };
+
+        let p_idx = |p: f64| ((n as f64) * p).ceil() as usize - 1;
+
+        let variance = data
+            .iter()
+            .map(|d| (d.as_secs_f64() - mean.as_secs_f64()).powi(2))
+            .sum::<f64>()
+            / n as f64;
+        let stddev = Duration::from_secs_f64(variance.sqrt());
+
+        Self {
+            mean,
+            median,
+            p95: data[p_idx(0.95)],
+            p99: data[p_idx(0.99)],
+            max: data[n - 1],
+            min: data[0],
+            stddev,
+        }
+    }
+
+    pub fn print(self, name: &str) {
+        eprintln!("{}", format!("{name} latency report").yellow().bold());
+
+        fn stat(key: &str, val: Duration) {
+            eprintln!(
+                "{}\t {}",
+                key,
+                humantime::format_duration(val).to_string().green()
+            );
+        }
+
+        let LatencyStatsReport {
+            mean,
+            median,
+            p95,
+            p99,
+            max,
+            min,
+            stddev,
+        } = self;
+
+        stat("Mean", mean);
+        stat("Median", median);
+        stat("P95", p95);
+        stat("P99", p99);
+        stat("Max", max);
+        stat("Min", min);
+        stat("Std Dev", stddev);
+    }
 }
