@@ -10,12 +10,13 @@ use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
 use error::{S2CliError, ServiceError, ServiceErrorContext};
+use rand::Rng;
 use stream::{RecordStream, StreamService};
 use streamstore::{
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
-        AppendRecord, BasinInfo, BasinName, CommandRecord, FencingToken, MeteredBytes as _,
-        ReadOutput, SequencedRecordBatch, StreamInfo,
+        AppendRecord, AppendRecordBatch, BasinInfo, BasinName, CommandRecord, FencingToken,
+        MeteredBytes as _, ReadOutput, SequencedRecordBatch, StreamInfo,
     },
     HeaderValue,
 };
@@ -874,9 +875,18 @@ async fn run() -> Result<(), S2CliError> {
             let mut sends = Vec::with_capacity(record_count);
 
             for _ in 0..record_count {
-                // TODO: Add jitter
-                let body = String::from_iter(std::iter::repeat_n('a', record_bytes as usize));
-                let rec = AppendRecord::new(body)?;
+                let jitter_op = if rand::random() {
+                    u64::saturating_add
+                } else {
+                    u64::saturating_sub
+                };
+
+                let record_bytes = jitter_op(record_bytes, rand::thread_rng().gen_range(0..=10))
+                    .min(AppendRecordBatch::MAX_BYTES);
+
+                let body: String = std::iter::repeat_n('a', record_bytes as usize).collect();
+
+                let rec = AppendRecord::new(body).expect("pre validated append record bytes");
 
                 if tx.send(rec).await.is_ok() {
                     sends.push(Instant::now());
