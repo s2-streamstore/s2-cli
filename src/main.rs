@@ -11,7 +11,7 @@ use config::{config_path, create_config};
 use defer::defer;
 use error::{S2CliError, ServiceError, ServiceErrorContext};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget};
-use rand::{distributions::Alphanumeric, Rng};
+use rand::{distributions::Uniform, Rng};
 use stream::{RecordStream, StreamService};
 use streamstore::{
     batching::AppendRecordsBatchingOpts,
@@ -981,7 +981,7 @@ async fn run() -> Result<(), S2CliError> {
                 let record_bytes = jitter_op(RECORD_BYTES, rand::thread_rng().gen_range(0..=10));
 
                 let body = rand::thread_rng()
-                    .sample_iter(&Alphanumeric)
+                    .sample_iter(&Uniform::new_inclusive(0, u8::MAX))
                     .take(record_bytes as usize)
                     .collect::<Vec<_>>();
 
