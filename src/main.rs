@@ -10,7 +10,7 @@ use colored::*;
 use config::{config_path, create_config};
 use defer::defer;
 use error::{S2CliError, ServiceError, ServiceErrorContext};
-use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget};
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use rand::{distributions::Uniform, Rng};
 use stream::{RecordStream, StreamService};
 use streamstore::{
@@ -874,9 +874,22 @@ async fn run() -> Result<(), S2CliError> {
 
             let progress_bar = MultiProgress::with_draw_target(ProgressDrawTarget::stderr());
 
-            let sends_progress_bar = progress_bar.add(ProgressBar::new(record_count as u64));
-            let appends_progress_bar = progress_bar.add(ProgressBar::new(record_count as u64));
-            let reads_progress_bar = progress_bar.add(ProgressBar::new(record_count as u64));
+            let progress_bar_style = ProgressStyle::default_bar()
+                .template("{prefix:>10.bold} [{bar:<72.cyan/blue}] {percent:>3}%")
+                .expect("valid template")
+                .progress_chars("#>-");
+
+            let add_progress_bar = |prefix: &'static str| {
+                progress_bar.add(
+                    ProgressBar::new(record_count as u64)
+                        .with_style(progress_bar_style.clone())
+                        .with_prefix(prefix),
+                )
+            };
+
+            let sends_progress_bar = add_progress_bar("Sends");
+            let appends_progress_bar = add_progress_bar("Appends");
+            let reads_progress_bar = add_progress_bar("Reads");
 
             let mut tail = stream_client.check_tail().await?;
 
@@ -1011,7 +1024,7 @@ async fn run() -> Result<(), S2CliError> {
                 .map(|(a, s)| *a - *s)
                 .collect::<Vec<_>>();
 
-            eprintln!(/* Empty line */);
+            eprintln!("\n");
 
             LatencyStatsReport::generate(ack).print("Append acknowledgement");
 
