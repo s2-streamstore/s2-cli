@@ -9,26 +9,21 @@ use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
 use error::{S2CliError, ServiceError, ServiceErrorContext};
-use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
-use rand::{
-    distributions::{Alphanumeric, Uniform},
-    Rng,
-};
-use scopeguard::defer;
+use rand::{distributions::Uniform, Rng};
 use stream::{RecordStream, StreamService};
 use streamstore::{
     batching::AppendRecordsBatchingOpts,
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
         AppendOutput, AppendRecord, BasinInfo, BasinName, CommandRecord, ConvertError,
-        FencingToken, Header, MeteredBytes as _, ReadOutput, SequencedRecordBatch, StreamInfo,
+        FencingToken, MeteredBytes as _, ReadOutput, SequencedRecordBatch, StreamInfo,
     },
     HeaderValue,
 };
 use tokio::{
     fs::{File, OpenOptions},
     io::{self, AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
-    select,
+    join, select,
     time::Instant,
 };
 use tokio::{signal, sync::mpsc};
@@ -298,18 +293,28 @@ enum Commands {
     },
 
     /// Run a speed test.
-    Speedtest {
+    Pingtest {
         /// Name of the basin.
         basin: BasinName,
 
         /// Name of the stream.
         stream: String,
 
-        /// Bytes to send.
+        /// Send a batch after this interval.
         ///
-        /// Will be truncated to a maximum of 100 MiB.
-        #[arg(short = 'b', long, default_value_t = 100 * 1024 * 1024)]
-        total_bytes: u64,
+        /// Will be set to a minimum of 100ms.
+        #[arg(short = 'i', long, default_value = "500ms")]
+        interval: humantime::Duration,
+
+        /// Batch size in bytes.
+        ///
+        /// Truncated to a maximum of 50 KiB.
+        #[arg(short = 'b', long, default_value_t = 20 * 1024)]
+        batch_bytes: u64,
+
+        /// Stop after sending this number of batches.
+        #[arg(short = 'n', long)]
+        num_batches: Option<u64>,
     },
 }
 
@@ -859,186 +864,96 @@ async fn run() -> Result<(), S2CliError> {
             }
         }
 
-        Commands::Speedtest {
+        Commands::Pingtest {
             basin,
             stream,
-            total_bytes,
+            interval,
+            batch_bytes,
+            num_batches,
         } => {
-            const RECORD_BYTES: u64 = 2 * 1024;
-            const RECORD_COUNT_IN_BATCH: usize = 10;
-
-            const WARM_UP_BATCH_BODY: &str = "warm up";
-            const RECORD_ID_HEADER: &[u8] = b"record-id";
-
-            let total_bytes = total_bytes.min(100 * 1024 * 1024);
-
-            let record_count = (total_bytes as f64 / RECORD_BYTES as f64).ceil() as usize;
-
-            let total_bytes = record_count as u64 * RECORD_BYTES;
-
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamService::new(StreamClient::new(client_config, basin, stream));
 
-            let progress_bar = MultiProgress::with_draw_target(ProgressDrawTarget::stderr());
-
-            let progress_bar_style = ProgressStyle::default_bar()
-                .template("{prefix:>10.bold} [{bar:<72.cyan/blue}] {percent:>3}%")
-                .expect("valid template")
-                .progress_chars("#>-");
-
-            let add_progress_bar = |prefix: &'static str| {
-                progress_bar.add(
-                    ProgressBar::new(record_count as u64)
-                        .with_style(progress_bar_style.clone())
-                        .with_prefix(prefix),
-                )
-            };
-
-            let prepare_progress_bar = add_progress_bar("Prepare");
-            let sends_progress_bar = add_progress_bar("Sends");
-            let appends_progress_bar = add_progress_bar("Appends");
-            let reads_progress_bar = add_progress_bar("Reads");
-
-            let (records, record_ids): (Vec<_>, Vec<_>) = (0..record_count)
-                .map(|_| {
-                    let jitter_op = if rand::random() {
-                        u64::saturating_add
-                    } else {
-                        u64::saturating_sub
-                    };
-
-                    let record_bytes =
-                        jitter_op(RECORD_BYTES, rand::thread_rng().gen_range(0..=10));
-
-                    let body = rand::thread_rng()
-                        .sample_iter(&Uniform::new_inclusive(0, u8::MAX))
-                        .take(record_bytes as usize)
-                        .collect::<Vec<_>>();
-
-                    let rec_id = rand::thread_rng()
-                        .sample_iter(&Alphanumeric)
-                        .take(16)
-                        .collect::<Vec<_>>();
-
-                    let rec = AppendRecord::new(body)
-                        .expect("pre validated append record bytes")
-                        .with_headers(vec![Header::new(RECORD_ID_HEADER, rec_id.clone())])
-                        .expect("pre validated append record header");
-
-                    prepare_progress_bar.inc(1);
-
-                    (rec, rec_id)
-                })
-                .unzip();
+            eprintln!("{}\n", "Preparing test...".magenta());
 
             let tail = stream_client.check_tail().await?;
 
-            prepare_progress_bar.finish();
-
             let mut read_stream = stream_client.read_session(tail, None, None).await?;
 
-            let reads_handle = tokio::spawn(async move {
-                defer!(reads_progress_bar.finish());
-
-                let mut reads = Vec::with_capacity(record_count);
-
-                let mut received_warmup = false;
-
-                let mut reads_start = Instant::now();
-                let mut record_ids = record_ids.into_iter();
-
-                while let Some(next) = read_stream.next().await {
-                    match next {
-                        Err(e) => {
-                            return Err(
-                                ServiceError::new(ServiceErrorContext::ReadSession, e).into()
-                            );
-                        }
-                        Ok(output) => {
-                            if let ReadOutput::Batch(SequencedRecordBatch { records }) = output {
-                                let recv = Instant::now();
-                                let records = if !received_warmup {
-                                    // First batch should be "warm up"
-                                    let first = records.first().expect("empty batch");
-                                    if first.body.as_ref() != WARM_UP_BATCH_BODY.as_bytes()
-                                        || first.seq_num != tail
-                                    {
-                                        return Err(S2CliError::SpeedtestStreamMutated);
-                                    }
-                                    received_warmup = true;
-                                    // Start read now.
-                                    reads_start = recv;
-                                    &records[1..]
-                                } else {
-                                    &records
-                                };
-                                // Validate records
-                                for rec in records {
-                                    if rec.headers.len() != 1 {
-                                        return Err(S2CliError::SpeedtestStreamMutated);
-                                    }
-                                    let header = rec.headers.first().expect("validated length");
-                                    if header.name.as_ref() != RECORD_ID_HEADER {
-                                        return Err(S2CliError::SpeedtestStreamMutated);
-                                    }
-                                    let rec_id = record_ids
-                                        .next()
-                                        .ok_or(S2CliError::SpeedtestStreamMutated)?;
-                                    if header.value.as_ref() != rec_id.as_slice() {
-                                        return Err(S2CliError::SpeedtestStreamMutated);
-                                    }
-                                }
-                                reads.extend(std::iter::repeat_n(recv, records.len()));
-                                reads_progress_bar.inc(records.len() as u64);
-                            } else {
-                                return Err(S2CliError::SpeedtestStreamMutated);
-                            }
-                        }
-                    }
-
-                    if reads.len() >= record_count {
-                        break;
-                    }
-                }
-
-                Ok((reads_start, reads))
-            });
-
-            let (tx, rx) = mpsc::channel(RECORD_COUNT_IN_BATCH);
-
-            let append_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
-
+            let (stream_tx, stream_rx) = mpsc::unbounded_channel();
             let mut append_stream = stream_client
                 .append_session(
-                    append_stream,
+                    tokio_stream::wrappers::UnboundedReceiverStream::new(stream_rx),
                     AppendRecordsBatchingOpts::new()
-                        .with_max_batch_records(RECORD_COUNT_IN_BATCH)
-                        .with_linger(Duration::from_millis(1))
+                        .with_max_batch_records(1)
                         .with_match_seq_num(Some(tail)),
                 )
                 .await?;
 
-            // Send in a "warm up" which we're going to ignore.
-            tx.send(AppendRecord::new(WARM_UP_BATCH_BODY).expect("valid record"))
-                .await
-                .expect("channel open");
+            let warm_up_record = AppendRecord::new("warm up").expect("valid record");
+            stream_tx
+                .send(warm_up_record.clone())
+                .expect("stream channel open");
 
-            match append_stream.next().await.expect("stream should receive") {
+            match append_stream.next().await.expect("warm up batch ack") {
                 Ok(AppendOutput { start_seq_num, .. }) if start_seq_num == tail => (),
-                Ok(_) => return Err(S2CliError::SpeedtestStreamMutated),
+                Ok(_) => return Err(S2CliError::PingtestStreamMutated),
                 Err(e) => {
                     return Err(ServiceError::new(ServiceErrorContext::AppendSession, e).into())
                 }
             };
 
+            match read_stream.next().await.expect("warm up batch e2e") {
+                Ok(ReadOutput::Batch(SequencedRecordBatch { records }))
+                    if records.len() == 1
+                        && records[0].headers.is_empty()
+                        && records[0].body.as_ref() == warm_up_record.body() =>
+                {
+                    ()
+                }
+                Ok(_) => return Err(S2CliError::PingtestStreamMutated),
+                Err(e) => return Err(ServiceError::new(ServiceErrorContext::ReadSession, e).into()),
+            };
+
+            let (reads_tx, mut reads_rx) = mpsc::unbounded_channel();
+            let reads_handle = tokio::spawn(async move {
+                loop {
+                    select! {
+                        next = read_stream.next() => match next {
+                            Some(Err(e)) => {
+                                reads_tx.send(Err(
+                                    ServiceError::new(ServiceErrorContext::ReadSession, e).into()
+                                )).expect("open reads channel");
+                                return;
+                            }
+                            Some(Ok(output)) => {
+                                if let ReadOutput::Batch(SequencedRecordBatch { mut records }) = output {
+                                    let recv = Instant::now();
+                                    if records.len() != 1 {
+                                        reads_tx.send(Err(
+                                            S2CliError::PingtestStreamMutated
+                                        )).expect("reads channel open");
+                                        return;
+                                    }
+                                    let rec = records.pop().expect("pre validated length");
+                                    reads_tx.send(Ok((recv, rec))).expect("reads channel open");
+                                } else {
+                                    reads_tx.send(Err(
+                                        S2CliError::PingtestStreamMutated
+                                    )).expect("reads channel open");
+                                    return;
+                                }
+                            }
+                            None => break,
+                        },
+                        _ = signal::ctrl_c() => break,
+                    };
+                }
+            });
+
+            let (appends_tx, mut appends_rx) = mpsc::unbounded_channel();
             let appends_handle = tokio::spawn(async move {
-                defer!(appends_progress_bar.finish());
-
-                let mut appends = Vec::with_capacity(record_count);
-
-                let appends_start = Instant::now();
-
                 while let Some(next) = append_stream.next().await {
                     match next {
                         Ok(AppendOutput {
@@ -1048,54 +963,120 @@ async fn run() -> Result<(), S2CliError> {
                         }) => {
                             let append = Instant::now();
                             let records = end_seq_num - start_seq_num;
-                            appends.extend(std::iter::repeat_n(append, records as usize));
-                            appends_progress_bar.inc(records);
+                            if records != 1 {
+                                appends_tx
+                                    .send(Err(S2CliError::PingtestStreamMutated))
+                                    .expect("appends channel open");
+                                return;
+                            }
+                            appends_tx.send(Ok(append)).expect("appends channel open");
                         }
                         Err(e) => {
-                            return Err(ServiceError::new(ServiceErrorContext::AppendSession, e))
+                            appends_tx
+                                .send(Err(S2CliError::from(ServiceError::new(
+                                    ServiceErrorContext::AppendSession,
+                                    e,
+                                ))))
+                                .expect("appends channel open");
                         }
                     }
                 }
-
-                Ok((appends_start, appends))
             });
 
-            let mut sends = Vec::with_capacity(record_count);
+            let mut acks = Vec::new();
+            let mut e2es = Vec::new();
 
-            // Send in an extra batch for warm-up, which is going to be ignored.
-            for rec in records {
-                if tx.send(rec).await.is_ok() {
-                    sends.push(Instant::now());
-                    sends_progress_bar.inc(1);
-                } else {
-                    // Receiver closed.
+            let mut total_batches = 0;
+            let mut total_bytes = 0;
+
+            loop {
+                if Some(total_batches) == num_batches {
                     break;
+                }
+
+                total_batches += 1;
+
+                let jitter_op = if rand::random() {
+                    u64::saturating_add
+                } else {
+                    u64::saturating_sub
+                };
+
+                let record_bytes = jitter_op(batch_bytes, rand::thread_rng().gen_range(0..10));
+
+                total_bytes += record_bytes;
+
+                let body = rand::thread_rng()
+                    .sample_iter(&Uniform::new_inclusive(0, u8::MAX))
+                    .take(record_bytes as usize)
+                    .collect::<Vec<_>>();
+
+                let record =
+                    AppendRecord::new(body.clone()).expect("pre validated append record bytes");
+
+                stream_tx.send(record).expect("stream channel open");
+
+                let send = Instant::now();
+
+                let latency_fut = async { join!(appends_rx.recv(), reads_rx.recv()) };
+
+                let (append, read, record) = select! {
+                    (append, read) = latency_fut => {
+                        match (append, read) {
+                            (None, _) | (_, None) => break,
+                            (Some(Err(e)), _) | (_, Some(Err(e))) => return Err(e),
+                            (Some(Ok(append)), Some(Ok((read, record)))) => (append, read, record),
+                        }
+                    }
+                    _ = signal::ctrl_c() => break,
+                };
+
+                // Validate the received record
+                if &body != &record.body || !record.headers.is_empty() {
+                    return Err(S2CliError::PingtestStreamMutated);
+                }
+
+                let ack = append - send;
+                acks.push(ack);
+
+                let e2e = read - send;
+                e2es.push(e2e);
+
+                eprintln!(
+                    "ack: {:<7}  e2e: {:<7}",
+                    format!("{} ms", ack.as_millis()).blue(),
+                    format!("{} ms", e2e.as_millis()).blue(),
+                );
+
+                select! {
+                    _ = tokio::time::sleep(interval.into()) => (),
+                    _ = signal::ctrl_c() => break,
                 }
             }
 
-            sends_progress_bar.finish();
-
             // Close the stream.
-            std::mem::drop(tx);
+            std::mem::drop(stream_tx);
 
-            let (reads_start, reads) = reads_handle.await.expect("reads task panic")?;
-            let (appends_start, appends) = appends_handle.await.expect("appends task panic")?;
-
-            eprintln!("\n");
-
-            StatsReport::generate(&sends, appends_start, &appends, total_bytes)
-                .print("Append acknowledgement");
+            reads_handle.abort();
+            appends_handle.abort();
 
             eprintln!(/* Empty line */);
+            eprintln!(
+                "{}",
+                format!("Sent {} batches with {} bytes", total_batches, total_bytes).bright_cyan()
+            );
 
-            StatsReport::generate(&sends, reads_start, &reads, total_bytes).print("End to end");
+            eprintln!(/* Empty line */);
+            LatencyStats::generate(acks).report("Append Acknowledgement");
+            eprintln!(/* Empty line */);
+            LatencyStats::generate(e2es).report("End to End");
         }
     };
 
     std::process::exit(0);
 }
 
-struct StatsReport {
+struct LatencyStats {
     pub mean: Duration,
     pub median: Duration,
     pub p95: Duration,
@@ -1103,25 +1084,10 @@ struct StatsReport {
     pub max: Duration,
     pub min: Duration,
     pub stddev: Duration,
-    // In bytes per second
-    pub throughput: u128,
 }
 
-impl StatsReport {
-    pub fn generate(
-        sends: &[Instant],
-        op_start: Instant,
-        op: &[Instant],
-        total_bytes: u64,
-    ) -> Self {
-        let op_duration = *op.last().unwrap() - op_start;
-        let throughput = total_bytes as u128 * 1_000_000 / op_duration.as_micros();
-
-        let mut data = op
-            .iter()
-            .zip(sends.iter())
-            .map(|(o, s)| *o - *s)
-            .collect::<Vec<_>>();
+impl LatencyStats {
+    pub fn generate(mut data: Vec<Duration>) -> Self {
         data.sort_unstable();
 
         let n = data.len();
@@ -1151,22 +1117,21 @@ impl StatsReport {
             max: data[n - 1],
             min: data[0],
             stddev,
-            throughput,
         }
     }
 
-    pub fn print(self, name: &str) {
-        eprintln!("{}", format!("{name} report").yellow().bold());
+    pub fn report(self, name: &str) {
+        eprintln!("{}", format!("{name} Latency Statistics").yellow().bold());
 
         fn stat(key: &str, val: String) {
-            eprintln!("{:>12} {}", key, val.green());
+            eprintln!("{:>9} {}", key, val.green());
         }
 
         fn stat_duration(key: &str, val: Duration) {
             stat(key, format!("{} ms", val.as_millis()));
         }
 
-        let StatsReport {
+        let LatencyStats {
             mean,
             median,
             p95,
@@ -1174,7 +1139,6 @@ impl StatsReport {
             max,
             min,
             stddev,
-            throughput,
         } = self;
 
         stat_duration("Mean", mean);
@@ -1184,8 +1148,5 @@ impl StatsReport {
         stat_duration("Max", max);
         stat_duration("Min", min);
         stat_duration("Std Dev", stddev);
-
-        let mibps = throughput as f64 / (1024.0 * 1024.0);
-        stat("Throughput", format!("{mibps:.2} MiB/s"));
     }
 }

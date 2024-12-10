@@ -44,7 +44,7 @@ pub enum S2CliError {
     RecordReaderInit(String),
 
     #[error("Stream mutated concurrently during speedtest")]
-    SpeedtestStreamMutated,
+    PingtestStreamMutated,
 
     #[error("Failed to write records: {0}")]
     RecordWrite(String),
