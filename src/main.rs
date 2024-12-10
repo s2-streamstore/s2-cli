@@ -875,7 +875,7 @@ async fn run() -> Result<(), S2CliError> {
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamService::new(StreamClient::new(client_config, basin, stream));
 
-            eprintln!("{}\n", "Preparing test...".magenta());
+            eprintln!("Preparing test...");
 
             let tail = stream_client.check_tail().await?;
 
@@ -908,10 +908,7 @@ async fn run() -> Result<(), S2CliError> {
                 Ok(ReadOutput::Batch(SequencedRecordBatch { records }))
                     if records.len() == 1
                         && records[0].headers.is_empty()
-                        && records[0].body.as_ref() == warm_up_record.body() =>
-                {
-                    ()
-                }
+                        && records[0].body.as_ref() == warm_up_record.body() => {}
                 Ok(_) => return Err(S2CliError::PingtestStreamMutated),
                 Err(e) => return Err(ServiceError::new(ServiceErrorContext::ReadSession, e).into()),
             };
@@ -1032,7 +1029,7 @@ async fn run() -> Result<(), S2CliError> {
                 };
 
                 // Validate the received record
-                if &body != &record.body || !record.headers.is_empty() {
+                if body != record.body || !record.headers.is_empty() {
                     return Err(S2CliError::PingtestStreamMutated);
                 }
 
@@ -1061,10 +1058,7 @@ async fn run() -> Result<(), S2CliError> {
             appends_handle.abort();
 
             eprintln!(/* Empty line */);
-            eprintln!(
-                "{}",
-                format!("Sent {} batches with {} bytes", total_batches, total_bytes).bright_cyan()
-            );
+            eprintln!("Sent {} batches with {} bytes", total_batches, total_bytes);
 
             eprintln!(/* Empty line */);
             LatencyStats::generate(acks).report("Append Acknowledgement");
