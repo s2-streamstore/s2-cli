@@ -465,12 +465,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "defer"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "930c7171c8df9fb1782bdf9b918ed9ed2d33d1d22300abb754f9085bc48bf8e8"
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1575,7 +1569,6 @@ dependencies = [
  "color-print",
  "colored",
  "config",
- "defer",
  "dirs",
  "humantime",
  "indicatif",
@@ -1583,6 +1576,7 @@ dependencies = [
  "pin-project-lite",
  "pin-utils",
  "rand",
+ "scopeguard",
  "serde",
  "serde_json",
  "streamstore",
