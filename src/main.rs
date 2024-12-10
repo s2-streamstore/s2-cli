@@ -875,6 +875,9 @@ async fn run() -> Result<(), S2CliError> {
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamService::new(StreamClient::new(client_config, basin, stream));
 
+            let interval = interval.max(Duration::from_millis(100));
+            let batch_bytes = batch_bytes.min(50 * 1024);
+
             eprintln!("Preparing test...");
 
             let tail = stream_client.check_tail().await?;
@@ -926,15 +929,15 @@ async fn run() -> Result<(), S2CliError> {
                             }
                             Some(Ok(output)) => {
                                 if let ReadOutput::Batch(SequencedRecordBatch { mut records }) = output {
-                                    let recv = Instant::now();
+                                    let read = Instant::now();
                                     if records.len() != 1 {
                                         reads_tx.send(Err(
                                             S2CliError::PingtestStreamMutated
                                         )).expect("reads channel open");
                                         return;
                                     }
-                                    let rec = records.pop().expect("pre validated length");
-                                    reads_tx.send(Ok((recv, rec))).expect("reads channel open");
+                                    let record = records.pop().expect("pre validated length");
+                                    reads_tx.send(Ok((read, record))).expect("reads channel open");
                                 } else {
                                     reads_tx.send(Err(
                                         S2CliError::PingtestStreamMutated
@@ -1115,7 +1118,10 @@ impl LatencyStats {
     }
 
     pub fn report(self, name: &str) {
-        eprintln!("{}", format!("{name} Latency Statistics").yellow().bold());
+        eprintln!(
+            "{:-^60}",
+            format!(" {name} Latency Statistics ").yellow().bold()
+        );
 
         fn stat(key: &str, val: String) {
             eprintln!("{:>9} {}", key, val.green());
