@@ -1049,7 +1049,7 @@ async fn run() -> Result<(), S2CliError> {
                 );
 
                 select! {
-                    _ = tokio::time::sleep(interval.into()) => (),
+                    _ = tokio::time::sleep(interval) => (),
                     _ = signal::ctrl_c() => break,
                 }
             }
