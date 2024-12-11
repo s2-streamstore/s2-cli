@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2024-12-11
+
+### Bug Fixes
+
+- Use a different `std::thread::Thread` for `Stdin` IO ([#69](https://github.com/s2-streamstore/s2-cli/issues/69))
+
+### Miscellaneous Tasks
+
+- Release to crates.io ([#68](https://github.com/s2-streamstore/s2-cli/issues/68))
+
 ## [0.4.0] - 2024-12-11
 
 ### Features
