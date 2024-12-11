@@ -349,7 +349,7 @@ pub enum RecordsOut {
 }
 
 impl RecordsIn {
-    pub async fn into_lines_stream(
+    pub async fn into_reader(
         &self,
     ) -> std::io::Result<Pin<Box<dyn Stream<Item = std::io::Result<String>> + Send>>> {
         match self {
@@ -717,7 +717,7 @@ async fn run() -> Result<(), S2CliError> {
             let stream_client = StreamClient::new(client_config, basin, stream);
             let append_input_stream = RecordStream::new(
                 input
-                    .into_lines_stream()
+                    .into_reader()
                     .await
                     .map_err(|e| S2CliError::RecordReaderInit(e.to_string()))?,
             );
@@ -1008,5 +1008,5 @@ async fn run() -> Result<(), S2CliError> {
         }
     };
 
-    std::process::exit(0);
+    Ok(())
 }
