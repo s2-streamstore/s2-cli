@@ -1,1 +1,1 @@
-# s2-cli
+# streamstore-cli
