@@ -3,6 +3,9 @@ name = "s2"
 version = "0.3.0"
 edition = "2021"
 license = "Apache-2.0"
+keywords = ["streamstore", "s2", "log", "stream", "s3"]
+repository = "https://github.com/s2-streamstore/s2-cli"
+homepage = "https://github.com/s2-streamstore/s2-cli"
 
 [dependencies]
 async-stream = "0.3.6"
