@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2024-12-11
+
+### Features
+
+- Allow append concurrency control on `fence` and `trim` too ([#60](https://github.com/s2-streamstore/s2-cli/issues/60))
+- Ping ([#48](https://github.com/s2-streamstore/s2-cli/issues/48)) ([#63](https://github.com/s2-streamstore/s2-cli/issues/63))
+
+### Bug Fixes
+
+- Usage example
+
+### Documentation
+
+- Clarify fencing token is in hex
+
+### Miscellaneous Tasks
+
+- Mandatory read `start_seq_num` ([#58](https://github.com/s2-streamstore/s2-cli/issues/58))
+- Make all short args explicit ([#29](https://github.com/s2-streamstore/s2-cli/issues/29)) ([#59](https://github.com/s2-streamstore/s2-cli/issues/59))
+- Upgrade deps ([#64](https://github.com/s2-streamstore/s2-cli/issues/64))
+- Update cargo.toml ([#65](https://github.com/s2-streamstore/s2-cli/issues/65))
+- Rename to streamstore-cli ([#66](https://github.com/s2-streamstore/s2-cli/issues/66))
+- Description - Cargo.toml
+- Update README.md
+
 ## [0.3.0] - 2024-12-05
 
 ### Features
