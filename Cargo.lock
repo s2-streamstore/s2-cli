@@ -1463,32 +1463,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3cb5ba0dc43242ce17de99c180e96db90b235b8a9fdc9543c96d2209116bd9f"
 
 [[package]]
-name = "s2"
-version = "0.3.0"
-dependencies = [
- "async-stream",
- "base16ct",
- "clap",
- "color-print",
- "colored",
- "config",
- "dirs",
- "humantime",
- "miette",
- "pin-project-lite",
- "pin-utils",
- "serde",
- "serde_json",
- "streamstore",
- "thiserror 2.0.6",
- "tokio",
- "tokio-stream",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1643,6 +1617,32 @@ dependencies = [
  "tower-service",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "streamstore-cli"
+version = "0.3.0"
+dependencies = [
+ "async-stream",
+ "base16ct",
+ "clap",
+ "color-print",
+ "colored",
+ "config",
+ "dirs",
+ "humantime",
+ "miette",
+ "pin-project-lite",
+ "pin-utils",
+ "serde",
+ "serde_json",
+ "streamstore",
+ "thiserror 2.0.6",
+ "tokio",
+ "tokio-stream",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
