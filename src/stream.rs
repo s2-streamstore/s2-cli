@@ -7,49 +7,42 @@ use streamstore::{
     },
     Streaming,
 };
-use tokio::io::AsyncBufRead;
 
-use pin_project_lite::pin_project;
+use futures::{Stream, StreamExt};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use streamstore::types::AppendRecord;
-use tokio::io::Lines;
-use tokio_stream::Stream;
 
 use crate::error::{ServiceError, ServiceErrorContext};
 
-pin_project! {
-    #[derive(Debug)]
-    pub struct RecordStream<R> {
-        #[pin]
-        inner: Lines<R>,
+#[derive(Debug)]
+pub struct RecordStream<S> {
+    inner: S,
+}
+
+impl<S> RecordStream<S> {
+    pub fn new(inner: S) -> Self {
+        Self { inner }
     }
 }
 
-impl<R> RecordStream<R> {
-    pub fn new(lines: Lines<R>) -> Self {
-        Self { inner: lines }
-    }
-}
-
-impl<R: AsyncBufRead> Stream for RecordStream<R> {
+impl<S: Unpin + Stream<Item = std::io::Result<String>>> Stream for RecordStream<S> {
     type Item = AppendRecord;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut this = self.project();
-        match this.inner.as_mut().poll_next_line(cx) {
-            Poll::Ready(Ok(Some(line))) => match AppendRecord::new(line) {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.inner.poll_next_unpin(cx) {
+            Poll::Ready(Some(Ok(line))) => match AppendRecord::new(line) {
                 Ok(record) => Poll::Ready(Some(record)),
                 Err(e) => {
                     eprintln!("Error parsing line: {}", e);
                     Poll::Ready(None)
                 }
             },
-            Poll::Ready(Ok(None)) => Poll::Ready(None),
-            Poll::Ready(Err(e)) => {
+            Poll::Ready(Some(Err(e))) => {
                 eprintln!("Error reading line: {}", e);
                 Poll::Ready(None)
             }
+            Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
     }

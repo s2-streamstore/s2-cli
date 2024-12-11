@@ -1,5 +1,7 @@
 use std::{
+    io::BufRead,
     path::PathBuf,
+    pin::Pin,
     time::{Duration, UNIX_EPOCH},
 };
 
@@ -16,19 +18,22 @@ use streamstore::{
     batching::AppendRecordsBatchingOpts,
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
-        BasinInfo, BasinName, CommandRecord, ConvertError, FencingToken, MeteredBytes as _,
-        ReadOutput, StreamInfo,
+        AppendRecordBatch, BasinInfo, BasinName, CommandRecord, ConvertError, FencingToken,
+        MeteredBytes as _, ReadOutput, StreamInfo,
     },
     HeaderValue,
 };
-use tokio::signal;
 use tokio::{
     fs::{File, OpenOptions},
-    io::{self, AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
+    io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufWriter},
     select,
     time::Instant,
 };
-use tokio_stream::StreamExt;
+use tokio::{signal, sync::mpsc};
+use tokio_stream::{
+    wrappers::{LinesStream, ReceiverStream},
+    Stream, StreamExt,
+};
 use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{BasinConfig, StreamConfig, RETENTION_POLICY_PATH, STORAGE_CLASS_PATH};
@@ -344,16 +349,39 @@ pub enum RecordsOut {
 }
 
 impl RecordsIn {
-    pub async fn into_reader(&self) -> std::io::Result<Box<dyn AsyncBufRead + Send + Unpin>> {
+    pub async fn into_lines_stream(
+        &self,
+    ) -> std::io::Result<Pin<Box<dyn Stream<Item = std::io::Result<String>> + Send>>> {
         match self {
-            RecordsIn::File(path) => Ok(Box::new(BufReader::new(File::open(path).await?))),
-            RecordsIn::Stdin => Ok(Box::new(BufReader::new(tokio::io::stdin()))),
+            RecordsIn::File(path) => {
+                let file = File::open(path).await?;
+                Ok(Box::pin(LinesStream::new(
+                    tokio::io::BufReader::new(file).lines(),
+                )))
+            }
+            RecordsIn::Stdin => Ok(Box::pin(stdio_lines_stream(std::io::stdin()))),
         }
     }
 }
 
+fn stdio_lines_stream<F>(f: F) -> ReceiverStream<std::io::Result<String>>
+where
+    F: std::io::Read + Send + 'static,
+{
+    let lines = std::io::BufReader::new(f).lines();
+    let (tx, rx) = mpsc::channel(AppendRecordBatch::MAX_CAPACITY);
+    let _handle = std::thread::spawn(move || {
+        for line in lines {
+            if tx.blocking_send(line).is_err() {
+                return;
+            }
+        }
+    });
+    ReceiverStream::new(rx)
+}
+
 impl RecordsOut {
-    pub async fn into_writer(&self) -> io::Result<Box<dyn AsyncWrite + Send + Unpin>> {
+    pub async fn into_writer(&self) -> std::io::Result<Box<dyn AsyncWrite + Send + Unpin>> {
         match self {
             RecordsOut::File(path) => {
                 trace!(?path, "opening file writer");
@@ -689,10 +717,9 @@ async fn run() -> Result<(), S2CliError> {
             let stream_client = StreamClient::new(client_config, basin, stream);
             let append_input_stream = RecordStream::new(
                 input
-                    .into_reader()
+                    .into_lines_stream()
                     .await
-                    .map_err(|e| S2CliError::RecordReaderInit(e.to_string()))?
-                    .lines(),
+                    .map_err(|e| S2CliError::RecordReaderInit(e.to_string()))?,
             );
 
             let mut append_output_stream = StreamService::new(stream_client)
