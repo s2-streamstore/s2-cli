@@ -43,6 +43,9 @@ pub enum S2CliError {
     #[error("Failed to initialize a `Record Reader`! {0}")]
     RecordReaderInit(String),
 
+    #[error("Stream mutated concurrently during ping")]
+    PingStreamMutated,
+
     #[error("Failed to write records: {0}")]
     RecordWrite(String),
 
@@ -73,21 +76,21 @@ pub enum ServiceErrorContext {
 impl std::fmt::Display for ServiceErrorContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ServiceErrorContext::ListBasins => write!(f, "Failed to list basins"),
-            ServiceErrorContext::CreateBasin => write!(f, "Failed to create basin"),
-            ServiceErrorContext::DeleteBasin => write!(f, "Failed to delete basin"),
-            ServiceErrorContext::GetBasinConfig => write!(f, "Failed to get basin config"),
-            ServiceErrorContext::ReconfigureBasin => write!(f, "Failed to reconfigure basin"),
-            ServiceErrorContext::ListStreams => write!(f, "Failed to list streams"),
-            ServiceErrorContext::CreateStream => write!(f, "Failed to create stream"),
-            ServiceErrorContext::DeleteStream => write!(f, "Failed to delete stream"),
-            ServiceErrorContext::GetStreamConfig => write!(f, "Failed to get stream config"),
-            ServiceErrorContext::CheckTail => write!(f, "Failed to check tail"),
-            ServiceErrorContext::Trim => write!(f, "Failed to trim"),
-            ServiceErrorContext::Fence => write!(f, "Failed to set fencing token"),
-            ServiceErrorContext::AppendSession => write!(f, "Failed to append session"),
-            ServiceErrorContext::ReadSession => write!(f, "Failed to read session"),
-            ServiceErrorContext::ReconfigureStream => write!(f, "Failed to reconfigure stream"),
+            Self::ListBasins => write!(f, "Failed to list basins"),
+            Self::CreateBasin => write!(f, "Failed to create basin"),
+            Self::DeleteBasin => write!(f, "Failed to delete basin"),
+            Self::GetBasinConfig => write!(f, "Failed to get basin config"),
+            Self::ReconfigureBasin => write!(f, "Failed to reconfigure basin"),
+            Self::ListStreams => write!(f, "Failed to list streams"),
+            Self::CreateStream => write!(f, "Failed to create stream"),
+            Self::DeleteStream => write!(f, "Failed to delete stream"),
+            Self::GetStreamConfig => write!(f, "Failed to get stream config"),
+            Self::CheckTail => write!(f, "Failed to check tail"),
+            Self::Trim => write!(f, "Failed to trim"),
+            Self::Fence => write!(f, "Failed to set fencing token"),
+            Self::AppendSession => write!(f, "Failed to append session"),
+            Self::ReadSession => write!(f, "Failed to read session"),
+            Self::ReconfigureStream => write!(f, "Failed to reconfigure stream"),
         }
     }
 }

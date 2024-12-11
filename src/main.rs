@@ -9,8 +9,11 @@ use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
 use error::{S2CliError, ServiceError, ServiceErrorContext};
+use ping::{LatencyStats, PingResult, Pinger};
+use rand::Rng;
 use stream::{RecordStream, StreamService};
 use streamstore::{
+    batching::AppendRecordsBatchingOpts,
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
         BasinInfo, BasinName, CommandRecord, ConvertError, FencingToken, MeteredBytes as _,
@@ -36,6 +39,7 @@ mod stream;
 
 mod config;
 mod error;
+mod ping;
 mod types;
 
 const STYLES: styling::Styles = styling::Styles::styled()
@@ -289,6 +293,31 @@ enum Commands {
         #[arg(short = 'b', long)]
         limit_bytes: Option<u64>,
     },
+
+    /// Ping the stream to get append acknowledgement and end-to-end latencies.
+    Ping {
+        /// Name of the basin.
+        basin: BasinName,
+
+        /// Name of the stream.
+        stream: String,
+
+        /// Send a batch after this interval.
+        ///
+        /// Will be set to a minimum of 100ms.
+        #[arg(short = 'i', long, default_value = "500ms")]
+        interval: humantime::Duration,
+
+        /// Batch size in bytes. A jitter (+/- 25%) will be added.
+        ///
+        /// Truncated to a maximum of 128 KiB.
+        #[arg(short = 'b', long, default_value_t = 32 * 1024)]
+        batch_bytes: u64,
+
+        /// Stop after sending this number of batches.
+        #[arg(short = 'n', long)]
+        num_batches: Option<usize>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -369,7 +398,8 @@ fn client_config(auth_token: String) -> Result<ClientConfig, S2CliError> {
     let endpoints = S2Endpoints::from_env().map_err(S2CliError::EndpointsFromEnv)?;
     let client_config = ClientConfig::new(auth_token.to_string())
         .with_user_agent("s2-cli".parse::<HeaderValue>().expect("valid user agent"))
-        .with_endpoints(endpoints);
+        .with_endpoints(endpoints)
+        .with_request_timeout(Duration::from_secs(30));
     Ok(client_config)
 }
 
@@ -666,8 +696,14 @@ async fn run() -> Result<(), S2CliError> {
             );
 
             let mut append_output_stream = StreamService::new(stream_client)
-                .append_session(append_input_stream, fencing_token, match_seq_num)
+                .append_session(
+                    append_input_stream,
+                    AppendRecordsBatchingOpts::new()
+                        .with_fencing_token(fencing_token)
+                        .with_match_seq_num(match_seq_num),
+                )
                 .await?;
+
             loop {
                 select! {
                     maybe_append_result = append_output_stream.next() => {
@@ -697,10 +733,10 @@ async fn run() -> Result<(), S2CliError> {
                     }
 
                     _ = signal::ctrl_c() => {
-                            drop(append_output_stream);
-                            eprintln!("{}", "■ [ABORTED]".red().bold());
-                            break;
-                        }
+                        drop(append_output_stream);
+                        eprintln!("{}", "■ [ABORTED]".red().bold());
+                        break;
+                    }
                 }
             }
         }
@@ -729,9 +765,9 @@ async fn run() -> Result<(), S2CliError> {
                     maybe_read_result = read_output_stream.next() => {
                         match maybe_read_result {
                             Some(read_result) => {
-                                    if start.is_none() {
-                                        start = Some(Instant::now());
-                                    }
+                                if start.is_none() {
+                                    start = Some(Instant::now());
+                                }
                                 match read_result {
                                     Ok(ReadOutput::Batch(sequenced_record_batch)) => {
                                         let num_records = sequenced_record_batch.records.len();
@@ -830,6 +866,120 @@ async fn run() -> Result<(), S2CliError> {
                 writer.flush().await.expect("writer flush");
             }
         }
-    }
+
+        Commands::Ping {
+            basin,
+            stream,
+            interval,
+            batch_bytes,
+            num_batches,
+        } => {
+            let cfg = config::load_config(&config_path)?;
+            let client_config = client_config(cfg.auth_token)?;
+            let stream_client = StreamService::new(StreamClient::new(client_config, basin, stream));
+
+            let interval = interval.max(Duration::from_millis(100));
+            let batch_bytes = batch_bytes.min(128 * 1024);
+
+            eprintln!("Preparing...");
+
+            let mut pinger = Pinger::init(&stream_client).await?;
+
+            let mut pings = Vec::new();
+
+            async fn ping_next(
+                pinger: &mut Pinger,
+                pings: &mut Vec<PingResult>,
+                interval: Duration,
+                batch_bytes: u64,
+            ) -> Result<(), S2CliError> {
+                let jitter_op = if rand::random() {
+                    u64::saturating_add
+                } else {
+                    u64::saturating_sub
+                };
+
+                let max_jitter = batch_bytes / 4;
+
+                let record_bytes =
+                    jitter_op(batch_bytes, rand::thread_rng().gen_range(0..=max_jitter));
+
+                let Some(res) = pinger.ping(record_bytes).await? else {
+                    return Ok(());
+                };
+
+                eprintln!(
+                    "{:<5} bytes:  ack = {:<7} e2e = {:<7}",
+                    res.bytes.to_string().blue(),
+                    format!("{} ms", res.ack.as_millis()).blue(),
+                    format!("{} ms", res.e2e.as_millis()).blue(),
+                );
+
+                pings.push(res);
+
+                tokio::time::sleep(interval).await;
+                Ok(())
+            }
+
+            while Some(pings.len()) != num_batches {
+                select! {
+                    _ = ping_next(&mut pinger, &mut pings, interval, batch_bytes) => (),
+                    _ = signal::ctrl_c() => break,
+                }
+            }
+
+            // Close the pinger.
+            std::mem::drop(pinger);
+
+            let total_batches = pings.len();
+            let (bytes, (acks, e2es)): (Vec<_>, (Vec<_>, Vec<_>)) = pings
+                .into_iter()
+                .map(|PingResult { bytes, ack, e2e }| (bytes, (ack, e2e)))
+                .unzip();
+            let total_bytes = bytes.into_iter().sum::<u64>();
+
+            eprintln!(/* Empty line */);
+            eprintln!("Round-tripped {total_bytes} bytes in {total_batches} batches");
+
+            pub fn print_stats(stats: LatencyStats, name: &str) {
+                eprintln!(
+                    "{:-^60}",
+                    format!(" {name} Latency Statistics ").yellow().bold()
+                );
+
+                fn stat(key: &str, val: String) {
+                    eprintln!("{:>9} {}", key, val.green());
+                }
+
+                fn stat_duration(key: &str, val: Duration) {
+                    stat(key, format!("{} ms", val.as_millis()));
+                }
+
+                let LatencyStats {
+                    mean,
+                    median,
+                    p95,
+                    p99,
+                    max,
+                    min,
+                    stddev,
+                } = stats;
+
+                stat_duration("Mean", mean);
+                stat_duration("Median", median);
+                stat_duration("P95", p95);
+                stat_duration("P99", p99);
+                stat_duration("Max", max);
+                stat_duration("Min", min);
+                stat_duration("Std Dev", stddev);
+            }
+
+            eprintln!(/* Empty line */);
+            print_stats(LatencyStats::generate(acks), "Append Acknowledgement");
+            eprintln!(/* Empty line */);
+            print_stats(LatencyStats::generate(e2es), "End-to-End");
+        }
+    };
+
     std::process::exit(0);
 }

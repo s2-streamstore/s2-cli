@@ -1634,6 +1634,7 @@ dependencies = [
  "miette",
  "pin-project-lite",
  "pin-utils",
+ "rand",
  "serde",
  "serde_json",
  "streamstore",

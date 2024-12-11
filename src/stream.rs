@@ -95,15 +95,10 @@ impl StreamService {
 
     pub async fn append_session(
         &self,
-        append_input_stream: RecordStream<Box<dyn AsyncBufRead + Send + Unpin>>,
-        fencing_token: Option<FencingToken>,
-        match_seq_num: Option<u64>,
+        stream: impl 'static + Send + Stream<Item = AppendRecord> + Unpin,
+        opts: AppendRecordsBatchingOpts,
     ) -> Result<Streaming<AppendOutput>, ServiceError> {
-        let opts = AppendRecordsBatchingOpts::default()
-            .with_fencing_token(fencing_token)
-            .with_match_seq_num(match_seq_num);
-
-        let append_record_stream = AppendRecordsBatchingStream::new(append_input_stream, opts);
+        let append_record_stream = AppendRecordsBatchingStream::new(stream, opts);
 
         self.client
             .append_session(append_record_stream)
