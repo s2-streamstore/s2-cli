@@ -20,7 +20,7 @@ pub struct PingResult {
 }
 
 pub struct Pinger {
-    stream_tx: mpsc::UnboundedSender<AppendRecord>,
+    records_tx: mpsc::UnboundedSender<AppendRecord>,
     appends_handle: JoinHandle<()>,
     reads_handle: JoinHandle<()>,
     appends_rx: mpsc::UnboundedReceiver<Result<Instant, S2CliError>>,
@@ -33,32 +33,32 @@ impl Pinger {
 
         let mut read_stream = stream_client.read_session(tail, None, None).await?;
 
-        let (stream_tx, stream_rx) = mpsc::unbounded_channel();
+        let (records_tx, records_rx) = mpsc::unbounded_channel();
         let mut append_stream = stream_client
             .append_session(
-                tokio_stream::wrappers::UnboundedReceiverStream::new(stream_rx),
+                tokio_stream::wrappers::UnboundedReceiverStream::new(records_rx),
                 AppendRecordsBatchingOpts::new()
                     .with_max_batch_records(1)
                     .with_match_seq_num(Some(tail)),
             )
             .await?;
 
-        let warm_up_record = AppendRecord::new("warm up").expect("valid record");
-        stream_tx
-            .send(warm_up_record.clone())
+        let warmup_record = AppendRecord::new("warmup").expect("valid record");
+        records_tx
+            .send(warmup_record.clone())
             .expect("stream channel open");
 
-        match append_stream.next().await.expect("warm up batch ack") {
+        match append_stream.next().await.expect("warmup batch ack") {
             Ok(AppendOutput { start_seq_num, .. }) if start_seq_num == tail => (),
             Ok(_) => return Err(S2CliError::PingStreamMutated),
             Err(e) => return Err(ServiceError::new(ServiceErrorContext::AppendSession, e).into()),
         };
 
-        match read_stream.next().await.expect("warm up batch e2e") {
+        match read_stream.next().await.expect("warmup batch e2e") {
             Ok(ReadOutput::Batch(SequencedRecordBatch { records }))
                 if records.len() == 1
                     && records[0].headers.is_empty()
-                    && records[0].body.as_ref() == warm_up_record.body() => {}
+                    && records[0].body.as_ref() == warmup_record.body() => {}
             Ok(_) => return Err(S2CliError::PingStreamMutated),
             Err(e) => return Err(ServiceError::new(ServiceErrorContext::ReadSession, e).into()),
         };
@@ -131,7 +131,7 @@ impl Pinger {
         });
 
         Ok(Self {
-            stream_tx,
+            records_tx,
             appends_handle,
             reads_handle,
             appends_rx,
@@ -147,7 +147,7 @@ impl Pinger {
 
         let record = AppendRecord::new(body.clone()).expect("pre validated append record bytes");
 
-        self.stream_tx.send(record).expect("stream channel open");
+        self.records_tx.send(record).expect("stream channel open");
 
         let send = Instant::now();
 

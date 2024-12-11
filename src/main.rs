@@ -308,10 +308,10 @@ enum Commands {
         #[arg(short = 'i', long, default_value = "500ms")]
         interval: humantime::Duration,
 
-        /// Batch size in bytes.
+        /// Batch size in bytes. A jitter (+/- 25%) will be added.
         ///
-        /// Truncated to a maximum of 50 KiB.
-        #[arg(short = 'b', long, default_value_t = 20 * 1024)]
+        /// Truncated to a maximum of 128 KiB.
+        #[arg(short = 'b', long, default_value_t = 32 * 1024)]
         batch_bytes: u64,
 
         /// Stop after sending this number of batches.
@@ -703,6 +703,7 @@ async fn run() -> Result<(), S2CliError> {
                         .with_match_seq_num(match_seq_num),
                 )
                 .await?;
+
             loop {
                 select! {
                     maybe_append_result = append_output_stream.next() => {
@@ -732,10 +733,10 @@ async fn run() -> Result<(), S2CliError> {
                     }
 
                     _ = signal::ctrl_c() => {
-                            drop(append_output_stream);
-                            eprintln!("{}", "■ [ABORTED]".red().bold());
-                            break;
-                        }
+                        drop(append_output_stream);
+                        eprintln!("{}", "■ [ABORTED]".red().bold());
+                        break;
+                    }
                 }
             }
         }
@@ -878,7 +879,7 @@ async fn run() -> Result<(), S2CliError> {
             let stream_client = StreamService::new(StreamClient::new(client_config, basin, stream));
 
             let interval = interval.max(Duration::from_millis(100));
-            let batch_bytes = batch_bytes.min(50 * 1024);
+            let batch_bytes = batch_bytes.min(128 * 1024);
 
             eprintln!("Preparing...");
 
@@ -898,7 +899,10 @@ async fn run() -> Result<(), S2CliError> {
                     u64::saturating_sub
                 };
 
-                let record_bytes = jitter_op(batch_bytes, rand::thread_rng().gen_range(0..10));
+                let max_jitter = batch_bytes / 4;
+
+                let record_bytes =
+                    jitter_op(batch_bytes, rand::thread_rng().gen_range(0..=max_jitter));
 
                 let Some(res) = pinger.ping(record_bytes).await? else {
                     return Ok(());
@@ -935,7 +939,7 @@ async fn run() -> Result<(), S2CliError> {
             let total_bytes = bytes.into_iter().sum::<u64>();
 
             eprintln!(/* Empty line */);
-            eprintln!("Sent {} batches with {} bytes", total_batches, total_bytes);
+            eprintln!("Round-tripped {total_bytes} bytes in {total_batches} batches");
 
             pub fn print_stats(stats: LatencyStats, name: &str) {
                 eprintln!(
@@ -973,7 +977,7 @@ async fn run() -> Result<(), S2CliError> {
             eprintln!(/* Empty line */);
             print_stats(LatencyStats::generate(acks), "Append Acknowledgement");
             eprintln!(/* Empty line */);
-            print_stats(LatencyStats::generate(e2es), "End to End");
+            print_stats(LatencyStats::generate(e2es), "End-to-End");
         }
     };
 
