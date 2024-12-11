@@ -57,6 +57,15 @@ jobs:
         run: |
           echo "${{ secrets.MACOS_PEM }}" | base64 -d -o macos.pem
           echo "${{ secrets.MACOS_CERTIFICATE_DER }}" | base64 -d -o certificate.der
+      - name: rename binary streamstore-cli -> s2        
+        shell: bash
+        run: 
+          if [ "${{ matrix.os }}" = "windows-latest" ]; 
+          then
+              mv target/${{ matrix.target }}/release/streamstore-cli.exe target/${{ matrix.target }}/release/s2.exe
+          else
+              mv target/${{ matrix.target }}/release/streamstore-cli target/${{ matrix.target }}/release/s2
+          fi
       - name: Sign macos binary
         if: matrix.os == 'macos-latest'
         uses: indygreg/apple-code-sign-action@v1
