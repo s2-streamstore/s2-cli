@@ -9,24 +9,25 @@ use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
 use error::{S2CliError, ServiceError, ServiceErrorContext};
-use rand::{distributions::Uniform, Rng};
+use ping::{LatencyStats, PingResult, Pinger};
+use rand::Rng;
 use stream::{RecordStream, StreamService};
 use streamstore::{
     batching::AppendRecordsBatchingOpts,
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
-        AppendOutput, AppendRecord, BasinInfo, BasinName, CommandRecord, ConvertError,
-        FencingToken, MeteredBytes as _, ReadOutput, SequencedRecordBatch, StreamInfo,
+        BasinInfo, BasinName, CommandRecord, ConvertError, FencingToken, MeteredBytes as _,
+        ReadOutput, StreamInfo,
     },
     HeaderValue,
 };
+use tokio::signal;
 use tokio::{
     fs::{File, OpenOptions},
     io::{self, AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
-    join, select,
+    select,
     time::Instant,
 };
-use tokio::{signal, sync::mpsc};
 use tokio_stream::StreamExt;
 use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
@@ -38,6 +39,7 @@ mod stream;
 
 mod config;
 mod error;
+mod ping;
 mod types;
 
 const STYLES: styling::Styles = styling::Styles::styled()
@@ -292,8 +294,8 @@ enum Commands {
         limit_bytes: Option<u64>,
     },
 
-    /// Run a speed test.
-    Pingtest {
+    /// Ping the stream to get append acknowledgement and end-to-end latencies.
+    Ping {
         /// Name of the basin.
         basin: BasinName,
 
@@ -314,7 +316,7 @@ enum Commands {
 
         /// Stop after sending this number of batches.
         #[arg(short = 'n', long)]
-        num_batches: Option<u64>,
+        num_batches: Option<usize>,
     },
 }
 
@@ -864,7 +866,7 @@ async fn run() -> Result<(), S2CliError> {
             }
         }
 
-        Commands::Pingtest {
+        Commands::Ping {
             basin,
             stream,
             interval,
@@ -878,124 +880,18 @@ async fn run() -> Result<(), S2CliError> {
             let interval = interval.max(Duration::from_millis(100));
             let batch_bytes = batch_bytes.min(50 * 1024);
 
-            eprintln!("Preparing test...");
+            eprintln!("Preparing...");
 
-            let tail = stream_client.check_tail().await?;
+            let mut pinger = Pinger::init(&stream_client).await?;
 
-            let mut read_stream = stream_client.read_session(tail, None, None).await?;
+            let mut pings = Vec::new();
 
-            let (stream_tx, stream_rx) = mpsc::unbounded_channel();
-            let mut append_stream = stream_client
-                .append_session(
-                    tokio_stream::wrappers::UnboundedReceiverStream::new(stream_rx),
-                    AppendRecordsBatchingOpts::new()
-                        .with_max_batch_records(1)
-                        .with_match_seq_num(Some(tail)),
-                )
-                .await?;
-
-            let warm_up_record = AppendRecord::new("warm up").expect("valid record");
-            stream_tx
-                .send(warm_up_record.clone())
-                .expect("stream channel open");
-
-            match append_stream.next().await.expect("warm up batch ack") {
-                Ok(AppendOutput { start_seq_num, .. }) if start_seq_num == tail => (),
-                Ok(_) => return Err(S2CliError::PingtestStreamMutated),
-                Err(e) => {
-                    return Err(ServiceError::new(ServiceErrorContext::AppendSession, e).into())
-                }
-            };
-
-            match read_stream.next().await.expect("warm up batch e2e") {
-                Ok(ReadOutput::Batch(SequencedRecordBatch { records }))
-                    if records.len() == 1
-                        && records[0].headers.is_empty()
-                        && records[0].body.as_ref() == warm_up_record.body() => {}
-                Ok(_) => return Err(S2CliError::PingtestStreamMutated),
-                Err(e) => return Err(ServiceError::new(ServiceErrorContext::ReadSession, e).into()),
-            };
-
-            let (reads_tx, mut reads_rx) = mpsc::unbounded_channel();
-            let reads_handle = tokio::spawn(async move {
-                loop {
-                    select! {
-                        next = read_stream.next() => match next {
-                            Some(Err(e)) => {
-                                reads_tx.send(Err(
-                                    ServiceError::new(ServiceErrorContext::ReadSession, e).into()
-                                )).expect("open reads channel");
-                                return;
-                            }
-                            Some(Ok(output)) => {
-                                if let ReadOutput::Batch(SequencedRecordBatch { mut records }) = output {
-                                    let read = Instant::now();
-                                    if records.len() != 1 {
-                                        reads_tx.send(Err(
-                                            S2CliError::PingtestStreamMutated
-                                        )).expect("reads channel open");
-                                        return;
-                                    }
-                                    let record = records.pop().expect("pre validated length");
-                                    reads_tx.send(Ok((read, record))).expect("reads channel open");
-                                } else {
-                                    reads_tx.send(Err(
-                                        S2CliError::PingtestStreamMutated
-                                    )).expect("reads channel open");
-                                    return;
-                                }
-                            }
-                            None => break,
-                        },
-                        _ = signal::ctrl_c() => break,
-                    };
-                }
-            });
-
-            let (appends_tx, mut appends_rx) = mpsc::unbounded_channel();
-            let appends_handle = tokio::spawn(async move {
-                while let Some(next) = append_stream.next().await {
-                    match next {
-                        Ok(AppendOutput {
-                            start_seq_num,
-                            end_seq_num,
-                            ..
-                        }) => {
-                            let append = Instant::now();
-                            let records = end_seq_num - start_seq_num;
-                            if records != 1 {
-                                appends_tx
-                                    .send(Err(S2CliError::PingtestStreamMutated))
-                                    .expect("appends channel open");
-                                return;
-                            }
-                            appends_tx.send(Ok(append)).expect("appends channel open");
-                        }
-                        Err(e) => {
-                            appends_tx
-                                .send(Err(S2CliError::from(ServiceError::new(
-                                    ServiceErrorContext::AppendSession,
-                                    e,
-                                ))))
-                                .expect("appends channel open");
-                        }
-                    }
-                }
-            });
-
-            let mut acks = Vec::new();
-            let mut e2es = Vec::new();
-
-            let mut total_batches = 0;
-            let mut total_bytes = 0;
-
-            loop {
-                if Some(total_batches) == num_batches {
-                    break;
-                }
-
-                total_batches += 1;
-
+            async fn ping_next(
+                pinger: &mut Pinger,
+                pings: &mut Vec<PingResult>,
+                interval: Duration,
+                batch_bytes: u64,
+            ) -> Result<(), S2CliError> {
                 let jitter_op = if rand::random() {
                     u64::saturating_add
                 } else {
@@ -1004,149 +900,82 @@ async fn run() -> Result<(), S2CliError> {
 
                 let record_bytes = jitter_op(batch_bytes, rand::thread_rng().gen_range(0..10));
 
-                total_bytes += record_bytes;
-
-                let body = rand::thread_rng()
-                    .sample_iter(&Uniform::new_inclusive(0, u8::MAX))
-                    .take(record_bytes as usize)
-                    .collect::<Vec<_>>();
-
-                let record =
-                    AppendRecord::new(body.clone()).expect("pre validated append record bytes");
-
-                stream_tx.send(record).expect("stream channel open");
-
-                let send = Instant::now();
-
-                let latency_fut = async { join!(appends_rx.recv(), reads_rx.recv()) };
-
-                let (append, read, record) = select! {
-                    (append, read) = latency_fut => {
-                        match (append, read) {
-                            (None, _) | (_, None) => break,
-                            (Some(Err(e)), _) | (_, Some(Err(e))) => return Err(e),
-                            (Some(Ok(append)), Some(Ok((read, record)))) => (append, read, record),
-                        }
-                    }
-                    _ = signal::ctrl_c() => break,
+                let Some(res) = pinger.ping(record_bytes).await? else {
+                    return Ok(());
                 };
 
-                // Validate the received record
-                if body != record.body || !record.headers.is_empty() {
-                    return Err(S2CliError::PingtestStreamMutated);
-                }
-
-                let ack = append - send;
-                acks.push(ack);
-
-                let e2e = read - send;
-                e2es.push(e2e);
-
                 eprintln!(
-                    "ack: {:<7}  e2e: {:<7}",
-                    format!("{} ms", ack.as_millis()).blue(),
-                    format!("{} ms", e2e.as_millis()).blue(),
+                    "{:<5} bytes:  ack = {:<7} e2e = {:<7}",
+                    res.bytes.to_string().blue(),
+                    format!("{} ms", res.ack.as_millis()).blue(),
+                    format!("{} ms", res.e2e.as_millis()).blue(),
                 );
 
+                pings.push(res);
+
+                tokio::time::sleep(interval).await;
+                Ok(())
+            }
+
+            while Some(pings.len()) != num_batches {
                 select! {
-                    _ = tokio::time::sleep(interval) => (),
+                    _ = ping_next(&mut pinger, &mut pings, interval, batch_bytes) => (),
                     _ = signal::ctrl_c() => break,
                 }
             }
 
-            // Close the stream.
-            std::mem::drop(stream_tx);
+            // Close the pinger.
+            std::mem::drop(pinger);
 
-            reads_handle.abort();
-            appends_handle.abort();
+            let total_batches = pings.len();
+            let (bytes, (acks, e2es)): (Vec<_>, (Vec<_>, Vec<_>)) = pings
+                .into_iter()
+                .map(|PingResult { bytes, ack, e2e }| (bytes, (ack, e2e)))
+                .unzip();
+            let total_bytes = bytes.into_iter().sum::<u64>();
 
             eprintln!(/* Empty line */);
             eprintln!("Sent {} batches with {} bytes", total_batches, total_bytes);
 
+            pub fn print_stats(stats: LatencyStats, name: &str) {
+                eprintln!(
+                    "{:-^60}",
+                    format!(" {name} Latency Statistics ").yellow().bold()
+                );
+
+                fn stat(key: &str, val: String) {
+                    eprintln!("{:>9} {}", key, val.green());
+                }
+
+                fn stat_duration(key: &str, val: Duration) {
+                    stat(key, format!("{} ms", val.as_millis()));
+                }
+
+                let LatencyStats {
+                    mean,
+                    median,
+                    p95,
+                    p99,
+                    max,
+                    min,
+                    stddev,
+                } = stats;
+
+                stat_duration("Mean", mean);
+                stat_duration("Median", median);
+                stat_duration("P95", p95);
+                stat_duration("P99", p99);
+                stat_duration("Max", max);
+                stat_duration("Min", min);
+                stat_duration("Std Dev", stddev);
+            }
+
             eprintln!(/* Empty line */);
-            LatencyStats::generate(acks).report("Append Acknowledgement");
+            print_stats(LatencyStats::generate(acks), "Append Acknowledgement");
             eprintln!(/* Empty line */);
-            LatencyStats::generate(e2es).report("End to End");
+            print_stats(LatencyStats::generate(e2es), "End to End");
         }
     };
 
     std::process::exit(0);
-}
-
-struct LatencyStats {
-    pub mean: Duration,
-    pub median: Duration,
-    pub p95: Duration,
-    pub p99: Duration,
-    pub max: Duration,
-    pub min: Duration,
-    pub stddev: Duration,
-}
-
-impl LatencyStats {
-    pub fn generate(mut data: Vec<Duration>) -> Self {
-        data.sort_unstable();
-
-        let n = data.len();
-
-        let mean = data.iter().sum::<Duration>() / n as u32;
-
-        let median = if n % 2 == 0 {
-            (data[n / 2 - 1] + data[n / 2]) / 2
-        } else {
-            data[n / 2]
-        };
-
-        let p_idx = |p: f64| ((n as f64) * p).ceil() as usize - 1;
-
-        let variance = data
-            .iter()
-            .map(|d| (d.as_secs_f64() - mean.as_secs_f64()).powi(2))
-            .sum::<f64>()
-            / n as f64;
-        let stddev = Duration::from_secs_f64(variance.sqrt());
-
-        Self {
-            mean,
-            median,
-            p95: data[p_idx(0.95)],
-            p99: data[p_idx(0.99)],
-            max: data[n - 1],
-            min: data[0],
-            stddev,
-        }
-    }
-
-    pub fn report(self, name: &str) {
-        eprintln!(
-            "{:-^60}",
-            format!(" {name} Latency Statistics ").yellow().bold()
-        );
-
-        fn stat(key: &str, val: String) {
-            eprintln!("{:>9} {}", key, val.green());
-        }
-
-        fn stat_duration(key: &str, val: Duration) {
-            stat(key, format!("{} ms", val.as_millis()));
-        }
-
-        let LatencyStats {
-            mean,
-            median,
-            p95,
-            p99,
-            max,
-            min,
-            stddev,
-        } = self;
-
-        stat_duration("Mean", mean);
-        stat_duration("Median", median);
-        stat_duration("P95", p95);
-        stat_duration("P99", p99);
-        stat_duration("Max", max);
-        stat_duration("Min", min);
-        stat_duration("Std Dev", stddev);
-    }
 }

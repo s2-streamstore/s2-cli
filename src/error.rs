@@ -43,8 +43,8 @@ pub enum S2CliError {
     #[error("Failed to initialize a `Record Reader`! {0}")]
     RecordReaderInit(String),
 
-    #[error("Stream mutated concurrently during speedtest")]
-    PingtestStreamMutated,
+    #[error("Stream mutated concurrently during ping")]
+    PingStreamMutated,
 
     #[error("Failed to write records: {0}")]
     RecordWrite(String),
