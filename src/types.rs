@@ -42,7 +42,11 @@ fn parse_maybe_basin_or_uri(s: &str) -> Result<(BasinName, Option<String>), Conv
                 .map_err(|e| format!("Invalid basin name in S2 URL: {e}"))?;
 
             let stream = uri.path().trim_start_matches('/');
-            let stream = (stream != "").then(|| stream.to_string());
+            let stream = if stream.is_empty() {
+                None
+            } else {
+                Some(stream.to_string())
+            };
 
             Ok((basin, stream))
         }
