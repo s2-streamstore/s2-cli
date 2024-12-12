@@ -18,7 +18,7 @@ jobs:
               sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
             env:
               CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          - os: ubuntu-latest
+          - os: ubuntu-20.04
             target: x86_64-unknown-linux-gnu
           - os: macos-latest
             target: x86_64-apple-darwin
@@ -105,9 +105,37 @@ jobs:
             *.zip
           if-no-files-found: error
 
+  homebrew:
+    needs: build_binaries
+    runs-on: ubuntu-20.04
+    if: github.event_name != 'workflow_dispatch'
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+      - name: version
+        id: version
+        uses: SebRollen/toml-action@v1.2.0
+        with:
+          file: Cargo.toml
+          field: package.version
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+      - name: sha256sum
+        run: |
+          MAC_INTEL_SHA256=$(shasum -a 256 s2-x86_64-apple-darwin.zip | awk '{print $1}')
+          echo "MAC_INTEL_SHA256=$MAC_INTEL_SHA256" >> $GITHUB_ENV
+          MAC_ARM_SHA256=$(shasum -a 256 s2-aarch64-apple-darwin.zip | awk '{print $1}')
+          echo "MAC_ARM_SHA256=$MAC_ARM_SHA256" >> $GITHUB_ENV
+          LINUX_INTEL_SHA256=$(shasum -a 256 s2-x86_64-unknown-linux-gnu.zip | awk '{print $1}')
+          echo "LINUX_INTEL_SHA256=$LINUX_INTEL_SHA256" >> $GITHUB_ENV
+          LINUX_ARM_SHA256=$(shasum -a 256 s2-aarch64-unknown-linux-gnu.zip | awk '{print $1}')
+          echo "LINUX_ARM_SHA256=$LINUX_ARM_SHA256" >> $GITHUB_ENV
+
+
   create_release:
     needs: build_binaries
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
+    if: github.event_name != 'workflow_dispatch'
     permissions:
       contents: write
     steps:
