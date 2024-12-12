@@ -18,8 +18,8 @@ use streamstore::{
     batching::AppendRecordsBatchingOpts,
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
-        AppendRecordBatch, BasinInfo, BasinName, CommandRecord, ConvertError, FencingToken,
-        MeteredBytes as _, ReadOutput, StreamInfo,
+        AppendRecordBatch, BasinInfo, CommandRecord, ConvertError, FencingToken, MeteredBytes as _,
+        ReadOutput, StreamInfo,
     },
     HeaderValue,
 };
@@ -36,7 +36,10 @@ use tokio_stream::{
 };
 use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
-use types::{BasinConfig, StreamConfig, RETENTION_POLICY_PATH, STORAGE_CLASS_PATH};
+use types::{
+    BasinConfig, BasinNameAndMaybeStreamUri, BasinNameAndStreamArgs, BasinNameOnlyUri,
+    StreamConfig, RETENTION_POLICY_PATH, STORAGE_CLASS_PATH,
+};
 
 mod account;
 mod basin;
@@ -93,7 +96,7 @@ enum Commands {
     /// Create a basin.
     CreateBasin {
         /// Name of the basin to create.
-        basin: BasinName,
+        basin: BasinNameOnlyUri,
 
         #[command(flatten)]
         config: BasinConfig,
@@ -102,19 +105,19 @@ enum Commands {
     /// Delete a basin.
     DeleteBasin {
         /// Name of the basin to delete.
-        basin: BasinName,
+        basin: BasinNameOnlyUri,
     },
 
     /// Get basin config.
     GetBasinConfig {
         /// Basin name to get config for.
-        basin: BasinName,
+        basin: BasinNameOnlyUri,
     },
 
     /// Reconfigure a basin.
     ReconfigureBasin {
         /// Name of the basin to reconfigure.
-        basin: BasinName,
+        basin: BasinNameOnlyUri,
 
         /// Configuration to apply.
         #[command(flatten)]
@@ -122,9 +125,11 @@ enum Commands {
     },
 
     /// List streams.
+    #[command(alias = "ls")]
     ListStreams {
-        /// Name of the basin to manage.
-        basin: BasinName,
+        /// Name of the basin to manage or S2 URL with basin and prefix.
+        #[arg(value_name = "BASIN/S2_URL")]
+        basin: BasinNameAndMaybeStreamUri,
 
         /// Filter to stream names that begin with this prefix.
         #[arg(short = 'p', long)]
@@ -141,11 +146,8 @@ enum Commands {
 
     /// Create a stream.
     CreateStream {
-        /// Name of the basin to manage.
-        basin: BasinName,
-
-        /// Name of the stream to create.
-        stream: String,
+        #[command(flatten)]
+        args: BasinNameAndStreamArgs,
 
         /// Configuration to apply.
         #[command(flatten)]
@@ -153,30 +155,22 @@ enum Commands {
     },
 
     /// Delete a stream.
+    #[command(alias = "rm")]
     DeleteStream {
-        /// Name of the basin to manage.
-        basin: BasinName,
-
-        /// Name of the stream to delete.
-        stream: String,
+        #[command(flatten)]
+        args: BasinNameAndStreamArgs,
     },
 
     /// Get stream config.
     GetStreamConfig {
-        /// Name of the basin to manage.
-        basin: BasinName,
-
-        /// Name of the stream to get config for.
-        stream: String,
+        #[command(flatten)]
+        args: BasinNameAndStreamArgs,
     },
 
     /// Reconfigure a stream.
     ReconfigureStream {
-        /// Name of the basin to manage.
-        basin: BasinName,
-
-        /// Name of the stream to reconfigure.
-        stream: String,
+        #[command(flatten)]
+        args: BasinNameAndStreamArgs,
 
         /// Configuration to apply.
         #[command(flatten)]
@@ -185,11 +179,8 @@ enum Commands {
 
     /// Get the next sequence number that will be assigned by a stream.
     CheckTail {
-        /// Name of the basin.
-        basin: BasinName,
-
-        /// Name of the stream.
-        stream: String,
+        #[command(flatten)]
+        args: BasinNameAndStreamArgs,
     },
 
     /// Set the trim point for the stream.
@@ -197,11 +188,8 @@ enum Commands {
     /// Trimming is eventually consistent, and trimmed records may be visible
     /// for a brief period.
     Trim {
-        /// Name of the basin.
-        basin: BasinName,
-
-        /// Name of the stream.
-        stream: String,
+        #[command(flatten)]
+        args: BasinNameAndStreamArgs,
 
         /// Earliest sequence number that should be retained.
         /// This sequence number is only allowed to advance,
@@ -225,11 +213,8 @@ enum Commands {
     /// Note that fencing is a cooperative mechanism,
     /// and it is only enforced when a token is provided.
     Fence {
-        /// Name of the basin.
-        basin: BasinName,
-
-        /// Name of the stream.
-        stream: String,
+        #[command(flatten)]
+        args: BasinNameAndStreamArgs,
 
         /// New fencing token specified in hex.
         /// It may be upto 16 bytes, and can be empty.
@@ -249,11 +234,8 @@ enum Commands {
     ///
     /// Currently, only newline delimited records are supported.
     Append {
-        /// Name of the basin.
-        basin: BasinName,
-
-        /// Name of the stream.
-        stream: String,
+        #[command(flatten)]
+        args: BasinNameAndStreamArgs,
 
         /// Enforce fencing token specified in hex.
         #[arg(short = 'f', long, value_parser = parse_fencing_token)]
@@ -275,11 +257,8 @@ enum Commands {
     /// If a limit if specified, reading will stop when the limit is reached or there are no more records on the stream.
     /// If a limit is not specified, the reader will keep tailing and wait for new records.
     Read {
-        /// Name of the basin.
-        basin: BasinName,
-
-        /// Name of the stream.
-        stream: String,
+        #[command(flatten)]
+        args: BasinNameAndStreamArgs,
 
         /// Starting sequence number (inclusive).
         #[arg(short = 's', long, default_value_t = 0)]
@@ -301,11 +280,8 @@ enum Commands {
 
     /// Ping the stream to get append acknowledgement and end-to-end latencies.
     Ping {
-        /// Name of the basin.
-        basin: BasinName,
-
-        /// Name of the stream.
-        stream: String,
+        #[command(flatten)]
+        args: BasinNameAndStreamArgs,
 
         /// Send a batch after this interval.
         ///
@@ -506,7 +482,7 @@ async fn run() -> Result<(), S2CliError> {
                 None => (None, None),
             };
             account_service
-                .create_basin(basin, storage_class, retention_policy)
+                .create_basin(basin.into(), storage_class, retention_policy)
                 .await?;
 
             eprintln!("{}", "✓ Basin created".green().bold());
@@ -516,7 +492,7 @@ async fn run() -> Result<(), S2CliError> {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let account_service = AccountService::new(Client::new(client_config));
-            account_service.delete_basin(basin).await?;
+            account_service.delete_basin(basin.into()).await?;
             eprintln!("{}", "✓ Basin deletion requested".green().bold());
         }
 
@@ -524,7 +500,7 @@ async fn run() -> Result<(), S2CliError> {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let account_service = AccountService::new(Client::new(client_config));
-            let basin_config = account_service.get_basin_config(basin).await?;
+            let basin_config = account_service.get_basin_config(basin.into()).await?;
             let basin_config: BasinConfig = basin_config.into();
             println!("{}", serde_json::to_string_pretty(&basin_config)?);
         }
@@ -544,7 +520,7 @@ async fn run() -> Result<(), S2CliError> {
             }
 
             account_service
-                .reconfigure_basin(basin, config.into(), mask)
+                .reconfigure_basin(basin.into(), config.into(), mask)
                 .await?;
         }
 
@@ -554,6 +530,17 @@ async fn run() -> Result<(), S2CliError> {
             start_after,
             limit,
         } => {
+            let BasinNameAndMaybeStreamUri {
+                basin,
+                stream: maybe_prefix,
+            } = basin;
+            let prefix = match (maybe_prefix, prefix) {
+                (Some(_), Some(_)) => {
+                    return Err(ConvertError::from("Multiple prefix specified").into())
+                }
+                (Some(s), None) | (None, Some(s)) => Some(s),
+                (None, None) => None,
+            };
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let basin_client = BasinClient::new(client_config, basin);
@@ -585,11 +572,8 @@ async fn run() -> Result<(), S2CliError> {
             }
         }
 
-        Commands::CreateStream {
-            basin,
-            stream,
-            config,
-        } => {
+        Commands::CreateStream { args, config } => {
+            let (basin, stream) = args.try_into_parts()?;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let basin_client = BasinClient::new(client_config, basin);
@@ -599,7 +583,8 @@ async fn run() -> Result<(), S2CliError> {
             eprintln!("{}", "✓ Stream created".green().bold());
         }
 
-        Commands::DeleteStream { basin, stream } => {
+        Commands::DeleteStream { args } => {
+            let (basin, stream) = args.try_into_parts()?;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let basin_client = BasinClient::new(client_config, basin);
@@ -609,7 +594,8 @@ async fn run() -> Result<(), S2CliError> {
             eprintln!("{}", "✓ Stream deletion requested".green().bold());
         }
 
-        Commands::GetStreamConfig { basin, stream } => {
+        Commands::GetStreamConfig { args } => {
+            let (basin, stream) = args.try_into_parts()?;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let basin_client = BasinClient::new(client_config, basin);
@@ -620,11 +606,8 @@ async fn run() -> Result<(), S2CliError> {
             println!("{}", serde_json::to_string_pretty(&config)?);
         }
 
-        Commands::ReconfigureStream {
-            basin,
-            stream,
-            config,
-        } => {
+        Commands::ReconfigureStream { args, config } => {
+            let (basin, stream) = args.try_into_parts()?;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let basin_client = BasinClient::new(client_config, basin);
@@ -647,7 +630,8 @@ async fn run() -> Result<(), S2CliError> {
             println!("{}", serde_json::to_string_pretty(&config)?);
         }
 
-        Commands::CheckTail { basin, stream } => {
+        Commands::CheckTail { args } => {
+            let (basin, stream) = args.try_into_parts()?;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
@@ -656,12 +640,12 @@ async fn run() -> Result<(), S2CliError> {
         }
 
         Commands::Trim {
-            basin,
-            stream,
+            args,
             trim_point,
             fencing_token,
             match_seq_num,
         } => {
+            let (basin, stream) = args.try_into_parts()?;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
@@ -681,12 +665,12 @@ async fn run() -> Result<(), S2CliError> {
         }
 
         Commands::Fence {
-            basin,
-            stream,
+            args,
             new_fencing_token,
             fencing_token,
             match_seq_num,
         } => {
+            let (basin, stream) = args.try_into_parts()?;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
@@ -706,12 +690,12 @@ async fn run() -> Result<(), S2CliError> {
         }
 
         Commands::Append {
-            basin,
-            stream,
+            args,
             input,
             fencing_token,
             match_seq_num,
         } => {
+            let (basin, stream) = args.try_into_parts()?;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
@@ -769,13 +753,13 @@ async fn run() -> Result<(), S2CliError> {
         }
 
         Commands::Read {
-            basin,
-            stream,
+            args,
             start_seq_num,
             output,
             limit_count,
             limit_bytes,
         } => {
+            let (basin, stream) = args.try_into_parts()?;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
@@ -895,12 +879,12 @@ async fn run() -> Result<(), S2CliError> {
         }
 
         Commands::Ping {
-            basin,
-            stream,
+            args,
             interval,
             batch_bytes,
             num_batches,
         } => {
+            let (basin, stream) = args.try_into_parts()?;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamService::new(StreamClient::new(client_config, basin, stream));

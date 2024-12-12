@@ -17,6 +17,7 @@ colored = "2.1.0"
 config = "0.14.1"
 dirs = "5.0.1"
 futures = "0.3.31"
+http = "1.2.0"
 humantime = "2.1.0"
 miette = { version = "7.2.0", features = ["fancy"] }
 pin-project-lite = "0.2"
@@ -31,4 +32,3 @@ tokio-stream = { version = "0.1.16", features = ["io-util"] }
 toml = "0.8.19"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-
