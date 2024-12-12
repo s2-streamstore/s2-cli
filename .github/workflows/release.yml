@@ -129,9 +129,12 @@ jobs:
       - name: checkout into the formula repo
         uses: actions/checkout@v4
         with:
-          repository: 'streamstore/homebrew-s2'
+          repository: 's2-streamstore/homebrew-s2'
       - name: update formula
-        run: ls
+        run: |
+          ls
+          sed -i.bak "s/^  version \".*\"$/  version \"${{ steps.version.outputs.value }}\"/" s2.rb
+          cat s2.rb
 
   # create_release:
   #   needs: build_binaries
