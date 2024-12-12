@@ -1,9 +1,8 @@
 name: release
-on:
-  pull_request:
-  # push:
-  #   tags: ["[0-9]+.[0-9]+.[0-9]+*"]
-  # workflow_dispatch:
+on:  
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+*"]
+  workflow_dispatch:
 jobs:
   build_binaries:
     name: ${{ matrix.target }}
@@ -25,10 +24,10 @@ jobs:
             target: x86_64-apple-darwin
           - os: macos-latest
             target: aarch64-apple-darwin
-          # - os: windows-latest
-          #   target: x86_64-pc-windows-msvc
-          # - os: windows-latest
-          #   target: aarch64-pc-windows-msvc
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
     steps:
       - name: checkout
         uses: actions/checkout@v4      
@@ -67,15 +66,15 @@ jobs:
           else
               mv target/${{ matrix.target }}/release/streamstore-cli target/${{ matrix.target }}/release/s2
           fi
-      # - name: Sign macos binary
-      #   if: matrix.os == 'macos-latest'
-      #   uses: indygreg/apple-code-sign-action@v1
-      #   with:
-      #     input_path: target/${{ matrix.target }}/release/s2
-      #     pem_file: macos.pem
-      #     certificate_der_file: certificate.der
-      #     sign: true
-      #     sign_args: "--code-signature-flags=runtime"
+      - name: Sign macos binary
+        if: matrix.os == 'macos-latest'
+        uses: indygreg/apple-code-sign-action@v1
+        with:
+          input_path: target/${{ matrix.target }}/release/s2
+          pem_file: macos.pem
+          certificate_der_file: certificate.der
+          sign: true
+          sign_args: "--code-signature-flags=runtime"
       - name: Prepare artifacts
         shell: bash
         run: |
@@ -87,17 +86,17 @@ jobs:
             else
                 zip -r ../../../s2-${{ matrix.target }}.zip s2
             fi      
-      # - name: App store connect api key
-      #   if: matrix.os == 'macos-latest'
-      #   run: echo "${{ secrets.APP_STORE_CONNECT_API_KEY }}" | base64 -d -o app_store_connect_api_key.json
-      # - name: Notarize macos binary              
-      #   if: matrix.os == 'macos-latest'  
-      #   uses: indygreg/apple-code-sign-action@v1
-      #   with:          
-      #     input_path: s2-${{ matrix.target }}.zip
-      #     sign: false
-      #     notarize: true
-      #     app_store_connect_api_key_json_file: app_store_connect_api_key.json
+      - name: App store connect api key
+        if: matrix.os == 'macos-latest'
+        run: echo "${{ secrets.APP_STORE_CONNECT_API_KEY }}" | base64 -d -o app_store_connect_api_key.json
+      - name: Notarize macos binary              
+        if: matrix.os == 'macos-latest'  
+        uses: indygreg/apple-code-sign-action@v1
+        with:          
+          input_path: s2-${{ matrix.target }}.zip
+          sign: false
+          notarize: true
+          app_store_connect_api_key_json_file: app_store_connect_api_key.json
       - name: upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -106,10 +105,44 @@ jobs:
             *.zip
           if-no-files-found: error
 
-  homebrew:
+  create_release:
     needs: build_binaries
     runs-on: ubuntu-20.04
-    # if: github.event_name != 'workflow_dispatch'
+    if: github.event_name != 'workflow_dispatch'
+    permissions:
+      contents: write
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+      - name: version
+        id: version
+        uses: SebRollen/toml-action@v1.2.0
+        with:
+          file: Cargo.toml
+          field: package.version
+      - uses: mindsers/changelog-reader-action@v2
+        id: changelog_reader
+        with:          
+          version: ${{ steps.version.outputs.value }}
+      - name: install rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: publish to crates.io
+        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}          
+      - name: download artifacts
+        uses: actions/download-artifact@v4
+      - name: create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            **/*.tar.gz
+            **/*.zip
+          name: ${{ steps.version.outputs.value }}
+          body: ${{ steps.changelog_reader.outputs.changes }}       
+
+  update_homebrew:
+    needs: [create_release, build_binaries]
+    runs-on: ubuntu-20.04
+    if: github.event_name != 'workflow_dispatch'
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -138,52 +171,16 @@ jobs:
           repository: 's2-streamstore/homebrew-s2'
           token: ${{ secrets.HOMEBREW_PAT }}
       - name: update formula
-        run: |
-          cat s2.rb
+        run: |          
           sed -i.bak "s/^  version \".*\"$/  version \"${{ steps.version.outputs.value }}\"/" s2.rb
           sed -z -i -e 's/[0-9a-f]\{64\}/${{ env.MAC_INTEL_SHA256 }}/1' s2.rb
           sed -z -i -e 's/[0-9a-f]\{64\}/${{ env.MAC_ARM_SHA256 }}/2' s2.rb
           sed -z -i -e 's/[0-9a-f]\{64\}/${{ env.LINUX_INTEL_SHA256 }}/3' s2.rb
-          sed -z -i -e 's/[0-9a-f]\{64\}/${{ env.LINUX_ARM_SHA256 }}/4' s2.rb
-          cat s2.rb
-      - name: commit and push
+          sed -z -i -e 's/[0-9a-f]\{64\}/${{ env.LINUX_ARM_SHA256 }}/4' s2.rb          
+      - name: release
         run: |
           git config --global user.email "mehul@s2.dev"
           git config --global user.name "Mehul Arora"
           git add s2.rb
           git commit -m "Update S2 to ${{ steps.version.outputs.value }}"
           git push
-
-  # create_release:
-  #   needs: build_binaries
-  #   runs-on: ubuntu-20.04
-  #   if: github.event_name != 'workflow_dispatch'
-  #   permissions:
-  #     contents: write
-  #   steps:
-  #     - name: checkout
-  #       uses: actions/checkout@v4
-  #     - name: version
-  #       id: version
-  #       uses: SebRollen/toml-action@v1.2.0
-  #       with:
-  #         file: Cargo.toml
-  #         field: package.version
-  #     - uses: mindsers/changelog-reader-action@v2
-  #       id: changelog_reader
-  #       with:          
-  #         version: ${{ steps.version.outputs.value }}
-  #     - name: install rust
-  #       uses: dtolnay/rust-toolchain@stable
-  #     - name: publish to crates.io
-  #       run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}          
-  #     - name: download artifacts
-  #       uses: actions/download-artifact@v4
-  #     - name: create release
-  #       uses: softprops/action-gh-release@v2
-  #       with:
-  #         files: |
-  #           **/*.tar.gz
-  #           **/*.zip
-  #         name: ${{ steps.version.outputs.value }}
-  #         body: ${{ steps.changelog_reader.outputs.changes }}       
