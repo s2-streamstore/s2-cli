@@ -21,7 +21,6 @@ use streamstore::{
         AppendRecordBatch, BasinInfo, CommandRecord, ConvertError, FencingToken, MeteredBytes as _,
         ReadOutput, StreamInfo,
     },
-    HeaderValue,
 };
 use tokio::{
     fs::{File, OpenOptions},
@@ -401,7 +400,7 @@ fn parse_fencing_token(s: &str) -> Result<FencingToken, ConvertError> {
 fn client_config(auth_token: String) -> Result<ClientConfig, S2CliError> {
     let endpoints = S2Endpoints::from_env().map_err(S2CliError::EndpointsFromEnv)?;
     let client_config = ClientConfig::new(auth_token.to_string())
-        .with_user_agent("s2-cli".parse::<HeaderValue>().expect("valid user agent"))
+        .with_user_agent("s2-cli".parse().expect("valid user agent"))
         .with_endpoints(endpoints)
         .with_request_timeout(Duration::from_secs(30));
     Ok(client_config)
