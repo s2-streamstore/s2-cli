@@ -123,16 +123,15 @@ jobs:
         uses: actions/download-artifact@v4
       - run: ls x86_64-unknown-linux-gnu
       - name: sha256sum
-        run: |
-          MAC_INTEL_SHA256=$(shasum -a 256 s2-x86_64-apple-darwin.zip | awk '{print $1}')
-          echo "MAC_INTEL_SHA256=$MAC_INTEL_SHA256" >> $GITHUB_ENV
-          MAC_ARM_SHA256=$(shasum -a 256 s2-aarch64-apple-darwin.zip | awk '{print $1}')
-          echo "MAC_ARM_SHA256=$MAC_ARM_SHA256" >> $GITHUB_ENV
-          LINUX_INTEL_SHA256=$(shasum -a 256 s2-x86_64-unknown-linux-gnu.zip | awk '{print $1}')
-          echo "LINUX_INTEL_SHA256=$LINUX_INTEL_SHA256" >> $GITHUB_ENV
-          LINUX_ARM_SHA256=$(shasum -a 256 s2-aarch64-unknown-linux-gnu.zip | awk '{print $1}')
-          echo "LINUX_ARM_SHA256=$LINUX_ARM_SHA256" >> $GITHUB_ENV
-
+        run: |          
+          LINUX_INTEL_SHA256=$(shasum -a 256 x86_64-unknown-linux-gnu/s2-x86_64-unknown-linux-gnu.zip | awk '{print $1}')
+          echo "LINUX_INTEL_SHA256=$LINUX_INTEL_SHA256" >> $GITHUB_ENV          
+      - name: checkout into the formula repo
+        uses: actions/checkout@v4
+        with:
+          repository: 'streamstore/homebrew-s2'
+      - name: update formula
+        run: ls
 
   # create_release:
   #   needs: build_binaries
