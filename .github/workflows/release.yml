@@ -133,9 +133,9 @@ jobs:
       - name: update formula
         run: |
           cat s2.rb
-          sed -i '' -e "s/^  version \".*\"$/  version \"${{ steps.version.outputs.value }}\"/" s2.rb
+          sed -i.bak "s/^  version \".*\"$/  version \"${{ steps.version.outputs.value }}\"/" s2.rb
           cat s2.rb
-          sed -z -i -e "s/sha256 \".*\"/sha256 \"${{ env.LINUX_INTEL_SHA256 }}\"/1" s2.rb
+          sed -z -i.bak "s/sha256 \".*\"/sha256 \"${{ env.LINUX_INTEL_SHA256 }}\"/1" s2.rb
           cat s2.rb
 
   # create_release:
