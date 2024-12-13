@@ -39,10 +39,6 @@ jobs:
           components: rustfmt, clippy
       - name: install protoc
         uses: arduino/setup-protoc@v3    
-      - run: |
-          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github.com/".insteadOf "git@github.com:"
-          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf https://github
-          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf ssh://git@github
       - uses: Swatinem/rust-cache@v2
       - name: Run cargo tests
         run: cargo test
