@@ -61,7 +61,7 @@ const GENERAL_USAGE: &str = color_print::cstr!(
 );
 
 #[derive(Parser, Debug)]
-#[command(version, about, override_usage = GENERAL_USAGE, styles = STYLES)]
+#[command(version, override_usage = GENERAL_USAGE, styles = STYLES)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
