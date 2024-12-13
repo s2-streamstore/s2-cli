@@ -232,4 +232,16 @@ impl LatencyStats {
             stddev,
         }
     }
+
+    pub fn into_vec(self) -> Vec<(String, Duration)> {
+        vec![
+            ("mean".to_owned(), self.mean),
+            ("median".to_owned(), self.median),
+            ("p95".to_owned(), self.p95),
+            ("p99".to_owned(), self.p99),
+            ("max".to_owned(), self.max),
+            ("min".to_owned(), self.min),
+            ("stddev".to_owned(), self.stddev),
+        ]
+    }
 }

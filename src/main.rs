@@ -11,6 +11,7 @@ use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
 use error::{S2CliError, ServiceError, ServiceErrorContext};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use ping::{LatencyStats, PingResult, Pinger};
 use rand::Rng;
 use stream::{RecordStream, StreamService};
@@ -908,17 +909,39 @@ async fn run() -> Result<(), S2CliError> {
             let interval = interval.max(Duration::from_millis(100));
             let batch_bytes = batch_bytes.min(128 * 1024);
 
-            eprintln!("Preparing...");
-
             let mut pinger = Pinger::init(&stream_client).await?;
-
             let mut pings = Vec::new();
+
+            let latency_bars = MultiProgress::new();
+
+            let mut max_ack = 500;
+            let ack_bar = ProgressBar::new(max_ack).with_prefix("ack");
+            ack_bar.set_style(
+                ProgressStyle::default_bar()
+                    .template("{prefix:.bold} [{bar:40.cyan/blue}] {pos:>3}/{len}ms")
+                    .unwrap(),
+            );
+
+            let mut max_e2e = 500;
+            let e2e_bar = ProgressBar::new(500).with_prefix("e2e");
+            e2e_bar.set_style(
+                ProgressStyle::default_bar()
+                    .template("{prefix:.bold} [{bar:40.rgb(255,165,0)/yellow}] {pos:>3}/{len}ms")
+                    .unwrap(),
+            );
+
+            let ack_bar = latency_bars.add(ack_bar);
+            let e2e_bar = latency_bars.add(e2e_bar);
 
             async fn ping_next(
                 pinger: &mut Pinger,
                 pings: &mut Vec<PingResult>,
                 interval: Duration,
                 batch_bytes: u64,
+                ack_bar: &ProgressBar,
+                max_ack: &mut u64,
+                e2e_bar: &ProgressBar,
+                max_e2e: &mut u64,
             ) -> Result<(), S2CliError> {
                 let jitter_op = if rand::random() {
                     u64::saturating_add
@@ -935,12 +958,15 @@ async fn run() -> Result<(), S2CliError> {
                     return Ok(());
                 };
 
-                eprintln!(
-                    "{:<5} bytes:  ack = {:<7} e2e = {:<7}",
-                    res.bytes.to_string().blue(),
-                    format!("{} ms", res.ack.as_millis()).blue(),
-                    format!("{} ms", res.e2e.as_millis()).blue(),
-                );
+                let ack = res.ack.as_millis() as u64;
+                *max_ack = std::cmp::max(*max_ack, ack);
+                ack_bar.set_length(*max_ack);
+                ack_bar.set_position(ack);
+
+                let e2e = res.e2e.as_millis() as u64;
+                *max_e2e = std::cmp::max(*max_e2e, e2e);
+                e2e_bar.set_length(*max_e2e);
+                e2e_bar.set_position(e2e);
 
                 pings.push(res);
 
@@ -950,7 +976,7 @@ async fn run() -> Result<(), S2CliError> {
 
             while Some(pings.len()) != num_batches {
                 select! {
-                    _ = ping_next(&mut pinger, &mut pings, interval, batch_bytes) => (),
+                    _ = ping_next(&mut pinger, &mut pings, interval, batch_bytes, &ack_bar, &mut max_ack, &e2e_bar, &mut max_e2e) => (),
                     _ = signal::ctrl_c() => break,
                 }
             }
@@ -969,36 +995,35 @@ async fn run() -> Result<(), S2CliError> {
             eprintln!("Round-tripped {total_bytes} bytes in {total_batches} batches");
 
             pub fn print_stats(stats: LatencyStats, name: &str) {
-                eprintln!(
-                    "{:-^60}",
-                    format!(" {name} Latency Statistics ").yellow().bold()
-                );
+                eprintln!("{}", format!("{name} Latency Statistics ").yellow().bold());
 
-                fn stat(key: &str, val: String) {
-                    eprintln!("{:>9} {}", key, val.green());
+                fn stat_duration(key: &str, val: Duration, scale: f64) {
+                    let bar = "⠸".repeat((val.as_millis() as f64 * scale).round() as usize);
+                    eprintln!(
+                        "{:7}: {:5} │ {}",
+                        key,
+                        format!("{}ms", val.as_millis()).green().bold(),
+                        bar
+                    )
                 }
 
-                fn stat_duration(key: &str, val: Duration) {
-                    stat(key, format!("{} ms", val.as_millis()));
+                let stats = stats.into_vec();
+                let max_val = stats
+                    .iter()
+                    .map(|(_, val)| val)
+                    .max()
+                    .unwrap_or(&Duration::ZERO);
+
+                let max_bar_len = 50;
+                let scale = if max_val.as_millis() > max_bar_len {
+                    max_bar_len as f64 / max_val.as_millis() as f64
+                } else {
+                    1.0
+                };
+
+                for (name, val) in stats {
+                    stat_duration(&name, val, scale);
                 }
-
-                let LatencyStats {
-                    mean,
-                    median,
-                    p95,
-                    p99,
-                    max,
-                    min,
-                    stddev,
-                } = stats;
-
-                stat_duration("Mean", mean);
-                stat_duration("Median", median);
-                stat_duration("P95", p95);
-                stat_duration("P99", p99);
-                stat_duration("Max", max);
-                stat_duration("Min", min);
-                stat_duration("Std Dev", stddev);
             }
 
             eprintln!(/* Empty line */);
