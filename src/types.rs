@@ -3,7 +3,9 @@
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
 use std::{str::FromStr, time::Duration};
-use streamstore::types::{BasinName, ConvertError};
+use streamstore::types::BasinName;
+
+use crate::error::{BasinNameOrUriParseError, S2CliError};
 
 pub const STORAGE_CLASS_PATH: &str = "default_stream_config.storage_class";
 pub const RETENTION_POLICY_PATH: &str = "default_stream_config.retention_policy";
@@ -20,7 +22,9 @@ impl<S> From<BasinNameOrUri<S>> for BasinName {
     }
 }
 
-fn parse_maybe_basin_or_uri(s: &str) -> Result<(BasinName, Option<String>), ConvertError> {
+fn parse_maybe_basin_or_uri(
+    s: &str,
+) -> Result<(BasinName, Option<String>), BasinNameOrUriParseError> {
     match BasinName::from_str(s) {
         Ok(basin) => {
             // Definitely a basin name since a valid basin name cannot have `:`
@@ -33,13 +37,28 @@ fn parse_maybe_basin_or_uri(s: &str) -> Result<(BasinName, Option<String>), Conv
 
             match uri.scheme_str() {
                 Some("s2") => (),
-                Some(other) => return Err(format!("Invalid S2 URI scheme: '{other}'").into()),
-                None => return Err("S2 URI scheme empty".into()),
+                Some(other) => {
+                    return Err(BasinNameOrUriParseError::InvalidUri(miette::miette!(
+                        help = "Does the URI start with 's2://'?",
+                        "Unsupported URI scheme '{}'",
+                        other
+                    )));
+                }
+                None => {
+                    return Err(BasinNameOrUriParseError::InvalidUri(miette::miette!(
+                        help = "Make sure the URI starts with 's2://'",
+                        "Missing URI scheme"
+                    )))
+                }
             };
 
-            let basin = uri.host().ok_or("Basin name missing in S2 URI")?;
-            let basin = BasinName::from_str(basin)
-                .map_err(|e| format!("Invalid basin name in S2 URI: {e}"))?;
+            let basin = uri.host().ok_or_else(|| {
+                BasinNameOrUriParseError::InvalidUri(miette::miette!(
+                    help = "Is there an extra '/' after 's2://'?",
+                    "Missing basin name (URI host)"
+                ))
+            })?;
+            let basin = BasinName::from_str(basin)?;
 
             let stream = uri.path().trim_start_matches('/');
             let stream = if stream.is_empty() {
@@ -56,14 +75,17 @@ fn parse_maybe_basin_or_uri(s: &str) -> Result<(BasinName, Option<String>), Conv
 pub type BasinNameOnlyUri = BasinNameOrUri<()>;
 
 impl FromStr for BasinNameOnlyUri {
-    type Err = ConvertError;
+    type Err = BasinNameOrUriParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (basin, stream) = parse_maybe_basin_or_uri(s)?;
         if stream.is_none() {
             Ok(Self { basin, stream: () })
         } else {
-            Err("Expected S2 URI with only basin name".into())
+            Err(BasinNameOrUriParseError::InvalidUri(miette::miette!(
+                help = "Try providing the basin name directly or URI like 's2://basin-name'",
+                "Must not contain stream name (URI path)"
+            )))
         }
     }
 }
@@ -71,7 +93,7 @@ impl FromStr for BasinNameOnlyUri {
 pub type BasinNameAndMaybeStreamUri = BasinNameOrUri<Option<String>>;
 
 impl FromStr for BasinNameAndMaybeStreamUri {
-    type Err = ConvertError;
+    type Err = BasinNameOrUriParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (basin, stream) = parse_maybe_basin_or_uri(s)?;
@@ -89,10 +111,16 @@ pub struct BasinNameAndStreamArgs {
 }
 
 impl BasinNameAndStreamArgs {
-    pub fn try_into_parts(self) -> Result<(BasinName, String), ConvertError> {
+    pub fn try_into_parts(self) -> Result<(BasinName, String), S2CliError> {
         let stream = match (self.stream, self.uri.stream) {
-            (Some(_), Some(_)) => return Err("Multiple stream names provided".into()),
-            (None, None) => return Err("Stream name required".into()),
+            (Some(_), Some(_)) => return Err(S2CliError::InvalidArgs(miette::miette!(
+                help = "Make sure to provide the stream name once either in URI or as argument",
+                "Multiple stream names provided"
+            ))),
+            (None, None) => return Err(S2CliError::InvalidArgs(miette::miette!(
+                help = "Try providing the stream name as another argument or in URI like 's2://basin-name/stream/name'",
+                "Missing stream name"
+            ))),
             (Some(s), None) | (None, Some(s)) => s,
         };
         Ok((self.uri.basin, stream))

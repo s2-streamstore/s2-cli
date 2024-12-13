@@ -535,7 +535,10 @@ async fn run() -> Result<(), S2CliError> {
             } = basin;
             let prefix = match (maybe_prefix, prefix) {
                 (Some(_), Some(_)) => {
-                    return Err(ConvertError::from("Multiple prefix specified").into())
+                    return Err(S2CliError::InvalidArgs(miette::miette!(
+                        help = "Make sure to provide the prefix once either using '--prefix' opt or in URI like 's2://basin-name/prefix'",
+                        "Multiple prefixes provided"
+                    )));
                 }
                 (Some(s), None) | (None, Some(s)) => Some(s),
                 (None, None) => None,
