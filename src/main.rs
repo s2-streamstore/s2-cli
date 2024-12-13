@@ -126,8 +126,8 @@ enum Commands {
     /// List streams.
     #[command(alias = "ls")]
     ListStreams {
-        /// Name of the basin to manage or S2 URL with basin and prefix.
-        #[arg(value_name = "BASIN/S2_URL")]
+        /// Name of the basin to manage or S2 URI with basin and prefix.
+        #[arg(value_name = "BASIN|S2_URI")]
         basin: BasinNameAndMaybeStreamUri,
 
         /// Filter to stream names that begin with this prefix.

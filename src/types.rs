@@ -33,13 +33,13 @@ fn parse_maybe_basin_or_uri(s: &str) -> Result<(BasinName, Option<String>), Conv
 
             match uri.scheme_str() {
                 Some("s2") => (),
-                Some(other) => return Err(format!("Invalid S2 URL scheme: '{other}'").into()),
-                None => return Err("S2 URL scheme empty".into()),
+                Some(other) => return Err(format!("Invalid S2 URI scheme: '{other}'").into()),
+                None => return Err("S2 URI scheme empty".into()),
             };
 
-            let basin = uri.host().ok_or("Basin name missing in S2 URL")?;
+            let basin = uri.host().ok_or("Basin name missing in S2 URI")?;
             let basin = BasinName::from_str(basin)
-                .map_err(|e| format!("Invalid basin name in S2 URL: {e}"))?;
+                .map_err(|e| format!("Invalid basin name in S2 URI: {e}"))?;
 
             let stream = uri.path().trim_start_matches('/');
             let stream = if stream.is_empty() {
@@ -63,7 +63,7 @@ impl FromStr for BasinNameOnlyUri {
         if stream.is_none() {
             Ok(Self { basin, stream: () })
         } else {
-            Err("Expected S2 URL with only basin name".into())
+            Err("Expected S2 URI with only basin name".into())
         }
     }
 }
@@ -81,21 +81,21 @@ impl FromStr for BasinNameAndMaybeStreamUri {
 
 #[derive(Parser, Debug, Clone)]
 pub struct BasinNameAndStreamArgs {
-    /// Name of the basin to manage or S2 URL with basin and stream.
-    #[arg(value_name = "BASIN/S2_URL")]
-    url: BasinNameAndMaybeStreamUri,
+    /// Name of the basin to manage or S2 URI with basin and stream.
+    #[arg(value_name = "BASIN|S2_URI")]
+    uri: BasinNameAndMaybeStreamUri,
     /// Name of the stream.
     stream: Option<String>,
 }
 
 impl BasinNameAndStreamArgs {
     pub fn try_into_parts(self) -> Result<(BasinName, String), ConvertError> {
-        let stream = match (self.stream, self.url.stream) {
+        let stream = match (self.stream, self.uri.stream) {
             (Some(_), Some(_)) => return Err("Multiple stream names provided".into()),
             (None, None) => return Err("Stream name required".into()),
             (Some(s), None) | (None, Some(s)) => s,
         };
-        Ok((self.url.basin, stream))
+        Ok((self.uri.basin, stream))
     }
 }
 
@@ -228,7 +228,7 @@ mod tests {
     use super::BasinNameAndMaybeStreamUri;
 
     #[test]
-    fn test_basin_name_or_url_parse() {
+    fn test_basin_name_or_uri_parse() {
         let test_cases = vec![
             ("valid-basin", Some(("valid-basin", None))),
             ("s2://valid-basin", Some(("valid-basin", None))),
