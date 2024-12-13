@@ -900,7 +900,7 @@ async fn run() -> Result<(), S2CliError> {
 
             let latency_bars = MultiProgress::new();
 
-            let mut max_ack = 500;
+            let mut max_ack = 10;
             let ack_bar = ProgressBar::new(max_ack).with_prefix("ack");
             ack_bar.set_style(
                 ProgressStyle::default_bar()
@@ -909,7 +909,7 @@ async fn run() -> Result<(), S2CliError> {
             );
 
             let mut max_e2e = 500;
-            let e2e_bar = ProgressBar::new(500).with_prefix("e2e");
+            let e2e_bar = ProgressBar::new(max_e2e).with_prefix("e2e");
             e2e_bar.set_style(
                 ProgressStyle::default_bar()
                     .template("{prefix:.bold} [{bar:40.rgb(255,165,0)/yellow}] {pos:>3}/{len}ms")
@@ -924,10 +924,8 @@ async fn run() -> Result<(), S2CliError> {
                 pings: &mut Vec<PingResult>,
                 interval: Duration,
                 batch_bytes: u64,
-                ack_bar: &ProgressBar,
-                max_ack: &mut u64,
-                e2e_bar: &ProgressBar,
-                max_e2e: &mut u64,
+                ack_meter: (&ProgressBar, &mut u64),
+                e2e_meter: (&ProgressBar, &mut u64),
             ) -> Result<(), S2CliError> {
                 let jitter_op = if rand::random() {
                     u64::saturating_add
@@ -944,10 +942,14 @@ async fn run() -> Result<(), S2CliError> {
                     return Ok(());
                 };
 
+                let (ack_bar, max_ack) = ack_meter;
+
                 let ack = res.ack.as_millis() as u64;
                 *max_ack = std::cmp::max(*max_ack, ack);
                 ack_bar.set_length(*max_ack);
                 ack_bar.set_position(ack);
+
+                let (e2e_bar, max_e2e) = e2e_meter;
 
                 let e2e = res.e2e.as_millis() as u64;
                 *max_e2e = std::cmp::max(*max_e2e, e2e);
@@ -962,7 +964,7 @@ async fn run() -> Result<(), S2CliError> {
 
             while Some(pings.len()) != num_batches {
                 select! {
-                    _ = ping_next(&mut pinger, &mut pings, interval, batch_bytes, &ack_bar, &mut max_ack, &e2e_bar, &mut max_e2e) => (),
+                    _ = ping_next(&mut pinger, &mut pings, interval, batch_bytes, (&ack_bar, &mut max_ack), (&e2e_bar, &mut max_e2e)) => (),
                     _ = signal::ctrl_c() => break,
                 }
             }
