@@ -11,14 +11,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: aarch64-unknown-linux-gnu
             deps: |
               sudo apt-get update
               sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
             env:
               CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          - os: ubuntu-20.04
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           - os: macos-latest
             target: x86_64-apple-darwin
@@ -46,26 +46,15 @@ jobs:
       - name: Set CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-      - run: |
-          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github.com/".insteadOf "git@github.com:"
-          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf https://github
-          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf ssh://git@github
+      - name: rename the package to s2
+        run: sed -i.bak -E '/^\[package\]/,/^\[.*\]/ s/^name *= *"[^"]*"/name = "s2"/' Cargo.toml
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
       - name: Create pem and certificate.der files
         if: matrix.os == 'macos-latest'
         run: |
           echo "${{ secrets.MACOS_PEM }}" | base64 -d -o macos.pem
-          echo "${{ secrets.MACOS_CERTIFICATE_DER }}" | base64 -d -o certificate.der
-      - name: rename binary streamstore-cli -> s2        
-        shell: bash
-        run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; 
-          then
-              mv target/${{ matrix.target }}/release/streamstore-cli.exe target/${{ matrix.target }}/release/s2.exe
-          else
-              mv target/${{ matrix.target }}/release/streamstore-cli target/${{ matrix.target }}/release/s2
-          fi
+          echo "${{ secrets.MACOS_CERTIFICATE_DER }}" | base64 -d -o certificate.der      
       - name: Sign macos binary
         if: matrix.os == 'macos-latest'
         uses: indygreg/apple-code-sign-action@v1
@@ -107,7 +96,7 @@ jobs:
 
   create_release:
     needs: build_binaries
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     if: github.event_name != 'workflow_dispatch'
     permissions:
       contents: write
@@ -141,7 +130,7 @@ jobs:
 
   update_homebrew:
     needs: [create_release, build_binaries]
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     if: github.event_name != 'workflow_dispatch'
     steps:
       - name: checkout
