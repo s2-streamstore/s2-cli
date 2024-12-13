@@ -25,9 +25,9 @@ pub enum S2CliError {
     #[diagnostic(transparent)]
     Config(#[from] S2ConfigError),
 
-    #[error(transparent)]
-    #[diagnostic(help("Are you trying to operate on an invalid basin?"))]
-    ConvertError(#[from] ConvertError),
+    #[error("Invalid CLI arguments: {0}")]
+    #[diagnostic(transparent)]
+    InvalidArgs(miette::Report),
 
     #[error("Unable to load S2 endpoints from environment")]
     #[diagnostic(help(
@@ -132,4 +132,15 @@ impl ServiceError {
             status: status.into(),
         }
     }
+}
+
+#[derive(Debug, Error, Diagnostic)]
+pub enum BasinNameOrUriParseError {
+    #[error(transparent)]
+    #[diagnostic(help("Are you trying to operate on an invalid basin?"))]
+    BasinName(#[from] ConvertError),
+
+    #[error("Invalid S2 URI: {0}")]
+    #[diagnostic(transparent)]
+    InvalidUri(miette::Report),
 }

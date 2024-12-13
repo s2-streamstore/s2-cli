@@ -745,9 +745,9 @@ checksum = "d231dfb89cfffdbc30e7fc41579ed6066ad03abda9e567ccafae602b97ec5024"
 
 [[package]]
 name = "http"
-version = "1.1.0"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21b9ddb458710bc376481b842f5da65cdf31522de232c1ca8146abce2a358258"
+checksum = "f16ca2af56261c99fba8bac40a10251ce8188205a4c448fbb745a2e4daa76fea"
 dependencies = [
  "bytes",
  "fnv",
@@ -1636,9 +1636,9 @@ checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 
 [[package]]
 name = "streamstore"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e15080fe3386ceb57043fd17cc52ff3e3c0a0261a123aedc059c55b9d705546"
+checksum = "723dafc9eaa6f187ea9f74dc6b9d20ebe4a6eb38b9de20b0ac69fdad279d1de4"
 dependencies = [
  "async-stream",
  "backon",
@@ -1675,11 +1675,10 @@ dependencies = [
  "config",
  "dirs",
  "futures",
+ "http",
  "humantime",
  "indicatif",
  "miette",
- "pin-project-lite",
- "pin-utils",
  "rand",
  "serde",
  "serde_json",
