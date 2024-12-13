@@ -67,5 +67,5 @@ jobs:
         uses: actions/checkout@v4            
       - name: test
         run: |
-          sed -i.bak -E '/^\[package\]/,/^\[.*\]/ s/^name *= *"[^"]*"/name = "s2"/' Cargo.toml
+          sed -i.bak -E "/^\[package\]/,/^\[.*\]/ s/^name *= *\"[^\"]*\"/name = \"s2\"/" Cargo.toml
 
