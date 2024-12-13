@@ -47,6 +47,7 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
       - name: rename the package to s2
+        shell: bash
         run: sed -i.bak -E '/^\[package\]/,/^\[.*\]/ s/^name *= *"[^"]*"/name = "s2"/' Cargo.toml
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
