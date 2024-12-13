@@ -1,5 +1,5 @@
 name: release
-on:
+on:  
   push:
     tags: ["[0-9]+.[0-9]+.[0-9]+*"]
   workflow_dispatch:
@@ -11,14 +11,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: aarch64-unknown-linux-gnu
             deps: |
               sudo apt-get update
               sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
             env:
               CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           - os: macos-latest
             target: x86_64-apple-darwin
@@ -46,26 +46,16 @@ jobs:
       - name: Set CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-      - run: |
-          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github.com/".insteadOf "git@github.com:"
-          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf https://github
-          git config --global --add url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github".insteadOf ssh://git@github
+      - name: rename the package to s2
+        shell: bash
+        run: sed -i.bak -E '/^\[package\]/,/^\[.*\]/ s/^name *= *"[^"]*"/name = "s2"/' Cargo.toml
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
       - name: Create pem and certificate.der files
         if: matrix.os == 'macos-latest'
         run: |
           echo "${{ secrets.MACOS_PEM }}" | base64 -d -o macos.pem
-          echo "${{ secrets.MACOS_CERTIFICATE_DER }}" | base64 -d -o certificate.der
-      - name: rename binary streamstore-cli -> s2        
-        shell: bash
-        run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; 
-          then
-              mv target/${{ matrix.target }}/release/streamstore-cli.exe target/${{ matrix.target }}/release/s2.exe
-          else
-              mv target/${{ matrix.target }}/release/streamstore-cli target/${{ matrix.target }}/release/s2
-          fi
+          echo "${{ secrets.MACOS_CERTIFICATE_DER }}" | base64 -d -o certificate.der      
       - name: Sign macos binary
         if: matrix.os == 'macos-latest'
         uses: indygreg/apple-code-sign-action@v1
@@ -107,7 +97,8 @@ jobs:
 
   create_release:
     needs: build_binaries
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'workflow_dispatch'
     permissions:
       contents: write
     steps:
@@ -121,7 +112,7 @@ jobs:
           field: package.version
       - uses: mindsers/changelog-reader-action@v2
         id: changelog_reader
-        with:          
+        with:
           version: ${{ steps.version.outputs.value }}
       - name: install rust
         uses: dtolnay/rust-toolchain@stable
@@ -137,3 +128,48 @@ jobs:
             **/*.zip
           name: ${{ steps.version.outputs.value }}
           body: ${{ steps.changelog_reader.outputs.changes }}       
+
+  update_homebrew:
+    needs: [create_release, build_binaries]
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'workflow_dispatch'
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+      - name: version
+        id: version
+        uses: SebRollen/toml-action@v1.2.0
+        with:
+          file: Cargo.toml
+          field: package.version
+      - name: Download artifacts
+        uses: actions/download-artifact@v4      
+      - name: sha256sum
+        run: |          
+          LINUX_INTEL_SHA256=$(shasum -a 256 x86_64-unknown-linux-gnu/s2-x86_64-unknown-linux-gnu.zip | awk '{print $1}')
+          echo "LINUX_INTEL_SHA256=$LINUX_INTEL_SHA256" >> $GITHUB_ENV  
+          LINUX_ARM_SHA256=$(shasum -a 256 aarch64-unknown-linux-gnu/s2-aarch64-unknown-linux-gnu.zip | awk '{print $1}')
+          echo "LINUX_ARM_SHA256=$LINUX_ARM_SHA256" >> $GITHUB_ENV
+          MAC_INTEL_SHA256=$(shasum -a 256 x86_64-apple-darwin/s2-x86_64-apple-darwin.zip | awk '{print $1}')
+          echo "MAC_INTEL_SHA256=$MAC_INTEL_SHA256" >> $GITHUB_ENV
+          MAC_ARM_SHA256=$(shasum -a 256 aarch64-apple-darwin/s2-aarch64-apple-darwin.zip | awk '{print $1}')
+          echo "MAC_ARM_SHA256=$MAC_ARM_SHA256" >> $GITHUB_ENV        
+      - name: checkout into the formula repo
+        uses: actions/checkout@v4
+        with:
+          repository: 's2-streamstore/homebrew-s2'
+          token: ${{ secrets.HOMEBREW_PAT }}
+      - name: update formula
+        run: |          
+          sed -i.bak "s/^  version \".*\"$/  version \"${{ steps.version.outputs.value }}\"/" s2.rb
+          sed -z -i -e 's/[0-9a-f]\{64\}/${{ env.MAC_INTEL_SHA256 }}/1' s2.rb
+          sed -z -i -e 's/[0-9a-f]\{64\}/${{ env.MAC_ARM_SHA256 }}/2' s2.rb
+          sed -z -i -e 's/[0-9a-f]\{64\}/${{ env.LINUX_INTEL_SHA256 }}/3' s2.rb
+          sed -z -i -e 's/[0-9a-f]\{64\}/${{ env.LINUX_ARM_SHA256 }}/4' s2.rb          
+      - name: release
+        run: |
+          git config --global user.email "mehul@s2.dev"
+          git config --global user.name "Mehul Arora"
+          git add s2.rb
+          git commit -m "Update S2 to ${{ steps.version.outputs.value }}"
+          git push
