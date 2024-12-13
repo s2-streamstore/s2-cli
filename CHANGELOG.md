@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] - 2024-12-13
+
+### Features
+
+- Homebrew sync ([#71](https://github.com/s2-streamstore/s2-cli/issues/71))
+
 ## [0.5.0] - 2024-12-11
 
 ### Bug Fixes
