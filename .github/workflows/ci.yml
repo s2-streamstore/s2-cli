@@ -59,3 +59,13 @@ jobs:
         run: cargo clippy --workspace --all-features --all-targets -- -D warnings --allow deprecated
       - name: Check Cargo.toml sorting
         run: cargo sort --workspace --check
+    
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4            
+      - name: test
+        run: |
+          sed -i.bak -E '/^\[package\]/,/^\[.*\]/ s/^name *= *"[^"]*"/name = "s2"/' Cargo.toml
+
