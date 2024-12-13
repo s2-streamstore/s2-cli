@@ -122,7 +122,7 @@ jobs:
           field: package.version
       - uses: mindsers/changelog-reader-action@v2
         id: changelog_reader
-        with:          
+        with:
           version: ${{ steps.version.outputs.value }}
       - name: install rust
         uses: dtolnay/rust-toolchain@stable
@@ -153,8 +153,7 @@ jobs:
           file: Cargo.toml
           field: package.version
       - name: Download artifacts
-        uses: actions/download-artifact@v4
-      - run: ls x86_64-unknown-linux-gnu
+        uses: actions/download-artifact@v4      
       - name: sha256sum
         run: |          
           LINUX_INTEL_SHA256=$(shasum -a 256 x86_64-unknown-linux-gnu/s2-x86_64-unknown-linux-gnu.zip | awk '{print $1}')
