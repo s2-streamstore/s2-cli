@@ -178,13 +178,11 @@ impl Drop for Pinger {
 }
 
 pub struct LatencyStats {
-    pub mean: Duration,
+    pub min: Duration,
     pub median: Duration,
-    pub p95: Duration,
+    pub p90: Duration,
     pub p99: Duration,
     pub max: Duration,
-    pub min: Duration,
-    pub stddev: Duration,
 }
 
 impl LatencyStats {
@@ -195,17 +193,13 @@ impl LatencyStats {
 
         if n == 0 {
             return Self {
-                mean: Duration::ZERO,
+                min: Duration::ZERO,
                 median: Duration::ZERO,
-                p95: Duration::ZERO,
+                p90: Duration::ZERO,
                 p99: Duration::ZERO,
                 max: Duration::ZERO,
-                min: Duration::ZERO,
-                stddev: Duration::ZERO,
             };
         }
-
-        let mean = data.iter().sum::<Duration>() / n as u32;
 
         let median = if n % 2 == 0 {
             (data[n / 2 - 1] + data[n / 2]) / 2
@@ -215,21 +209,22 @@ impl LatencyStats {
 
         let p_idx = |p: f64| ((n as f64) * p).ceil() as usize - 1;
 
-        let variance = data
-            .iter()
-            .map(|d| (d.as_secs_f64() - mean.as_secs_f64()).powi(2))
-            .sum::<f64>()
-            / n as f64;
-        let stddev = Duration::from_secs_f64(variance.sqrt());
-
         Self {
-            mean,
+            min: data[0],
             median,
-            p95: data[p_idx(0.95)],
+            p90: data[p_idx(0.90)],
             p99: data[p_idx(0.99)],
             max: data[n - 1],
-            min: data[0],
-            stddev,
         }
+    }
+
+    pub fn into_vec(self) -> Vec<(String, Duration)> {
+        vec![
+            ("min".to_owned(), self.min),
+            ("median".to_owned(), self.median),
+            ("p90".to_owned(), self.p90),
+            ("p99".to_owned(), self.p99),
+            ("max".to_owned(), self.max),
+        ]
     }
 }
