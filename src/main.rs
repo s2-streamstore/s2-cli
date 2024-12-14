@@ -904,16 +904,16 @@ async fn run() -> Result<(), S2CliError> {
             let ack_bar = ProgressBar::new(max_ack).with_prefix("ack");
             ack_bar.set_style(
                 ProgressStyle::default_bar()
-                    .template("{prefix:.bold} [{bar:40.cyan/blue}] {pos:>3}/{len}ms")
-                    .unwrap(),
+                    .template("{prefix:.bold} [{bar:40.blue/blue}] {pos:>3}/{len}ms")
+                    .expect("valid template"),
             );
 
             let mut max_e2e = 500;
             let e2e_bar = ProgressBar::new(max_e2e).with_prefix("e2e");
             e2e_bar.set_style(
                 ProgressStyle::default_bar()
-                    .template("{prefix:.bold} [{bar:40.rgb(255,165,0)/yellow}] {pos:>3}/{len}ms")
-                    .unwrap(),
+                    .template("{prefix:.bold} [{bar:40.red/red}] {pos:>3}/{len}ms")
+                    .expect("valid template"),
             );
 
             let ack_bar = latency_bars.add(ack_bar);

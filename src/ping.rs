@@ -180,7 +180,7 @@ impl Drop for Pinger {
 pub struct LatencyStats {
     pub min: Duration,
     pub median: Duration,
-    pub p95: Duration,
+    pub p90: Duration,
     pub p99: Duration,
     pub max: Duration,
 }
@@ -195,7 +195,7 @@ impl LatencyStats {
             return Self {
                 min: Duration::ZERO,
                 median: Duration::ZERO,
-                p95: Duration::ZERO,
+                p90: Duration::ZERO,
                 p99: Duration::ZERO,
                 max: Duration::ZERO,
             };
@@ -212,7 +212,7 @@ impl LatencyStats {
         Self {
             min: data[0],
             median,
-            p95: data[p_idx(0.95)],
+            p90: data[p_idx(0.90)],
             p99: data[p_idx(0.99)],
             max: data[n - 1],
         }
@@ -222,7 +222,7 @@ impl LatencyStats {
         vec![
             ("min".to_owned(), self.min),
             ("median".to_owned(), self.median),
-            ("p95".to_owned(), self.p95),
+            ("p90".to_owned(), self.p90),
             ("p99".to_owned(), self.p99),
             ("max".to_owned(), self.max),
         ]
