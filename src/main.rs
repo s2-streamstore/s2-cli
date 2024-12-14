@@ -1007,11 +1007,7 @@ async fn run() -> Result<(), S2CliError> {
                         &bytes_bar,
                         (&ack_bar, &mut max_ack),
                         (&e2e_bar, &mut max_e2e),
-                    ) => {
-                        if let Err(e) = res {
-                            return Err(e);
-                        }
-                    },
+                    ) => res?,
                     _ = signal::ctrl_c() => break,
                 }
             }
