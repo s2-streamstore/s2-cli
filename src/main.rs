@@ -924,8 +924,8 @@ async fn run() -> Result<(), S2CliError> {
                 pings: &mut Vec<PingResult>,
                 interval: Duration,
                 batch_bytes: u64,
-                ack_meter: (&ProgressBar, &mut u64),
-                e2e_meter: (&ProgressBar, &mut u64),
+                ack_meter: (&ProgressBar, /* max_ack */ &mut u64),
+                e2e_meter: (&ProgressBar, /* max_e2e */ &mut u64),
             ) -> Result<(), S2CliError> {
                 let jitter_op = if rand::random() {
                     u64::saturating_add
@@ -1018,6 +1018,9 @@ async fn run() -> Result<(), S2CliError> {
             print_stats(LatencyStats::generate(acks), "Append Acknowledgement");
             eprintln!(/* Empty line */);
             print_stats(LatencyStats::generate(e2es), "End-to-End");
+            // todo: extra newline here, because the las quantile i.e. max doesnt get printed
+            // if i `abandon` or `finish` the progress bars and do CTRL+C, it prints an extra progress bar
+            eprintln!(/* Empty line */);
         }
     };
 
