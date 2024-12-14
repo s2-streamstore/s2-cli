@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2024-12-14
+
+### Features
+
+- Support `s2://` URIs ([#74](https://github.com/s2-streamstore/s2-cli/issues/74))
+- Better display for ping stats ([#81](https://github.com/s2-streamstore/s2-cli/issues/81))
+
+### Bug Fixes
+
+- Disable noisy description in help ([#79](https://github.com/s2-streamstore/s2-cli/issues/79))
+
+### Miscellaneous Tasks
+
+- Remove unnecessary dependencies from `Cargo.toml` ([#80](https://github.com/s2-streamstore/s2-cli/issues/80))
+
 ## [0.5.2] - 2024-12-13
 
 ### Miscellaneous Tasks
