@@ -900,7 +900,7 @@ async fn run() -> Result<(), S2CliError> {
 
             let latency_bars = MultiProgress::new();
 
-            let mut max_ack = 10;
+            let mut max_ack = 500;
             let ack_bar = ProgressBar::new(max_ack).with_prefix("ack");
             ack_bar.set_style(
                 ProgressStyle::default_bar()
