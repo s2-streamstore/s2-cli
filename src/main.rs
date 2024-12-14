@@ -895,35 +895,68 @@ async fn run() -> Result<(), S2CliError> {
             let interval = interval.max(Duration::from_millis(100));
             let batch_bytes = batch_bytes.min(128 * 1024);
 
+            let prepare_loader = ProgressBar::new_spinner()
+                .with_prefix("Preparing...")
+                .with_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner} {prefix}")
+                        .expect("valid template"),
+                );
+            prepare_loader.enable_steady_tick(Duration::from_millis(50));
+
             let mut pinger = Pinger::init(&stream_client).await?;
+
+            prepare_loader.finish_and_clear();
+
             let mut pings = Vec::new();
 
-            let latency_bars = MultiProgress::new();
+            let stat_bars = MultiProgress::new();
+
+            let bytes_bar = ProgressBar::no_length().with_prefix("bytes").with_style(
+                ProgressStyle::default_bar()
+                    .template("{pos:.bold} {prefix:.bold}")
+                    .expect("valid template"),
+            );
 
             let mut max_ack = 500;
-            let ack_bar = ProgressBar::new(max_ack).with_prefix("ack");
-            ack_bar.set_style(
+            let ack_bar = ProgressBar::new(max_ack).with_prefix("ack").with_style(
                 ProgressStyle::default_bar()
-                    .template("{prefix:.bold} [{bar:40.blue/blue}] {pos:>3}/{len}ms")
+                    .template("{prefix:.bold} [{bar:40.blue/blue}] {pos:>4}/{len:<4} ms")
                     .expect("valid template"),
             );
 
             let mut max_e2e = 500;
-            let e2e_bar = ProgressBar::new(max_e2e).with_prefix("e2e");
-            e2e_bar.set_style(
+            let e2e_bar = ProgressBar::new(max_e2e).with_prefix("e2e").with_style(
                 ProgressStyle::default_bar()
-                    .template("{prefix:.bold} [{bar:40.red/red}] {pos:>3}/{len}ms")
+                    .template("{prefix:.bold} [{bar:40.red/red}] {pos:>4}/{len:<4} ms")
                     .expect("valid template"),
             );
 
-            let ack_bar = latency_bars.add(ack_bar);
-            let e2e_bar = latency_bars.add(e2e_bar);
+            // HACK: This bar basically has no purpose. It's just to clear all
+            // other bars since the very first bar in the set doesn't clear when
+            // `^C` signal is received.
+            let empty_line_bar = {
+                let bar = stat_bars.add(
+                    ProgressBar::no_length().with_style(
+                        ProgressStyle::default_bar()
+                            .template("\n")
+                            .expect("valid template"),
+                    ),
+                );
+                // Force render the bar.
+                bar.inc(1);
+                bar
+            };
+            let bytes_bar = stat_bars.add(bytes_bar);
+            let ack_bar = stat_bars.add(ack_bar);
+            let e2e_bar = stat_bars.add(e2e_bar);
 
             async fn ping_next(
                 pinger: &mut Pinger,
                 pings: &mut Vec<PingResult>,
                 interval: Duration,
                 batch_bytes: u64,
+                bytes_bar: &ProgressBar,
                 ack_meter: (&ProgressBar, /* max_ack */ &mut u64),
                 e2e_meter: (&ProgressBar, /* max_e2e */ &mut u64),
             ) -> Result<(), S2CliError> {
@@ -941,6 +974,8 @@ async fn run() -> Result<(), S2CliError> {
                 let Some(res) = pinger.ping(record_bytes).await? else {
                     return Ok(());
                 };
+
+                bytes_bar.set_position(record_bytes);
 
                 let (ack_bar, max_ack) = ack_meter;
 
@@ -964,13 +999,30 @@ async fn run() -> Result<(), S2CliError> {
 
             while Some(pings.len()) != num_batches {
                 select! {
-                    _ = ping_next(&mut pinger, &mut pings, interval, batch_bytes, (&ack_bar, &mut max_ack), (&e2e_bar, &mut max_e2e)) => (),
+                    res = ping_next(
+                        &mut pinger,
+                        &mut pings,
+                        interval,
+                        batch_bytes,
+                        &bytes_bar,
+                        (&ack_bar, &mut max_ack),
+                        (&e2e_bar, &mut max_e2e),
+                    ) => {
+                        if let Err(e) = res {
+                            return Err(e);
+                        }
+                    },
                     _ = signal::ctrl_c() => break,
                 }
             }
 
             // Close the pinger.
             std::mem::drop(pinger);
+
+            bytes_bar.finish_and_clear();
+            ack_bar.finish_and_clear();
+            e2e_bar.finish_and_clear();
+            empty_line_bar.finish_and_clear();
 
             let total_batches = pings.len();
             let (bytes, (acks, e2es)): (Vec<_>, (Vec<_>, Vec<_>)) = pings
@@ -979,7 +1031,6 @@ async fn run() -> Result<(), S2CliError> {
                 .unzip();
             let total_bytes = bytes.into_iter().sum::<u64>();
 
-            eprintln!(/* Empty line */);
             eprintln!("Round-tripped {total_bytes} bytes in {total_batches} batches");
 
             pub fn print_stats(stats: LatencyStats, name: &str) {
@@ -988,9 +1039,9 @@ async fn run() -> Result<(), S2CliError> {
                 fn stat_duration(key: &str, val: Duration, scale: f64) {
                     let bar = "⠸".repeat((val.as_millis() as f64 * scale).round() as usize);
                     eprintln!(
-                        "{:7}: {:5} │ {}",
+                        "{:7}: {:>7} │ {}",
                         key,
-                        format!("{}ms", val.as_millis()).green().bold(),
+                        format!("{} ms", val.as_millis()).green().bold(),
                         bar
                     )
                 }
@@ -1018,9 +1069,6 @@ async fn run() -> Result<(), S2CliError> {
             print_stats(LatencyStats::generate(acks), "Append Acknowledgement");
             eprintln!(/* Empty line */);
             print_stats(LatencyStats::generate(e2es), "End-to-End");
-            // todo: extra newline here, because the las quantile i.e. max doesnt get printed
-            // if i `abandon` or `finish` the progress bars and do CTRL+C, it prints an extra progress bar
-            eprintln!(/* Empty line */);
         }
     };
 
