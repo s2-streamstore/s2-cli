@@ -41,7 +41,7 @@ impl BasinService {
         &self,
         stream: String,
         config: Option<StreamConfig>,
-    ) -> Result<(), ServiceError> {
+    ) -> Result<StreamInfo, ServiceError> {
         let mut create_stream_req = CreateStreamRequest::new(stream);
 
         if let Some(config) = config {

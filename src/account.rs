@@ -50,8 +50,11 @@ impl AccountService {
             stream_config = stream_config.with_retention_policy(retention_policy.into());
         }
 
-        let create_basin_req = CreateBasinRequest::new(basin)
-            .with_config(BasinConfig::with_default_stream_config(stream_config));
+        let basin_config = BasinConfig {
+            default_stream_config: Some(stream_config),
+        };
+
+        let create_basin_req = CreateBasinRequest::new(basin).with_config(basin_config);
 
         self.client
             .create_basin(create_basin_req)
