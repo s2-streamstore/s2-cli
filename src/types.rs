@@ -168,10 +168,11 @@ impl From<&str> for RetentionPolicy {
 
 impl From<BasinConfig> for streamstore::types::BasinConfig {
     fn from(config: BasinConfig) -> Self {
-        if let Some(default_stream_config) = config.default_stream_config.map(|c| c.into()) {
-            streamstore::types::BasinConfig::with_default_stream_config(default_stream_config)
-        } else {
-            streamstore::types::BasinConfig::default()
+        let BasinConfig {
+            default_stream_config,
+        } = config;
+        streamstore::types::BasinConfig {
+            default_stream_config: default_stream_config.map(Into::into),
         }
     }
 }
