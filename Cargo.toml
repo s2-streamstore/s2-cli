@@ -8,6 +8,10 @@ keywords = ["streamstore", "s2", "log", "stream", "s3"]
 repository = "https://github.com/s2-streamstore/streamstore-cli"
 homepage = "https://github.com/s2-streamstore/streamstore-cli"
 
+[[bin]]
+name = "s2"
+path = "src/main.rs"
+
 [dependencies]
 async-stream = "0.3.6"
 base16ct = { version = "0.2.0", features = ["alloc"] }
