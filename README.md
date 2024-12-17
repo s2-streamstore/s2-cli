@@ -79,6 +79,19 @@ cargo install streamstore-cli
 Check out the [S2 CLI Releases](https://github.com/s2-streamstore/s2-cli/releases)
 for prebuilt binaries for many different architectures and operating systems.
 
+Linux and macOS users can download the release binary using:
+
+```bash
+curl -fsSL s2.dev/install.sh | bash
+```
+
+To install a specific version, you can set the `VERSION` environment variable.
+
+```bash
+export VERSION=0.5.2
+curl -fsSL s2.dev/install.sh | bash
+```
+
 ## Feedback
 
 We use [Github Issues](https://github.com/s2-streamstore/s2-cli/issues) to
