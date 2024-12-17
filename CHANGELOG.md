@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 
 - Update cargo binary name to `s2` ([#84](https://github.com/s2-streamstore/s2-cli/issues/84))
 - *(release)* Upgrade SDK to 0.4.0 ([#85](https://github.com/s2-streamstore/s2-cli/issues/85))
-- *(release)* Upgrade SDK to 0.4.1 ([#86](https://github.com/s2-streamstore/s2-cli/issues/86))
+- *(release)* Upgrade SDK to 0.4.1 ([#87](https://github.com/s2-streamstore/s2-cli/issues/87))
 
 ## [0.6.0] - 2024-12-14
 
