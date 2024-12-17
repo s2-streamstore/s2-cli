@@ -82,15 +82,13 @@ impl AccountService {
         basin: BasinName,
         basin_config: BasinConfig,
         mask: Vec<String>,
-    ) -> Result<(), ServiceError> {
+    ) -> Result<BasinConfig, ServiceError> {
         let reconfigure_basin_req = ReconfigureBasinRequest::new(basin)
             .with_config(basin_config)
             .with_mask(mask);
         self.client
             .reconfigure_basin(reconfigure_basin_req)
             .await
-            .map_err(|e| ServiceError::new(ServiceErrorContext::ReconfigureBasin, e))?;
-
-        Ok(())
+            .map_err(|e| ServiceError::new(ServiceErrorContext::ReconfigureBasin, e))
     }
 }

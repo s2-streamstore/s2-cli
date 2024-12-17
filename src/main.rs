@@ -481,11 +481,17 @@ async fn run() -> Result<(), S2CliError> {
                 }
                 None => (None, None),
             };
-            account_service
+            let BasinInfo { state, .. } = account_service
                 .create_basin(basin.into(), storage_class, retention_policy)
                 .await?;
 
-            eprintln!("{}", "✓ Basin created".green().bold());
+            let message = match state {
+                streamstore::types::BasinState::Creating => {
+                    "✓ Basin creation requested".yellow().bold()
+                }
+                _ => "✓ Basin created".green().bold(),
+            };
+            eprintln!("{message}");
         }
 
         Commands::DeleteBasin { basin } => {
@@ -519,9 +525,12 @@ async fn run() -> Result<(), S2CliError> {
                 }
             }
 
-            account_service
+            let config: BasinConfig = account_service
                 .reconfigure_basin(basin.into(), config.into(), mask)
-                .await?;
+                .await?
+                .into();
+            eprintln!("{}", "✓ Basin reconfigured".green().bold());
+            println!("{}", serde_json::to_string_pretty(&config)?);
         }
 
         Commands::ListStreams {
