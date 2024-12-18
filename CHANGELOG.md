@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.2] - 2024-12-18
+
+### Bug Fixes
+
+- Update output for reconfigure basin and create basin results ([#86](https://github.com/s2-streamstore/s2-cli/issues/86))
+
+### Miscellaneous Tasks
+
+- Add `README.md` ([#83](https://github.com/s2-streamstore/s2-cli/issues/83))
+
 ## [0.6.1] - 2024-12-17
 
 ### Miscellaneous Tasks
