@@ -25,7 +25,7 @@
 </div>
 
 Command Line Tool to interact with the
-[S2 API](https://buf.build/streamstore/s2/docs/main:s2.v1alpha).
+[S2 API](https://s2.dev/docs/interface/grpc-api).
 
 ## Getting started
 
