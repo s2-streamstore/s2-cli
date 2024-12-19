@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.3] - 2024-12-19
+
+### Documentation
+
+- Update README API link ([#89](https://github.com/s2-streamstore/s2-cli/issues/89))
+
+### Miscellaneous Tasks
+
+- Upgrade SDK to `0.5.0` ([#90](https://github.com/s2-streamstore/s2-cli/issues/90))
+
 ## [0.6.2] - 2024-12-18
 
 ### Bug Fixes
