@@ -1,4 +1,4 @@
-use streamstore::{
+use s2::{
     client::BasinClient,
     types::{
         CreateStreamRequest, DeleteStreamRequest, ListStreamsRequest, ListStreamsResponse,

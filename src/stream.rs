@@ -1,4 +1,4 @@
-use streamstore::{
+use s2::{
     batching::{AppendRecordsBatchingOpts, AppendRecordsBatchingStream},
     client::StreamClient,
     types::{
@@ -9,9 +9,9 @@ use streamstore::{
 };
 
 use futures::{Stream, StreamExt};
+use s2::types::AppendRecord;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use streamstore::types::AppendRecord;
 
 use crate::error::{ServiceError, ServiceErrorContext};
 

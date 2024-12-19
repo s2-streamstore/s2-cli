@@ -14,8 +14,7 @@ use error::{S2CliError, ServiceError, ServiceErrorContext};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use ping::{LatencyStats, PingResult, Pinger};
 use rand::Rng;
-use stream::{RecordStream, StreamService};
-use streamstore::{
+use s2::{
     batching::AppendRecordsBatchingOpts,
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
@@ -23,6 +22,7 @@ use streamstore::{
         ReadOutput, StreamInfo,
     },
 };
+use stream::{RecordStream, StreamService};
 use tokio::{
     fs::{File, OpenOptions},
     io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufWriter},
@@ -461,8 +461,8 @@ async fn run() -> Result<(), S2CliError> {
                 let BasinInfo { name, state, .. } = basin_info;
 
                 let state = match state {
-                    streamstore::types::BasinState::Active => state.to_string().green(),
-                    streamstore::types::BasinState::Deleting => state.to_string().red(),
+                    s2::types::BasinState::Active => state.to_string().green(),
+                    s2::types::BasinState::Deleting => state.to_string().red(),
                     _ => state.to_string().yellow(),
                 };
                 println!("{} {}", name, state);
@@ -486,9 +486,7 @@ async fn run() -> Result<(), S2CliError> {
                 .await?;
 
             let message = match state {
-                streamstore::types::BasinState::Creating => {
-                    "✓ Basin creation requested".yellow().bold()
-                }
+                s2::types::BasinState::Creating => "✓ Basin creation requested".yellow().bold(),
                 _ => "✓ Basin created".green().bold(),
             };
             eprintln!("{message}");
