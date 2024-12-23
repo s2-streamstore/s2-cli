@@ -472,7 +472,6 @@ async fn run() -> Result<(), S2CliError> {
         Commands::CreateBasin { basin, config } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
-
             let account_service = AccountService::new(Client::new(client_config));
             let (storage_class, retention_policy) = match &config.default_stream_config {
                 Some(config) => {
