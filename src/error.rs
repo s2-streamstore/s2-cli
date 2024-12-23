@@ -52,6 +52,10 @@ pub enum S2CliError {
     #[error(transparent)]
     #[diagnostic(help("{}", HELP))]
     Service(#[from] ServiceError),
+
+    #[error(transparent)]    
+    #[diagnostic(transparent)]
+    BasinUriParse(#[from] BasinNameOrUriParseError),
 }
 
 #[derive(Debug, Clone, Copy)]
