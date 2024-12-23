@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.4] - 2024-12-23
+
+### Documentation
+
+- Update README S2 doc link ([#92](https://github.com/s2-streamstore/s2-cli/issues/92))
+
 ## [0.6.3] - 2024-12-19
 
 ### Documentation
