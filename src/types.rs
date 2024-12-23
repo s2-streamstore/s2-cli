@@ -33,7 +33,7 @@ fn parse_maybe_basin_or_uri(
         }
         Err(parse_basin_err) => {
             // Should definitely be a URI else error.
-            let uri = http::Uri::from_str(s).map_err(|_| parse_basin_err)?;
+            let uri = http::Uri::from_str(s).map_err(|_| parse_basin_err.clone())?;
 
             match uri.scheme_str() {
                 Some("s2") => (),
@@ -45,11 +45,9 @@ fn parse_maybe_basin_or_uri(
                     )));
                 }
                 None => {
-                    return Err(BasinNameOrUriParseError::InvalidUri(miette::miette!(
-                        help = "Note: A basin name must be between 8 and 48 characters long. If using the URI make sure it starts with 's2://'",
-                        url = "https://s2.dev/docs/interface/grpc#createbasinrequest",
-                        "Missing URI scheme or invalid basin name",
-                    )))
+                    // It's probably not an attempt to enter a URI. Safe to
+                    // assume this is simply an invalid basin.
+                    return Err(parse_basin_err.into());
                 }
             };
 
