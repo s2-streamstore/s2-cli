@@ -5,124 +5,140 @@ use s2::types::BasinName;
 use serde::Serialize;
 use std::{str::FromStr, time::Duration};
 
-use crate::error::{BasinNameOrUriParseError, S2CliError};
+use crate::error::S2UriParseError;
 
 pub const STORAGE_CLASS_PATH: &str = "default_stream_config.storage_class";
 pub const RETENTION_POLICY_PATH: &str = "default_stream_config.retention_policy";
 
 #[derive(Debug, Clone)]
-pub struct BasinNameOrUri<S> {
-    pub basin: BasinName,
-    pub stream: S,
-}
-
-impl<S> From<BasinNameOrUri<S>> for BasinName {
-    fn from(value: BasinNameOrUri<S>) -> Self {
-        value.basin
-    }
-}
-
-fn parse_maybe_basin_or_uri(
-    s: &str,
-) -> Result<(BasinName, Option<String>), BasinNameOrUriParseError> {
-    match BasinName::from_str(s) {
-        Ok(basin) => {
-            // Definitely a basin name since a valid basin name cannot have `:`
-            // which is required for the URI.
-            Ok((basin, None))
-        }
-        Err(parse_basin_err) => {
-            // Should definitely be a URI else error.
-            let uri = http::Uri::from_str(s).map_err(|_| parse_basin_err.clone())?;
-
-            match uri.scheme_str() {
-                Some("s2") => (),
-                Some(other) => {
-                    return Err(BasinNameOrUriParseError::InvalidUri(miette::miette!(
-                        help = "Does the URI start with 's2://'?",
-                        "Unsupported URI scheme '{}'",
-                        other
-                    )));
-                }
-                None => {
-                    // It's probably not an attempt to enter a URI. Safe to
-                    // assume this is simply an invalid basin.
-                    return Err(parse_basin_err.into());
-                }
-            };
-
-            let basin = uri.host().ok_or_else(|| {
-                BasinNameOrUriParseError::InvalidUri(miette::miette!(
-                    help = "Is there an extra '/' after 's2://'?",
-                    "Missing basin name (URI host)"
-                ))
-            })?;
-            let basin = BasinName::from_str(basin)?;
-
-            let stream = uri.path().trim_start_matches('/');
-            let stream = if stream.is_empty() {
-                None
-            } else {
-                Some(stream.to_string())
-            };
-
-            Ok((basin, stream))
-        }
-    }
-}
-
-pub type BasinNameOnlyUri = BasinNameOrUri<()>;
-
-impl FromStr for BasinNameOnlyUri {
-    type Err = BasinNameOrUriParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (basin, stream) = parse_maybe_basin_or_uri(s)?;
-        if stream.is_none() {
-            Ok(Self { basin, stream: () })
-        } else {
-            Err(BasinNameOrUriParseError::InvalidUri(miette::miette!(
-                help = "Try providing the basin name directly or URI like 's2://basin-name'",
-                "Must not contain stream name (URI path)"
-            )))
-        }
-    }
-}
-
-pub type BasinNameAndMaybeStreamUri = BasinNameOrUri<Option<String>>;
-
-impl FromStr for BasinNameAndMaybeStreamUri {
-    type Err = BasinNameOrUriParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (basin, stream) = parse_maybe_basin_or_uri(s)?;
-        Ok(Self { basin, stream })
-    }
-}
-
-#[derive(Parser, Debug, Clone)]
-pub struct BasinNameAndStreamArgs {
-    /// Name of the basin to manage or S2 URI with basin and stream.
-    #[arg(value_name = "BASIN|S2_URI")]
-    uri: BasinNameAndMaybeStreamUri,
-    /// Name of the stream.
+struct S2Uri {
+    basin: BasinName,
     stream: Option<String>,
 }
 
-impl BasinNameAndStreamArgs {
-    pub fn try_into_parts(self) -> Result<(BasinName, String), S2CliError> {
-        let stream = match (self.stream, self.uri.stream) {
-            (Some(_), Some(_)) => return Err(S2CliError::InvalidArgs(miette::miette!(
-                help = "Make sure to provide the stream name once either in URI or as argument",
-                "Multiple stream names provided"
-            ))),
-            (None, None) => return Err(S2CliError::InvalidArgs(miette::miette!(
-                help = "Try providing the stream name as another argument or in URI like 's2://basin-name/stream/name'",
-                "Missing stream name"
-            ))),
-            (Some(s), None) | (None, Some(s)) => s,
+#[cfg(test)]
+impl PartialEq for S2Uri {
+    fn eq(&self, other: &Self) -> bool {
+        self.basin.as_ref().eq(other.basin.as_ref()) && self.stream.eq(&other.stream)
+    }
+}
+
+impl FromStr for S2Uri {
+    type Err = S2UriParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (scheme, s) = s
+            .split_once("://")
+            .ok_or(S2UriParseError::MissingUriScheme)?;
+        if scheme != "s2" {
+            return Err(S2UriParseError::InvalidUriScheme(scheme.to_owned()));
+        }
+
+        let (basin, stream) = if let Some((basin, stream)) = s.split_once("/") {
+            let stream = if stream.is_empty() {
+                None
+            } else {
+                Some(stream.to_owned())
+            };
+            (basin, stream)
+        } else {
+            (s, None)
         };
-        Ok((self.uri.basin, stream))
+
+        Ok(S2Uri {
+            basin: basin.parse().map_err(S2UriParseError::InvalidBasinName)?,
+            stream,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct S2BasinUri(pub BasinName);
+
+impl From<S2BasinUri> for BasinName {
+    fn from(value: S2BasinUri) -> Self {
+        value.0
+    }
+}
+
+#[cfg(test)]
+impl PartialEq for S2BasinUri {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_ref().eq(other.0.as_ref())
+    }
+}
+
+impl FromStr for S2BasinUri {
+    type Err = S2UriParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match S2Uri::from_str(s) {
+            Ok(S2Uri {
+                basin,
+                stream: None,
+            }) => Ok(Self(
+                basin.parse().map_err(S2UriParseError::InvalidBasinName)?,
+            )),
+            Ok(S2Uri {
+                basin: _,
+                stream: Some(_),
+            }) => Err(S2UriParseError::UnexpectedStreamName),
+            Err(S2UriParseError::MissingUriScheme) => {
+                Ok(Self(s.parse().map_err(S2UriParseError::InvalidBasinName)?))
+            }
+            Err(other) => Err(other),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct S2BasinAndMaybeStreamUri {
+    pub basin: BasinName,
+    pub stream: Option<String>,
+}
+
+#[cfg(test)]
+impl PartialEq for S2BasinAndMaybeStreamUri {
+    fn eq(&self, other: &Self) -> bool {
+        self.basin.as_ref().eq(other.basin.as_ref()) && self.stream.eq(&other.stream)
+    }
+}
+
+impl FromStr for S2BasinAndMaybeStreamUri {
+    type Err = S2UriParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match S2Uri::from_str(s) {
+            Ok(S2Uri { basin, stream }) => Ok(Self { basin, stream }),
+            Err(S2UriParseError::MissingUriScheme) => Ok(Self {
+                basin: s.parse().map_err(S2UriParseError::InvalidBasinName)?,
+                stream: None,
+            }),
+            Err(other) => Err(other),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct S2BasinAndStreamUri {
+    pub basin: BasinName,
+    pub stream: String,
+}
+
+#[cfg(test)]
+impl PartialEq for S2BasinAndStreamUri {
+    fn eq(&self, other: &Self) -> bool {
+        self.basin.as_ref().eq(other.basin.as_ref()) && self.stream == other.stream
+    }
+}
+
+impl FromStr for S2BasinAndStreamUri {
+    type Err = S2UriParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let S2Uri { basin, stream } = s.parse()?;
+        let stream = stream.ok_or(S2UriParseError::MissingStreamName)?;
+        Ok(Self { basin, stream })
     }
 }
 
@@ -248,42 +264,122 @@ impl From<s2::types::StreamConfig> for StreamConfig {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use crate::{error::S2UriParseError, types::S2BasinAndStreamUri};
 
-    use crate::types::BasinNameOnlyUri;
-
-    use super::BasinNameAndMaybeStreamUri;
+    use super::{S2BasinAndMaybeStreamUri, S2BasinUri, S2Uri};
 
     #[test]
-    fn test_basin_name_or_uri_parse() {
+    fn test_s2_uri_parse() {
         let test_cases = vec![
-            ("valid-basin", Some(("valid-basin", None))),
-            ("s2://valid-basin", Some(("valid-basin", None))),
-            ("s2://valid-basin/", Some(("valid-basin", None))),
+            (
+                "valid-basin",
+                Err(S2UriParseError::MissingUriScheme),
+                Ok(S2BasinUri("valid-basin".parse().unwrap())),
+                Err(S2UriParseError::MissingUriScheme),
+                Ok(S2BasinAndMaybeStreamUri {
+                    basin: "valid-basin".parse().unwrap(),
+                    stream: None,
+                }),
+            ),
+            (
+                "s2://valid-basin",
+                Ok(S2Uri {
+                    basin: "valid-basin".parse().unwrap(),
+                    stream: None,
+                }),
+                Ok(S2BasinUri("valid-basin".parse().unwrap())),
+                Err(S2UriParseError::MissingStreamName),
+                Ok(S2BasinAndMaybeStreamUri {
+                    basin: "valid-basin".parse().unwrap(),
+                    stream: None,
+                }),
+            ),
+            (
+                "s2://valid-basin/",
+                Ok(S2Uri {
+                    basin: "valid-basin".parse().unwrap(),
+                    stream: None,
+                }),
+                Ok(S2BasinUri("valid-basin".parse().unwrap())),
+                Err(S2UriParseError::MissingStreamName),
+                Ok(S2BasinAndMaybeStreamUri {
+                    basin: "valid-basin".parse().unwrap(),
+                    stream: None,
+                }),
+            ),
             (
                 "s2://valid-basin/stream/name",
-                Some(("valid-basin", Some("stream/name"))),
+                Ok(S2Uri {
+                    basin: "valid-basin".parse().unwrap(),
+                    stream: Some("stream/name".to_owned()),
+                }),
+                Err(S2UriParseError::UnexpectedStreamName),
+                Ok(S2BasinAndStreamUri {
+                    basin: "valid-basin".parse().unwrap(),
+                    stream: "stream/name".to_owned(),
+                }),
+                Ok(S2BasinAndMaybeStreamUri {
+                    basin: "valid-basin".parse().unwrap(),
+                    stream: Some("stream/name".to_owned()),
+                }),
             ),
-            ("-invalid-basin", None),
-            ("http://valid-basin", None),
-            ("s2://-invalid-basin", None),
-            ("s2:///stream/name", None),
-            ("random:::string", None),
+            (
+                "-invalid-basin",
+                Err(S2UriParseError::MissingUriScheme),
+                Err(S2UriParseError::InvalidBasinName("".into())),
+                Err(S2UriParseError::MissingUriScheme),
+                Err(S2UriParseError::InvalidBasinName("".into())),
+            ),
+            (
+                "http://valid-basin",
+                Err(S2UriParseError::InvalidUriScheme("http".to_owned())),
+                Err(S2UriParseError::InvalidUriScheme("http".to_owned())),
+                Err(S2UriParseError::InvalidUriScheme("http".to_owned())),
+                Err(S2UriParseError::InvalidUriScheme("http".to_owned())),
+            ),
+            (
+                "s2://-invalid-basin",
+                Err(S2UriParseError::InvalidBasinName("".into())),
+                Err(S2UriParseError::InvalidBasinName("".into())),
+                Err(S2UriParseError::InvalidBasinName("".into())),
+                Err(S2UriParseError::InvalidBasinName("".into())),
+            ),
+            (
+                "s2:///stream/name",
+                Err(S2UriParseError::InvalidBasinName("".into())),
+                Err(S2UriParseError::InvalidBasinName("".into())),
+                Err(S2UriParseError::InvalidBasinName("".into())),
+                Err(S2UriParseError::InvalidBasinName("".into())),
+            ),
+            (
+                "random:::string",
+                Err(S2UriParseError::MissingUriScheme),
+                Err(S2UriParseError::InvalidBasinName("".into())),
+                Err(S2UriParseError::MissingUriScheme),
+                Err(S2UriParseError::InvalidBasinName("".into())),
+            ),
         ];
 
-        for (s, expected) in test_cases {
-            let b = BasinNameAndMaybeStreamUri::from_str(s);
-            if let Some((expected_basin, expected_stream)) = expected {
-                let b = b.unwrap();
-                assert_eq!(b.basin.as_ref(), expected_basin);
-                assert_eq!(b.stream.as_deref(), expected_stream);
-                assert_eq!(
-                    expected_stream.is_some(),
-                    BasinNameOnlyUri::from_str(s).is_err()
-                );
-            } else {
-                assert!(b.is_err());
-            }
+        for (
+            s,
+            expected_uri,
+            expected_basin_uri,
+            expected_basin_and_stream_uri,
+            expected_basin_and_maybe_stream_uri,
+        ) in test_cases
+        {
+            assert_eq!(s.parse(), expected_uri, "S2Uri: {s}");
+            assert_eq!(s.parse(), expected_basin_uri, "S2BasinUri: {s}");
+            assert_eq!(
+                s.parse(),
+                expected_basin_and_stream_uri,
+                "S2BasinAndStreamUri: {s}"
+            );
+            assert_eq!(
+                s.parse(),
+                expected_basin_and_maybe_stream_uri,
+                "S2BasinAndMaybeStreamUri: {s}"
+            );
         }
     }
 }
