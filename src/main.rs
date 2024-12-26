@@ -75,6 +75,28 @@ enum Commands {
         action: ConfigActions,
     },
 
+    /// List basins or streams in a basin.
+    ///
+    /// List basins if basin name is not provided otherwise lists streams in
+    /// the basin.
+    Ls {
+        /// Name of the basin to manage or S2 URI with basin and prefix.
+        #[arg(value_name = "BASIN|S2_URI")]
+        uri: Option<S2BasinAndMaybeStreamUri>,
+
+        /// Filter to names that begin with this prefix.
+        #[arg(short = 'p', long)]
+        prefix: Option<String>,
+
+        /// Filter to names that lexicographically start after this name.
+        #[arg(short = 's', long)]
+        start_after: Option<String>,
+
+        /// Number of results, upto a maximum of 1000.
+        #[arg(short = 'n', long)]
+        limit: Option<usize>,
+    },
+
     /// List basins.
     ListBasins {
         /// Filter to basin names that begin with this prefix.
@@ -122,7 +144,6 @@ enum Commands {
     },
 
     /// List streams.
-    #[command(alias = "ls")]
     ListStreams {
         /// Name of the basin to manage or S2 URI with basin and prefix.
         #[arg(value_name = "BASIN|S2_URI")]
@@ -152,7 +173,6 @@ enum Commands {
     },
 
     /// Delete a stream.
-    #[command(alias = "rm")]
     DeleteStream {
         #[arg(value_name = "S2_URI")]
         uri: S2BasinAndStreamUri,
@@ -426,6 +446,84 @@ async fn run() -> Result<(), S2CliError> {
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
+    async fn list_basins(
+        client_config: ClientConfig,
+        prefix: Option<String>,
+        start_after: Option<String>,
+        limit: Option<usize>,
+    ) -> Result<(), S2CliError> {
+        let account_service = AccountService::new(Client::new(client_config));
+        let response = account_service
+            .list_basins(
+                prefix.unwrap_or_default(),
+                start_after.unwrap_or_default(),
+                limit.unwrap_or_default(),
+            )
+            .await?;
+        for basin_info in response.basins {
+            let BasinInfo { name, state, .. } = basin_info;
+
+            let state = match state {
+                s2::types::BasinState::Active => state.to_string().green(),
+                s2::types::BasinState::Deleting => state.to_string().red(),
+                _ => state.to_string().yellow(),
+            };
+            println!("{} {}", name, state);
+        }
+        Ok(())
+    }
+
+    async fn list_streams(
+        client_config: ClientConfig,
+        uri: S2BasinAndMaybeStreamUri,
+        prefix: Option<String>,
+        start_after: Option<String>,
+        limit: Option<usize>,
+    ) -> Result<(), S2CliError> {
+        let S2BasinAndMaybeStreamUri {
+            basin,
+            stream: maybe_prefix,
+        } = uri;
+        let prefix = match (maybe_prefix, prefix) {
+            (Some(_), Some(_)) => {
+                return Err(S2CliError::InvalidArgs(miette::miette!(
+                    help = "Make sure to provide the prefix once either using '--prefix' opt or in URI like 's2://basin-name/prefix'",
+                    "Multiple prefixes provided"
+                )));
+            }
+            (Some(s), None) | (None, Some(s)) => Some(s),
+            (None, None) => None,
+        };
+        let basin_client = BasinClient::new(client_config, basin);
+        let streams = BasinService::new(basin_client)
+            .list_streams(
+                prefix.unwrap_or_default(),
+                start_after.unwrap_or_default(),
+                limit.unwrap_or_default(),
+            )
+            .await?;
+        for StreamInfo {
+            name,
+            created_at,
+            deleted_at,
+        } in streams
+        {
+            let date_time = |time: u32| {
+                humantime::format_rfc3339_seconds(UNIX_EPOCH + Duration::from_secs(time as u64))
+            };
+
+            println!(
+                "{} {} {}",
+                name,
+                date_time(created_at).to_string().green(),
+                deleted_at
+                    .map(|d| date_time(d).to_string().red())
+                    .unwrap_or_default()
+            );
+        }
+        Ok(())
+    }
+
     match commands.command {
         Commands::Config { action } => match action {
             ConfigActions::Set { auth_token } => {
@@ -438,6 +536,21 @@ async fn run() -> Result<(), S2CliError> {
             }
         },
 
+        Commands::Ls {
+            uri,
+            prefix,
+            start_after,
+            limit,
+        } => {
+            let cfg = config::load_config(&config_path)?;
+            let client_config = client_config(cfg.auth_token)?;
+            if let Some(uri) = uri {
+                list_streams(client_config, uri, prefix, start_after, limit).await?;
+            } else {
+                list_basins(client_config, prefix, start_after, limit).await?;
+            }
+        }
+
         Commands::ListBasins {
             prefix,
             start_after,
@@ -445,25 +558,7 @@ async fn run() -> Result<(), S2CliError> {
         } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
-            let account_service = AccountService::new(Client::new(client_config));
-            let response = account_service
-                .list_basins(
-                    prefix.unwrap_or_default(),
-                    start_after.unwrap_or_default(),
-                    limit.unwrap_or_default(),
-                )
-                .await?;
-
-            for basin_info in response.basins {
-                let BasinInfo { name, state, .. } = basin_info;
-
-                let state = match state {
-                    s2::types::BasinState::Active => state.to_string().green(),
-                    s2::types::BasinState::Deleting => state.to_string().red(),
-                    _ => state.to_string().yellow(),
-                };
-                println!("{} {}", name, state);
-            }
+            list_basins(client_config, prefix, start_after, limit).await?;
         }
 
         Commands::CreateBasin { basin, config } => {
@@ -534,49 +629,9 @@ async fn run() -> Result<(), S2CliError> {
             start_after,
             limit,
         } => {
-            let S2BasinAndMaybeStreamUri {
-                basin,
-                stream: maybe_prefix,
-            } = uri;
-            let prefix = match (maybe_prefix, prefix) {
-                (Some(_), Some(_)) => {
-                    return Err(S2CliError::InvalidArgs(miette::miette!(
-                        help = "Make sure to provide the prefix once either using '--prefix' opt or in URI like 's2://basin-name/prefix'",
-                        "Multiple prefixes provided"
-                    )));
-                }
-                (Some(s), None) | (None, Some(s)) => Some(s),
-                (None, None) => None,
-            };
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
-            let basin_client = BasinClient::new(client_config, basin);
-            let streams = BasinService::new(basin_client)
-                .list_streams(
-                    prefix.unwrap_or_default(),
-                    start_after.unwrap_or_default(),
-                    limit.unwrap_or_default(),
-                )
-                .await?;
-            for StreamInfo {
-                name,
-                created_at,
-                deleted_at,
-            } in streams
-            {
-                let date_time = |time: u32| {
-                    humantime::format_rfc3339_seconds(UNIX_EPOCH + Duration::from_secs(time as u64))
-                };
-
-                println!(
-                    "{} {} {}",
-                    name,
-                    date_time(created_at).to_string().green(),
-                    deleted_at
-                        .map(|d| date_time(d).to_string().red())
-                        .unwrap_or_default()
-                );
-            }
+            list_streams(client_config, uri, prefix, start_after, limit).await?;
         }
 
         Commands::CreateStream { uri, config } => {
