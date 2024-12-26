@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2024-12-26
+
+### Features
+
+- Only accept URIs in basin+stream args ([#100](https://github.com/s2-streamstore/s2-cli/issues/100))
+- `s2 ls` command to list basins or streams ([#102](https://github.com/s2-streamstore/s2-cli/issues/102))
+
+### Miscellaneous Tasks
+
+- Inline path consts for consistency
+
 ## [0.6.4] - 2024-12-23
 
 ### Bug Fixes
