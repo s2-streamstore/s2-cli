@@ -36,10 +36,7 @@ use tokio_stream::{
 };
 use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
-use types::{
-    BasinConfig, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StreamConfig,
-    RETENTION_POLICY_PATH, STORAGE_CLASS_PATH,
-};
+use types::{BasinConfig, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StreamConfig};
 
 mod account;
 mod basin;
@@ -516,10 +513,10 @@ async fn run() -> Result<(), S2CliError> {
             let mut mask = Vec::new();
             if let Some(config) = &config.default_stream_config {
                 if config.storage_class.is_some() {
-                    mask.push(STORAGE_CLASS_PATH.to_string());
+                    mask.push("default_stream_config.storage_class".to_owned());
                 }
                 if config.retention_policy.is_some() {
-                    mask.push(RETENTION_POLICY_PATH.to_string());
+                    mask.push("default_stream_config.retention_policy".to_owned());
                 }
             }
 

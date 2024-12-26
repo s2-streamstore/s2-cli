@@ -7,9 +7,6 @@ use std::{str::FromStr, time::Duration};
 
 use crate::error::S2UriParseError;
 
-pub const STORAGE_CLASS_PATH: &str = "default_stream_config.storage_class";
-pub const RETENTION_POLICY_PATH: &str = "default_stream_config.retention_policy";
-
 #[derive(Debug, Clone)]
 struct S2Uri {
     basin: BasinName,
