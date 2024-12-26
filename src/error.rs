@@ -134,13 +134,30 @@ impl ServiceError {
     }
 }
 
-#[derive(Debug, Error, Diagnostic)]
-pub enum BasinNameOrUriParseError {
-    #[error(transparent)]
-    #[diagnostic(help("Are you trying to operate on an invalid basin?"))]
-    BasinName(#[from] ConvertError),
+#[derive(Debug, Error)]
+pub enum S2UriParseError {
+    #[error("S2 URI must begin with `s2://`")]
+    MissingUriScheme,
+    #[error("Invalid S2 URI scheme `{0}://`. Must be `s2://`")]
+    InvalidUriScheme(String),
+    #[error("{0}")]
+    InvalidBasinName(ConvertError),
+    #[error("Only basin name expected but found both basin and stream names")]
+    UnexpectedStreamName,
+    #[error("Missing stream name in S2 URI")]
+    MissingStreamName,
+}
 
-    #[error("Invalid S2 URI: {0}")]
-    #[diagnostic(transparent)]
-    InvalidUri(miette::Report),
+#[cfg(test)]
+impl PartialEq for S2UriParseError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::MissingUriScheme, Self::MissingUriScheme) => true,
+            (Self::InvalidUriScheme(s), Self::InvalidUriScheme(o)) if s.eq(o) => true,
+            (Self::InvalidBasinName(_), Self::InvalidBasinName(_)) => true,
+            (Self::MissingStreamName, Self::MissingStreamName) => true,
+            (Self::UnexpectedStreamName, Self::UnexpectedStreamName) => true,
+            _ => false,
+        }
+    }
 }
