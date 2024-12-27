@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 async-stream = "0.3.6"
 base16ct = { version = "0.2.0", features = ["alloc"] }
+bytes = "1.9.0"
 clap = { version = "4.5.20", features = ["derive"] }
 color-print = "0.3.6"
 colored = "2.1.0"

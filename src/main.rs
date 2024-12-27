@@ -1,7 +1,9 @@
 use std::{
+    fmt::Display,
     io::BufRead,
     path::PathBuf,
     pin::Pin,
+    str::FromStr,
     time::{Duration, UNIX_EPOCH},
 };
 
@@ -44,6 +46,7 @@ mod stream;
 
 mod config;
 mod error;
+mod formats;
 mod ping;
 mod types;
 
@@ -262,6 +265,10 @@ enum Commands {
         #[arg(short = 'm', long)]
         match_seq_num: Option<u64>,
 
+        /// Input format.
+        #[arg(long)]
+        format: Format,
+
         /// Input newline delimited records to append from a file or stdin.
         /// All records are treated as plain text.
         /// Use "-" to read from stdin.
@@ -326,6 +333,45 @@ enum ConfigActions {
         #[arg(short = 'a', long)]
         auth_token: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub enum Format {
+    #[default]
+    Text,
+    Json,
+}
+
+impl Format {
+    const TEXT: &str = "text";
+    const JSON: &str = "json";
+
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Text => Self::TEXT,
+            Self::Json => Self::JSON,
+        }
+    }
+}
+
+impl Display for Format {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for Format {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.eq_ignore_ascii_case(Self::TEXT) {
+            Ok(Self::Text)
+        } else if s.eq_ignore_ascii_case(Self::JSON) {
+            Ok(Self::Json)
+        } else {
+            Err("Unsupported format".to_owned())
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -756,17 +802,26 @@ async fn run() -> Result<(), S2CliError> {
             input,
             fencing_token,
             match_seq_num,
+            format,
         } => {
             let S2BasinAndStreamUri { basin, stream } = uri;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
-            let append_input_stream = RecordStream::new(
-                input
-                    .into_reader()
-                    .await
-                    .map_err(|e| S2CliError::RecordReaderInit(e.to_string()))?,
-            );
+
+            let records_in = input
+                .into_reader()
+                .await
+                .map_err(|e| S2CliError::RecordReaderInit(e.to_string()))?;
+
+            let append_input_stream = match format {
+                Format::Text => {
+                    Box::new(RecordStream::<_, formats::text::Formatter>::new(records_in))
+                }
+                Format::Json => {
+                    todo!()
+                }
+            };
 
             let mut append_output_stream = StreamService::new(stream_client)
                 .append_session(
