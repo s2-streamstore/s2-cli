@@ -20,8 +20,8 @@ use s2::{
     batching::AppendRecordsBatchingOpts,
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
-        AppendRecordBatch, BasinInfo, CommandRecord, ConvertError, FencingToken, MeteredBytes as _,
-        ReadOutput, StreamInfo,
+        AppendRecord, AppendRecordBatch, BasinInfo, CommandRecord, ConvertError, FencingToken,
+        MeteredBytes as _, ReadOutput, StreamInfo,
     },
 };
 use stream::{RecordStream, StreamService};
@@ -251,8 +251,6 @@ enum Commands {
     },
 
     /// Append records to a stream.
-    ///
-    /// Currently, only newline delimited records are supported.
     Append {
         #[arg(value_name = "S2_URI")]
         uri: S2BasinAndStreamUri,
@@ -265,8 +263,8 @@ enum Commands {
         #[arg(short = 'm', long)]
         match_seq_num: Option<u64>,
 
-        /// Input format.
-        #[arg(long)]
+        /// Input format. Can be one of "text" or "json".
+        #[arg(long, default_value_t)]
         format: Format,
 
         /// Input newline delimited records to append from a file or stdin.
@@ -814,14 +812,15 @@ async fn run() -> Result<(), S2CliError> {
                 .await
                 .map_err(|e| S2CliError::RecordReaderInit(e.to_string()))?;
 
-            let append_input_stream = match format {
-                Format::Text => {
-                    Box::new(RecordStream::<_, formats::text::Formatter>::new(records_in))
-                }
-                Format::Json => {
-                    todo!()
-                }
-            };
+            let append_input_stream: Box<dyn Stream<Item = AppendRecord> + Send + Unpin> =
+                match format {
+                    Format::Text => {
+                        Box::new(RecordStream::<_, formats::text::Formatter>::new(records_in))
+                    }
+                    Format::Json => {
+                        Box::new(RecordStream::<_, formats::json::Formatter>::new(records_in))
+                    }
+                };
 
             let mut append_output_stream = StreamService::new(stream_client)
                 .append_session(
