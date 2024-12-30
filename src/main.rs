@@ -13,6 +13,7 @@ use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
 use config::{config_path, create_config};
 use error::{S2CliError, ServiceError, ServiceErrorContext};
+use formats::RecordWriter;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use ping::{LatencyStats, PingResult, Pinger};
 use rand::Rng;
@@ -285,6 +286,10 @@ enum Commands {
         /// Starting sequence number (inclusive).
         #[arg(short = 's', long, default_value_t = 0)]
         start_seq_num: u64,
+
+        /// Output format. Can be one of "text" or "json".
+        #[arg(long, default_value_t)]
+        format: Format,
 
         /// Output records to a file or stdout.
         /// Use "-" to write to stdout.
@@ -874,6 +879,7 @@ async fn run() -> Result<(), S2CliError> {
             output,
             limit_count,
             limit_bytes,
+            format,
         } => {
             let S2BasinAndStreamUri { basin, stream } = uri;
             let cfg = config::load_config(&config_path)?;
@@ -923,11 +929,15 @@ async fn run() -> Result<(), S2CliError> {
                                                 };
                                                 eprintln!("{} with {}", cmd.bold(), description.green().bold());
                                             } else {
-                                                let data = &sequenced_record.body;
-                                                writer
-                                                    .write_all(data)
-                                                    .await
-                                                    .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
+                                                match format {
+                                                    Format::Text => {
+                                                        formats::text::Formatter::write_record(&sequenced_record, &mut writer).await
+                                                    },
+                                                    Format::Json => {
+                                                        formats::json::Formatter::write_record(&sequenced_record, &mut writer).await
+                                                    },
+                                                }
+                                                .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
                                                 writer
                                                     .write_all(b"\n")
                                                     .await

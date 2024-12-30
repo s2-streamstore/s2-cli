@@ -1,5 +1,6 @@
-use s2::types::{AppendRecord, ConvertError};
+use s2::types::{AppendRecord, ConvertError, SequencedRecord};
 use std::io;
+use tokio::io::AsyncWrite;
 
 use futures::Stream;
 
@@ -20,6 +21,13 @@ where
     fn parse_records(lines: I) -> Self::RecordStream;
 }
 
+pub trait RecordWriter {
+    async fn write_record(
+        record: &SequencedRecord,
+        writer: &mut (impl AsyncWrite + Unpin),
+    ) -> io::Result<()>;
+}
+
 pub mod text {
     use std::{
         io,
@@ -28,13 +36,24 @@ pub mod text {
     };
 
     use futures::{Stream, StreamExt};
-    use s2::types::AppendRecord;
+    use s2::types::{AppendRecord, SequencedRecord};
+    use tokio::io::{AsyncWrite, AsyncWriteExt};
 
-    use super::RecordParseError;
+    use super::{RecordParseError, RecordParser, RecordWriter};
 
     pub struct Formatter;
 
-    impl<I> super::RecordParser<I> for Formatter
+    impl RecordWriter for Formatter {
+        async fn write_record(
+            record: &SequencedRecord,
+            writer: &mut (impl AsyncWrite + Unpin),
+        ) -> io::Result<()> {
+            let s = String::from_utf8_lossy(&record.body);
+            writer.write_all(s.as_ref().as_bytes()).await
+        }
+    }
+
+    impl<I> RecordParser<I> for Formatter
     where
         I: Stream<Item = io::Result<String>> + Send + Unpin,
     {
@@ -66,6 +85,7 @@ pub mod text {
 
 pub mod json {
     use std::{
+        borrow::Cow,
         collections::HashMap,
         io,
         pin::Pin,
@@ -73,14 +93,61 @@ pub mod json {
     };
 
     use futures::{Stream, StreamExt};
-    use s2::types::{AppendRecord, AppendRecordParts, ConvertError, Header};
-    use serde::Deserialize;
+    use s2::types::{AppendRecord, AppendRecordParts, ConvertError, Header, SequencedRecord};
+    use serde::{Deserialize, Serialize};
+    use tokio::io::{AsyncWrite, AsyncWriteExt};
 
-    use super::RecordParseError;
+    use super::{RecordParseError, RecordParser, RecordWriter};
 
     pub struct Formatter;
 
-    impl<I> super::RecordParser<I> for Formatter
+    #[derive(Debug, Clone, Serialize)]
+    struct SerializableSequencedRecord<'a> {
+        seq_num: u64,
+        headers: HashMap<Cow<'a, str>, Cow<'a, str>>,
+        body: Cow<'a, str>,
+    }
+
+    impl<'a> From<&'a SequencedRecord> for SerializableSequencedRecord<'a> {
+        fn from(value: &'a SequencedRecord) -> Self {
+            let SequencedRecord {
+                seq_num,
+                headers,
+                body,
+            } = value;
+
+            let headers = headers
+                .iter()
+                .map(|Header { name, value }| {
+                    (
+                        String::from_utf8_lossy(name),
+                        String::from_utf8_lossy(value),
+                    )
+                })
+                .collect::<HashMap<_, _>>();
+
+            let body = String::from_utf8_lossy(body);
+
+            SerializableSequencedRecord {
+                seq_num: *seq_num,
+                headers,
+                body,
+            }
+        }
+    }
+
+    impl RecordWriter for Formatter {
+        async fn write_record(
+            record: &SequencedRecord,
+            writer: &mut (impl AsyncWrite + Unpin),
+        ) -> io::Result<()> {
+            let record: SerializableSequencedRecord = record.into();
+            let s = serde_json::to_string(&record).map_err(io::Error::other)?;
+            writer.write_all(s.as_bytes()).await
+        }
+    }
+
+    impl<I> RecordParser<I> for Formatter
     where
         I: Stream<Item = io::Result<String>> + Send + Unpin,
     {
