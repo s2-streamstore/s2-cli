@@ -6,6 +6,7 @@ use std::{
 };
 
 use account::AccountService;
+use base64ct::{Base64, Encoding};
 use basin::BasinService;
 use clap::{builder::styling, Parser, Subcommand};
 use colored::*;
@@ -213,7 +214,7 @@ enum Commands {
         /// and any regression will be ignored.
         trim_point: u64,
 
-        /// Enforce fencing token specified in hex.
+        /// Enforce fencing token specified in base64.
         #[arg(short = 'f', long, value_parser = parse_fencing_token)]
         fencing_token: Option<FencingToken>,
 
@@ -233,12 +234,12 @@ enum Commands {
         #[arg(value_name = "S2_URI")]
         uri: S2BasinAndStreamUri,
 
-        /// New fencing token specified in hex.
+        /// New fencing token specified in base64.
         /// It may be upto 16 bytes, and can be empty.
         #[arg(value_parser = parse_fencing_token)]
         new_fencing_token: FencingToken,
 
-        /// Enforce existing fencing token, specified in hex.
+        /// Enforce existing fencing token, specified in base64.
         #[arg(short = 'f', long, value_parser = parse_fencing_token)]
         fencing_token: Option<FencingToken>,
 
@@ -254,7 +255,7 @@ enum Commands {
         #[arg(value_name = "S2_URI")]
         uri: S2BasinAndStreamUri,
 
-        /// Enforce fencing token specified in hex.
+        /// Enforce fencing token specified in base64.
         #[arg(short = 'f', long, value_parser = parse_fencing_token)]
         fencing_token: Option<FencingToken>,
 
@@ -410,8 +411,8 @@ fn parse_records_output_source(s: &str) -> Result<RecordsOut, std::io::Error> {
 }
 
 fn parse_fencing_token(s: &str) -> Result<FencingToken, ConvertError> {
-    base16ct::mixed::decode_vec(s)
-        .map_err(|_| "invalid hex")?
+    Base64::decode_vec(s)
+        .map_err(|_| "invalid base64")?
         .try_into()
 }
 
@@ -860,7 +861,10 @@ async fn run() -> Result<(), S2CliError> {
                                                 let (cmd, description) = match command_record {
                                                     CommandRecord::Fence { fencing_token } => (
                                                         "fence",
-                                                        format!("FencingToken({})", base16ct::lower::encode_string(fencing_token.as_ref())),
+                                                        format!(
+                                                            "FencingToken({})",
+                                                            Base64::encode_string(fencing_token.as_ref()),
+                                                        ),
                                                     ),
                                                     CommandRecord::Trim { seq_num } => (
                                                         "trim",
