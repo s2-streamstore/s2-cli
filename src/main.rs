@@ -343,16 +343,19 @@ pub enum Format {
     #[default]
     Text,
     Json,
+    JsonBinsafe,
 }
 
 impl Format {
     const TEXT: &str = "text";
     const JSON: &str = "json";
+    const JSON_BINSAFE: &str = "json-binsafe";
 
     fn as_str(&self) -> &str {
         match self {
             Self::Text => Self::TEXT,
             Self::Json => Self::JSON,
+            Self::JsonBinsafe => Self::JSON_BINSAFE,
         }
     }
 }
@@ -371,6 +374,8 @@ impl FromStr for Format {
             Ok(Self::Text)
         } else if s.eq_ignore_ascii_case(Self::JSON) {
             Ok(Self::Json)
+        } else if s.eq_ignore_ascii_case(Self::JSON_BINSAFE) {
+            Ok(Self::JsonBinsafe)
         } else {
             Err("Unsupported format".to_owned())
         }
