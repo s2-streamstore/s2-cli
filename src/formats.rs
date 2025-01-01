@@ -134,7 +134,7 @@ mod json {
         }
     }
 
-    impl<'a, const BIN_SAFE: bool> Serialize for CowStr<'a, BIN_SAFE> {
+    impl<const BIN_SAFE: bool> Serialize for CowStr<'_, BIN_SAFE> {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: serde::Serializer,
