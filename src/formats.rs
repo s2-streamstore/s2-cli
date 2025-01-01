@@ -28,7 +28,11 @@ pub trait RecordWriter {
     ) -> io::Result<()>;
 }
 
-pub mod text {
+pub use text::Formatter as TextFormatter;
+pub type JsonFormatter = json::Formatter<false>;
+pub type JsonBinsafeFormatter = json::Formatter<true>;
+
+mod text {
     use std::{
         io,
         pin::Pin,
@@ -83,15 +87,16 @@ pub mod text {
     }
 }
 
-pub mod json {
+mod json {
     use std::{
         borrow::Cow,
-        collections::HashMap,
         io,
         pin::Pin,
         task::{Context, Poll},
     };
 
+    use base64ct::{Base64, Encoding};
+    use bytes::Bytes;
     use futures::{Stream, StreamExt};
     use s2::types::{AppendRecord, AppendRecordParts, ConvertError, Header, SequencedRecord};
     use serde::{Deserialize, Serialize};
@@ -99,16 +104,66 @@ pub mod json {
 
     use super::{RecordParseError, RecordParser, RecordWriter};
 
-    pub struct Formatter;
+    #[derive(Debug, Clone, Default)]
+    struct CowStr<'a, const BIN_SAFE: bool>(Cow<'a, str>);
 
-    #[derive(Debug, Clone, Serialize)]
-    struct SerializableSequencedRecord<'a> {
-        seq_num: u64,
-        headers: HashMap<Cow<'a, str>, Cow<'a, str>>,
-        body: Cow<'a, str>,
+    type OwnedCowStr<const BIN_SAFE: bool> = CowStr<'static, BIN_SAFE>;
+
+    impl<'a, const BIN_SAFE: bool> From<&'a [u8]> for CowStr<'a, BIN_SAFE> {
+        fn from(value: &'a [u8]) -> Self {
+            Self(if BIN_SAFE {
+                Base64::encode_string(value).into()
+            } else {
+                String::from_utf8_lossy(value)
+            })
+        }
     }
 
-    impl<'a> From<&'a SequencedRecord> for SerializableSequencedRecord<'a> {
+    impl<const BIN_SAFE: bool> TryFrom<OwnedCowStr<BIN_SAFE>> for Bytes {
+        type Error = ConvertError;
+
+        fn try_from(value: OwnedCowStr<BIN_SAFE>) -> Result<Self, Self::Error> {
+            let CowStr(s) = value;
+
+            Ok(if BIN_SAFE {
+                Base64::decode_vec(&s).map_err(|_| format!("invalid base64: {s}"))?
+            } else {
+                s.into_owned().into_bytes()
+            }
+            .into())
+        }
+    }
+
+    impl<'a, const BIN_SAFE: bool> Serialize for CowStr<'a, BIN_SAFE> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            self.0.serialize(serializer)
+        }
+    }
+
+    impl<'de, const BIN_SAFE: bool> Deserialize<'de> for OwnedCowStr<BIN_SAFE> {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            String::deserialize(deserializer).map(|s| CowStr(s.into()))
+        }
+    }
+
+    pub struct Formatter<const BIN_SAFE: bool>;
+
+    #[derive(Debug, Clone, Serialize)]
+    struct SerializableSequencedRecord<'a, const BIN_SAFE: bool> {
+        seq_num: u64,
+        headers: Vec<(CowStr<'a, BIN_SAFE>, CowStr<'a, BIN_SAFE>)>,
+        body: CowStr<'a, BIN_SAFE>,
+    }
+
+    impl<'a, const BIN_SAFE: bool> From<&'a SequencedRecord>
+        for SerializableSequencedRecord<'a, BIN_SAFE>
+    {
         fn from(value: &'a SequencedRecord) -> Self {
             let SequencedRecord {
                 seq_num,
@@ -116,17 +171,12 @@ pub mod json {
                 body,
             } = value;
 
-            let headers = headers
+            let headers: Vec<(CowStr<BIN_SAFE>, CowStr<BIN_SAFE>)> = headers
                 .iter()
-                .map(|Header { name, value }| {
-                    (
-                        String::from_utf8_lossy(name),
-                        String::from_utf8_lossy(value),
-                    )
-                })
-                .collect::<HashMap<_, _>>();
+                .map(|Header { name, value }| (name.as_ref().into(), value.as_ref().into()))
+                .collect();
 
-            let body = String::from_utf8_lossy(body);
+            let body: CowStr<BIN_SAFE> = body.as_ref().into();
 
             SerializableSequencedRecord {
                 seq_num: *seq_num,
@@ -136,22 +186,22 @@ pub mod json {
         }
     }
 
-    impl RecordWriter for Formatter {
+    impl<const BIN_SAFE: bool> RecordWriter for Formatter<BIN_SAFE> {
         async fn write_record(
             record: &SequencedRecord,
             writer: &mut (impl AsyncWrite + Unpin),
         ) -> io::Result<()> {
-            let record: SerializableSequencedRecord = record.into();
+            let record: SerializableSequencedRecord<BIN_SAFE> = record.into();
             let s = serde_json::to_string(&record).map_err(io::Error::other)?;
             writer.write_all(s.as_bytes()).await
         }
     }
 
-    impl<I> RecordParser<I> for Formatter
+    impl<const BIN_SAFE: bool, I> RecordParser<I> for Formatter<BIN_SAFE>
     where
         I: Stream<Item = io::Result<String>> + Send + Unpin,
     {
-        type RecordStream = RecordStream<I>;
+        type RecordStream = RecordStream<BIN_SAFE, I>;
 
         fn parse_records(lines: I) -> Self::RecordStream {
             RecordStream(lines)
@@ -159,42 +209,49 @@ pub mod json {
     }
 
     #[derive(Debug, Clone, Deserialize)]
-    struct DeserializableAppendRecord {
+    struct DeserializableAppendRecord<const BIN_SAFE: bool> {
         #[serde(default)]
-        headers: HashMap<String, String>,
+        headers: Vec<(OwnedCowStr<BIN_SAFE>, OwnedCowStr<BIN_SAFE>)>,
         #[serde(default)]
-        body: String,
+        body: OwnedCowStr<BIN_SAFE>,
     }
 
-    impl TryFrom<DeserializableAppendRecord> for AppendRecord {
+    impl<const BIN_SAFE: bool> TryFrom<DeserializableAppendRecord<BIN_SAFE>> for AppendRecord {
         type Error = ConvertError;
 
-        fn try_from(value: DeserializableAppendRecord) -> Result<Self, Self::Error> {
+        fn try_from(value: DeserializableAppendRecord<BIN_SAFE>) -> Result<Self, Self::Error> {
             let DeserializableAppendRecord { headers, body } = value;
 
             let parts = AppendRecordParts {
                 headers: headers
                     .into_iter()
-                    .map(|(k, v)| Header::new(k, v))
-                    .collect(),
-                body: body.into(),
+                    .map(|(name, value)| {
+                        Ok(Header {
+                            name: name.try_into()?,
+                            value: value.try_into()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ConvertError>>()?,
+                body: body.try_into()?,
             };
 
             parts.try_into()
         }
     }
 
-    pub struct RecordStream<S>(S);
+    pub struct RecordStream<const BIN_SAFE: bool, S>(S);
 
-    impl<S> Stream for RecordStream<S>
+    impl<const BIN_SAFE: bool, S> Stream for RecordStream<BIN_SAFE, S>
     where
         S: Stream<Item = io::Result<String>> + Send + Unpin,
     {
         type Item = Result<AppendRecord, RecordParseError>;
 
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-            fn parse_record(s: String) -> Result<AppendRecord, RecordParseError> {
-                let append_record: DeserializableAppendRecord = serde_json::from_str(&s)
+            fn parse_record<const BIN_SAFE: bool>(
+                s: String,
+            ) -> Result<AppendRecord, RecordParseError> {
+                let append_record: DeserializableAppendRecord<BIN_SAFE> = serde_json::from_str(&s)
                     .map_err(|e| RecordParseError::Convert(e.to_string().into()))?;
 
                 Ok(append_record.try_into()?)
@@ -204,7 +261,7 @@ pub mod json {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(None) => Poll::Ready(None),
                 Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e.into()))),
-                Poll::Ready(Some(Ok(s))) => Poll::Ready(Some(parse_record(s))),
+                Poll::Ready(Some(Ok(s))) => Poll::Ready(Some(parse_record::<BIN_SAFE>(s))),
             }
         }
     }
