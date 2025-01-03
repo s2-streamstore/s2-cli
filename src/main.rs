@@ -10,7 +10,7 @@ use std::{
 use account::AccountService;
 use base64ct::{Base64, Encoding};
 use basin::BasinService;
-use clap::{builder::styling, Parser, Subcommand};
+use clap::{builder::styling, Parser, Subcommand, ValueEnum};
 use colored::*;
 use config::{config_path, create_config};
 use error::{S2CliError, ServiceError, ServiceErrorContext};
@@ -265,8 +265,8 @@ enum Commands {
         #[arg(short = 'm', long)]
         match_seq_num: Option<u64>,
 
-        /// Input format. Can be one of "text" or "json".
-        #[arg(long, default_value_t)]
+        /// Input format.
+        #[arg(long, value_enum, default_value_t)]
         format: Format,
 
         /// Input newline delimited records to append from a file or stdin.
@@ -288,8 +288,8 @@ enum Commands {
         #[arg(short = 's', long, default_value_t = 0)]
         start_seq_num: u64,
 
-        /// Output format. Can be one of "text" or "json".
-        #[arg(long, default_value_t)]
+        /// Output format.
+        #[arg(long, value_enum, default_value_t)]
         format: Format,
 
         /// Output records to a file or stdout.
@@ -339,11 +339,15 @@ enum ConfigActions {
     },
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
 pub enum Format {
+    /// Newline delimited records with UTF-8 bodies.
     #[default]
     Text,
+    /// Newline delimited records in JSON format with UTF-8 headers and body.
     Json,
+    /// Newline delimited records in JSON format with base64 encoded headers
+    /// and body.
     JsonBinsafe,
 }
 

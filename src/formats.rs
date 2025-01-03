@@ -107,6 +107,12 @@ mod json {
     #[derive(Debug, Clone, Default)]
     struct CowStr<'a, const BIN_SAFE: bool>(Cow<'a, str>);
 
+    impl<const BIN_SAFE: bool> CowStr<'_, BIN_SAFE> {
+        fn is_empty(&self) -> bool {
+            self.0.is_empty()
+        }
+    }
+
     type OwnedCowStr<const BIN_SAFE: bool> = CowStr<'static, BIN_SAFE>;
 
     impl<'a, const BIN_SAFE: bool> From<&'a [u8]> for CowStr<'a, BIN_SAFE> {
@@ -157,7 +163,9 @@ mod json {
     #[derive(Debug, Clone, Serialize)]
     struct SerializableSequencedRecord<'a, const BIN_SAFE: bool> {
         seq_num: u64,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
         headers: Vec<(CowStr<'a, BIN_SAFE>, CowStr<'a, BIN_SAFE>)>,
+        #[serde(skip_serializing_if = "CowStr::is_empty")]
         body: CowStr<'a, BIN_SAFE>,
     }
 
