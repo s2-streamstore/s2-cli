@@ -1,3 +1,4 @@
+use colored::Colorize;
 use s2::{
     batching::{AppendRecordsBatchingOpts, AppendRecordsBatchingStream},
     client::StreamClient,
@@ -13,33 +14,39 @@ use s2::types::AppendRecord;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::error::{ServiceError, ServiceErrorContext};
+use crate::{
+    error::{ServiceError, ServiceErrorContext},
+    formats::RecordParser,
+};
 
 #[derive(Debug)]
-pub struct RecordStream<S> {
-    inner: S,
-}
+pub struct RecordStream<S, P>(P::RecordStream)
+where
+    S: Stream<Item = std::io::Result<String>> + Send + Unpin,
+    P: RecordParser<S>;
 
-impl<S> RecordStream<S> {
-    pub fn new(inner: S) -> Self {
-        Self { inner }
+impl<S, P> RecordStream<S, P>
+where
+    S: Stream<Item = std::io::Result<String>> + Send + Unpin,
+    P: RecordParser<S>,
+{
+    pub fn new(s: S) -> Self {
+        Self(P::parse_records(s))
     }
 }
 
-impl<S: Unpin + Stream<Item = std::io::Result<String>>> Stream for RecordStream<S> {
+impl<S, P> Stream for RecordStream<S, P>
+where
+    S: Stream<Item = std::io::Result<String>> + Send + Unpin,
+    P: RecordParser<S>,
+{
     type Item = AppendRecord;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.inner.poll_next_unpin(cx) {
-            Poll::Ready(Some(Ok(line))) => match AppendRecord::new(line) {
-                Ok(record) => Poll::Ready(Some(record)),
-                Err(e) => {
-                    eprintln!("Error parsing line: {}", e);
-                    Poll::Ready(None)
-                }
-            },
+        match self.0.poll_next_unpin(cx) {
+            Poll::Ready(Some(Ok(record))) => Poll::Ready(Some(record)),
             Poll::Ready(Some(Err(e))) => {
-                eprintln!("Error reading line: {}", e);
+                eprintln!("{}", e.to_string().red());
                 Poll::Ready(None)
             }
             Poll::Ready(None) => Poll::Ready(None),

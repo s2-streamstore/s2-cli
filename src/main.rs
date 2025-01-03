@@ -1,17 +1,20 @@
 use std::{
+    fmt::Display,
     io::BufRead,
     path::PathBuf,
     pin::Pin,
+    str::FromStr,
     time::{Duration, UNIX_EPOCH},
 };
 
 use account::AccountService;
 use base64ct::{Base64, Encoding};
 use basin::BasinService;
-use clap::{builder::styling, Parser, Subcommand};
+use clap::{builder::styling, Parser, Subcommand, ValueEnum};
 use colored::*;
 use config::{config_path, create_config};
 use error::{S2CliError, ServiceError, ServiceErrorContext};
+use formats::{JsonBinsafeFormatter, JsonFormatter, RecordWriter, TextFormatter};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use ping::{LatencyStats, PingResult, Pinger};
 use rand::Rng;
@@ -19,8 +22,8 @@ use s2::{
     batching::AppendRecordsBatchingOpts,
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
-        AppendRecordBatch, BasinInfo, CommandRecord, ConvertError, FencingToken, MeteredBytes as _,
-        ReadOutput, StreamInfo,
+        AppendRecord, AppendRecordBatch, BasinInfo, CommandRecord, ConvertError, FencingToken,
+        MeteredBytes as _, ReadOutput, StreamInfo,
     },
 };
 use stream::{RecordStream, StreamService};
@@ -45,6 +48,7 @@ mod stream;
 
 mod config;
 mod error;
+mod formats;
 mod ping;
 mod types;
 
@@ -249,8 +253,6 @@ enum Commands {
     },
 
     /// Append records to a stream.
-    ///
-    /// Currently, only newline delimited records are supported.
     Append {
         #[arg(value_name = "S2_URI")]
         uri: S2BasinAndStreamUri,
@@ -262,6 +264,10 @@ enum Commands {
         /// Enforce that the sequence number issued to the first record matches.
         #[arg(short = 'm', long)]
         match_seq_num: Option<u64>,
+
+        /// Input format.
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
 
         /// Input newline delimited records to append from a file or stdin.
         /// All records are treated as plain text.
@@ -281,6 +287,10 @@ enum Commands {
         /// Starting sequence number (inclusive).
         #[arg(short = 's', long, default_value_t = 0)]
         start_seq_num: u64,
+
+        /// Output format.
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
 
         /// Output records to a file or stdout.
         /// Use "-" to write to stdout.
@@ -327,6 +337,54 @@ enum ConfigActions {
         #[arg(short = 'a', long)]
         auth_token: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub enum Format {
+    /// Newline delimited records with UTF-8 bodies.
+    #[default]
+    Text,
+    /// Newline delimited records in JSON format with UTF-8 headers and body.
+    Json,
+    /// Newline delimited records in JSON format with base64 encoded headers
+    /// and body.
+    JsonBinsafe,
+}
+
+impl Format {
+    const TEXT: &str = "text";
+    const JSON: &str = "json";
+    const JSON_BINSAFE: &str = "json-binsafe";
+
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Text => Self::TEXT,
+            Self::Json => Self::JSON,
+            Self::JsonBinsafe => Self::JSON_BINSAFE,
+        }
+    }
+}
+
+impl Display for Format {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for Format {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.eq_ignore_ascii_case(Self::TEXT) {
+            Ok(Self::Text)
+        } else if s.eq_ignore_ascii_case(Self::JSON) {
+            Ok(Self::Json)
+        } else if s.eq_ignore_ascii_case(Self::JSON_BINSAFE) {
+            Ok(Self::JsonBinsafe)
+        } else {
+            Err("Unsupported format".to_owned())
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -757,17 +815,26 @@ async fn run() -> Result<(), S2CliError> {
             input,
             fencing_token,
             match_seq_num,
+            format,
         } => {
             let S2BasinAndStreamUri { basin, stream } = uri;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
-            let append_input_stream = RecordStream::new(
-                input
-                    .into_reader()
-                    .await
-                    .map_err(|e| S2CliError::RecordReaderInit(e.to_string()))?,
-            );
+
+            let records_in = input
+                .into_reader()
+                .await
+                .map_err(|e| S2CliError::RecordReaderInit(e.to_string()))?;
+
+            let append_input_stream: Box<dyn Stream<Item = AppendRecord> + Send + Unpin> =
+                match format {
+                    Format::Text => Box::new(RecordStream::<_, TextFormatter>::new(records_in)),
+                    Format::Json => Box::new(RecordStream::<_, JsonFormatter>::new(records_in)),
+                    Format::JsonBinsafe => {
+                        Box::new(RecordStream::<_, JsonBinsafeFormatter>::new(records_in))
+                    }
+                };
 
             let mut append_output_stream = StreamService::new(stream_client)
                 .append_session(
@@ -821,6 +888,7 @@ async fn run() -> Result<(), S2CliError> {
             output,
             limit_count,
             limit_bytes,
+            format,
         } => {
             let S2BasinAndStreamUri { basin, stream } = uri;
             let cfg = config::load_config(&config_path)?;
@@ -873,11 +941,27 @@ async fn run() -> Result<(), S2CliError> {
                                                 };
                                                 eprintln!("{} with {}", cmd.bold(), description.green().bold());
                                             } else {
-                                                let data = &sequenced_record.body;
-                                                writer
-                                                    .write_all(data)
-                                                    .await
-                                                    .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
+                                                match format {
+                                                    Format::Text => {
+                                                        TextFormatter::write_record(
+                                                            &sequenced_record,
+                                                            &mut writer,
+                                                        ).await
+                                                    },
+                                                    Format::Json => {
+                                                        JsonFormatter::write_record(
+                                                            &sequenced_record,
+                                                            &mut writer,
+                                                        ).await
+                                                    },
+                                                    Format::JsonBinsafe => {
+                                                        JsonBinsafeFormatter::write_record(
+                                                            &sequenced_record,
+                                                            &mut writer,
+                                                        ).await
+                                                    },
+                                                }
+                                                .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
                                                 writer
                                                     .write_all(b"\n")
                                                     .await
