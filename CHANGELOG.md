@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] - 2025-01-13
+
+### Features
+
+- Update fencing token to accept base64 instead of base16 ([#106](https://github.com/s2-streamstore/s2-cli/issues/106))
+- Support different formats for append ([#105](https://github.com/s2-streamstore/s2-cli/issues/105))
+
+### Miscellaneous Tasks
+
+- Update clap CLI name ([#104](https://github.com/s2-streamstore/s2-cli/issues/104))
+- Update deps ([#108](https://github.com/s2-streamstore/s2-cli/issues/108))
+
 ## [0.7.0] - 2024-12-26
 
 ### Features
