@@ -114,10 +114,10 @@ impl StreamService {
     ) -> Result<Streaming<ReadOutput>, ServiceError> {
         let read_session_req = ReadSessionRequest {
             start_seq_num,
-            limit: Some(ReadLimit {
+            limit: ReadLimit {
                 count: limit_count,
                 bytes: limit_bytes,
-            }),
+            },
         };
 
         self.client

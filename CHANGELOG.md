@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.2] - 2025-01-21
+
+### Miscellaneous Tasks
+
+- Update SDK to `0.8.0` [#113](https://github.com/s2-streamstore/s2-cli/issues/113))
+
 ## [0.8.1] - 2025-01-16
 
 ### Miscellaneous Tasks
