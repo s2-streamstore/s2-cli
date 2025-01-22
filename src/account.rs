@@ -21,7 +21,7 @@ impl AccountService {
         &self,
         prefix: String,
         start_after: String,
-        limit: usize,
+        limit: Option<usize>,
     ) -> Result<ListBasinsResponse, ServiceError> {
         let list_basins_req = ListBasinsRequest::new()
             .with_prefix(prefix)
