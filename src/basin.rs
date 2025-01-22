@@ -21,7 +21,7 @@ impl BasinService {
         &self,
         prefix: String,
         start_after: String,
-        limit: usize,
+        limit: Option<usize>,
     ) -> Result<Vec<StreamInfo>, ServiceError> {
         let list_streams_req = ListStreamsRequest::new()
             .with_prefix(prefix)

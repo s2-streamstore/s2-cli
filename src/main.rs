@@ -113,7 +113,7 @@ enum Commands {
         start_after: Option<String>,
 
         /// Number of results, upto a maximum of 1000.
-        #[arg(short = 'n', long, default_value = "0")]
+        #[arg(short = 'n', long)]
         limit: Option<usize>,
     },
 
@@ -516,7 +516,7 @@ async fn run() -> Result<(), S2CliError> {
             .list_basins(
                 prefix.unwrap_or_default(),
                 start_after.unwrap_or_default(),
-                limit.unwrap_or_default(),
+                limit,
             )
             .await?;
         for basin_info in response.basins {
@@ -558,7 +558,7 @@ async fn run() -> Result<(), S2CliError> {
             .list_streams(
                 prefix.unwrap_or_default(),
                 start_after.unwrap_or_default(),
-                limit.unwrap_or_default(),
+                limit,
             )
             .await?;
         for StreamInfo {
