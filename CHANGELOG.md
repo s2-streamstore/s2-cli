@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.3] - 2025-01-22
+
+### Miscellaneous Tasks
+
+- Reflect the update to make list limit optional instead of a default of 0 ([#114](https://github.com/s2-streamstore/s2-cli/issues/114))
+- Minor upgrades
+
 ## [0.8.2] - 2025-01-21
 
 ### Miscellaneous Tasks
