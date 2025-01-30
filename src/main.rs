@@ -169,6 +169,7 @@ enum Commands {
 
     /// Create a stream.
     CreateStream {
+        /// Format: s2://{basin}/{stream}
         #[arg(value_name = "S2_URI")]
         uri: S2BasinAndStreamUri,
 
@@ -179,18 +180,21 @@ enum Commands {
 
     /// Delete a stream.
     DeleteStream {
+        /// Format: s2://{basin}/{stream}
         #[arg(value_name = "S2_URI")]
         uri: S2BasinAndStreamUri,
     },
 
     /// Get stream config.
     GetStreamConfig {
+        /// Format: s2://{basin}/{stream}
         #[arg(value_name = "S2_URI")]
         uri: S2BasinAndStreamUri,
     },
 
     /// Reconfigure a stream.
     ReconfigureStream {
+        /// Format: s2://{basin}/{stream}
         #[arg(value_name = "S2_URI")]
         uri: S2BasinAndStreamUri,
 
@@ -201,6 +205,7 @@ enum Commands {
 
     /// Get the next sequence number that will be assigned by a stream.
     CheckTail {
+        /// Format: s2://{basin}/{stream}
         #[arg(value_name = "S2_URI")]
         uri: S2BasinAndStreamUri,
     },
@@ -210,6 +215,7 @@ enum Commands {
     /// Trimming is eventually consistent, and trimmed records may be visible
     /// for a brief period.
     Trim {
+        /// Format: s2://{basin}/{stream}
         #[arg(value_name = "S2_URI")]
         uri: S2BasinAndStreamUri,
 
@@ -235,6 +241,7 @@ enum Commands {
     /// Note that fencing is a cooperative mechanism,
     /// and it is only enforced when a token is provided.
     Fence {
+        /// Format: s2://{basin}/{stream}
         #[arg(value_name = "S2_URI")]
         uri: S2BasinAndStreamUri,
 
@@ -254,6 +261,7 @@ enum Commands {
 
     /// Append records to a stream.
     Append {
+        /// Format: s2://{basin}/{stream}
         #[arg(value_name = "S2_URI")]
         uri: S2BasinAndStreamUri,
 
@@ -281,6 +289,7 @@ enum Commands {
     /// If a limit if specified, reading will stop when the limit is reached or there are no more records on the stream.
     /// If a limit is not specified, the reader will keep tailing and wait for new records.
     Read {
+        /// Format: s2://{basin}/{stream}
         #[arg(value_name = "S2_URI")]
         uri: S2BasinAndStreamUri,
 
@@ -308,6 +317,7 @@ enum Commands {
 
     /// Ping the stream to get append acknowledgement and end-to-end latencies.
     Ping {
+        /// Format: s2://{basin}/{stream}
         #[arg(value_name = "S2_URI")]
         uri: S2BasinAndStreamUri,
 

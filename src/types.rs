@@ -116,6 +116,7 @@ impl FromStr for S2BasinAndMaybeStreamUri {
     }
 }
 
+/// String Format: s2://{basin}/{stream}
 #[derive(Debug, Clone)]
 pub struct S2BasinAndStreamUri {
     pub basin: BasinName,
