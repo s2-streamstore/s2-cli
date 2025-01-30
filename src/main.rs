@@ -72,6 +72,13 @@ struct Cli {
     command: Commands,
 }
 
+#[derive(Parser, Debug)]
+struct S2BasinAndStreamUriArgs {
+    /// S2 URI of the format: s2://{basin}/{stream}
+    #[arg(value_name = "S2_URI")]
+    uri: S2BasinAndStreamUri,
+}
+
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Manage CLI configuration.
@@ -169,9 +176,8 @@ enum Commands {
 
     /// Create a stream.
     CreateStream {
-        /// Format: s2://{basin}/{stream}
-        #[arg(value_name = "S2_URI")]
-        uri: S2BasinAndStreamUri,
+        #[command(flatten)]
+        uri: S2BasinAndStreamUriArgs,
 
         /// Configuration to apply.
         #[command(flatten)]
@@ -180,23 +186,20 @@ enum Commands {
 
     /// Delete a stream.
     DeleteStream {
-        /// Format: s2://{basin}/{stream}
-        #[arg(value_name = "S2_URI")]
-        uri: S2BasinAndStreamUri,
+        #[command(flatten)]
+        uri: S2BasinAndStreamUriArgs,
     },
 
     /// Get stream config.
     GetStreamConfig {
-        /// Format: s2://{basin}/{stream}
-        #[arg(value_name = "S2_URI")]
-        uri: S2BasinAndStreamUri,
+        #[command(flatten)]
+        uri: S2BasinAndStreamUriArgs,
     },
 
     /// Reconfigure a stream.
     ReconfigureStream {
-        /// Format: s2://{basin}/{stream}
-        #[arg(value_name = "S2_URI")]
-        uri: S2BasinAndStreamUri,
+        #[command(flatten)]
+        uri: S2BasinAndStreamUriArgs,
 
         /// Configuration to apply.
         #[command(flatten)]
@@ -205,9 +208,8 @@ enum Commands {
 
     /// Get the next sequence number that will be assigned by a stream.
     CheckTail {
-        /// Format: s2://{basin}/{stream}
-        #[arg(value_name = "S2_URI")]
-        uri: S2BasinAndStreamUri,
+        #[command(flatten)]
+        uri: S2BasinAndStreamUriArgs,
     },
 
     /// Set the trim point for the stream.
@@ -215,9 +217,8 @@ enum Commands {
     /// Trimming is eventually consistent, and trimmed records may be visible
     /// for a brief period.
     Trim {
-        /// Format: s2://{basin}/{stream}
-        #[arg(value_name = "S2_URI")]
-        uri: S2BasinAndStreamUri,
+        #[command(flatten)]
+        uri: S2BasinAndStreamUriArgs,
 
         /// Earliest sequence number that should be retained.
         /// This sequence number is only allowed to advance,
@@ -241,9 +242,8 @@ enum Commands {
     /// Note that fencing is a cooperative mechanism,
     /// and it is only enforced when a token is provided.
     Fence {
-        /// Format: s2://{basin}/{stream}
-        #[arg(value_name = "S2_URI")]
-        uri: S2BasinAndStreamUri,
+        #[command(flatten)]
+        uri: S2BasinAndStreamUriArgs,
 
         /// New fencing token specified in base64.
         /// It may be upto 16 bytes, and can be empty.
@@ -261,9 +261,8 @@ enum Commands {
 
     /// Append records to a stream.
     Append {
-        /// Format: s2://{basin}/{stream}
-        #[arg(value_name = "S2_URI")]
-        uri: S2BasinAndStreamUri,
+        #[command(flatten)]
+        uri: S2BasinAndStreamUriArgs,
 
         /// Enforce fencing token specified in base64.
         #[arg(short = 'f', long, value_parser = parse_fencing_token)]
@@ -289,9 +288,8 @@ enum Commands {
     /// If a limit if specified, reading will stop when the limit is reached or there are no more records on the stream.
     /// If a limit is not specified, the reader will keep tailing and wait for new records.
     Read {
-        /// Format: s2://{basin}/{stream}
-        #[arg(value_name = "S2_URI")]
-        uri: S2BasinAndStreamUri,
+        #[command(flatten)]
+        uri: S2BasinAndStreamUriArgs,
 
         /// Starting sequence number (inclusive).
         #[arg(short = 's', long, default_value_t = 0)]
@@ -317,9 +315,8 @@ enum Commands {
 
     /// Ping the stream to get append acknowledgement and end-to-end latencies.
     Ping {
-        /// Format: s2://{basin}/{stream}
-        #[arg(value_name = "S2_URI")]
-        uri: S2BasinAndStreamUri,
+        #[command(flatten)]
+        uri: S2BasinAndStreamUriArgs,
 
         /// Send a batch after this interval.
         ///
@@ -704,7 +701,7 @@ async fn run() -> Result<(), S2CliError> {
         }
 
         Commands::CreateStream { uri, config } => {
-            let S2BasinAndStreamUri { basin, stream } = uri;
+            let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let basin_client = BasinClient::new(client_config, basin);
@@ -715,7 +712,7 @@ async fn run() -> Result<(), S2CliError> {
         }
 
         Commands::DeleteStream { uri } => {
-            let S2BasinAndStreamUri { basin, stream } = uri;
+            let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let basin_client = BasinClient::new(client_config, basin);
@@ -726,7 +723,7 @@ async fn run() -> Result<(), S2CliError> {
         }
 
         Commands::GetStreamConfig { uri } => {
-            let S2BasinAndStreamUri { basin, stream } = uri;
+            let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let basin_client = BasinClient::new(client_config, basin);
@@ -738,7 +735,7 @@ async fn run() -> Result<(), S2CliError> {
         }
 
         Commands::ReconfigureStream { uri, config } => {
-            let S2BasinAndStreamUri { basin, stream } = uri;
+            let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let basin_client = BasinClient::new(client_config, basin);
@@ -762,7 +759,7 @@ async fn run() -> Result<(), S2CliError> {
         }
 
         Commands::CheckTail { uri } => {
-            let S2BasinAndStreamUri { basin, stream } = uri;
+            let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
@@ -776,7 +773,7 @@ async fn run() -> Result<(), S2CliError> {
             fencing_token,
             match_seq_num,
         } => {
-            let S2BasinAndStreamUri { basin, stream } = uri;
+            let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
@@ -801,7 +798,7 @@ async fn run() -> Result<(), S2CliError> {
             fencing_token,
             match_seq_num,
         } => {
-            let S2BasinAndStreamUri { basin, stream } = uri;
+            let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
@@ -827,7 +824,7 @@ async fn run() -> Result<(), S2CliError> {
             match_seq_num,
             format,
         } => {
-            let S2BasinAndStreamUri { basin, stream } = uri;
+            let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
@@ -900,7 +897,7 @@ async fn run() -> Result<(), S2CliError> {
             limit_bytes,
             format,
         } => {
-            let S2BasinAndStreamUri { basin, stream } = uri;
+            let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
@@ -1044,7 +1041,7 @@ async fn run() -> Result<(), S2CliError> {
             batch_bytes,
             num_batches,
         } => {
-            let S2BasinAndStreamUri { basin, stream } = uri;
+            let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let stream_client = StreamService::new(StreamClient::new(client_config, basin, stream));
