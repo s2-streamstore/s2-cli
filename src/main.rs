@@ -797,9 +797,12 @@ async fn run() -> Result<(), S2CliError> {
                 .await?;
             eprintln!(
                 "{}",
-                format!("✓ Trim requested at seq_num={}", out.start_seq_num)
-                    .green()
-                    .bold()
+                format!(
+                    "✓ Trim request for trim point {} appended at seq_num: {}",
+                    trim_point, out.start_seq_num,
+                )
+                .green()
+                .bold()
             );
         }
 
@@ -822,7 +825,7 @@ async fn run() -> Result<(), S2CliError> {
                 .await?;
             eprintln!(
                 "{}",
-                format!("✓ Fencing token set at seq_num: {}", out.start_seq_num)
+                format!("✓ Fencing token appended at seq_num: {}", out.start_seq_num)
                     .green()
                     .bold()
             );
