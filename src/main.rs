@@ -1038,6 +1038,8 @@ async fn run() -> Result<(), S2CliError> {
                     .bold()
                 );
 
+                total_data_len = 0;
+
                 writer.flush().await.expect("writer flush");
             }
         }
