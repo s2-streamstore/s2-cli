@@ -92,7 +92,9 @@ enum Commands {
     /// List basins if basin name is not provided otherwise lists streams in
     /// the basin.
     Ls {
-        /// Name of the basin to manage or S2 URI with basin and prefix.
+        /// Name of the basin to manage or S2 URI with basin and optionally prefix.
+        ///
+        /// S2 URI is of the format: s2://{basin}/{prefix}
         #[arg(value_name = "BASIN|S2_URI")]
         uri: Option<S2BasinAndMaybeStreamUri>,
 
@@ -157,7 +159,9 @@ enum Commands {
 
     /// List streams.
     ListStreams {
-        /// Name of the basin to manage or S2 URI with basin and prefix.
+        /// Name of the basin to manage or S2 URI with basin and optionally prefix.
+        ///
+        /// S2 URI is of the format: s2://{basin}/{prefix}
         #[arg(value_name = "BASIN|S2_URI")]
         uri: S2BasinAndMaybeStreamUri,
 
@@ -786,9 +790,12 @@ async fn run() -> Result<(), S2CliError> {
                 .await?;
             eprintln!(
                 "{}",
-                format!("✓ Trim requested at seq_num={}", out.start_seq_num)
-                    .green()
-                    .bold()
+                format!(
+                    "✓ Trim request for trim point {} appended at seq_num: {}",
+                    trim_point, out.start_seq_num,
+                )
+                .green()
+                .bold()
             );
         }
 
@@ -811,7 +818,7 @@ async fn run() -> Result<(), S2CliError> {
                 .await?;
             eprintln!(
                 "{}",
-                format!("✓ Fencing token set at seq_num: {}", out.start_seq_num)
+                format!("✓ Fencing token appended at seq_num: {}", out.start_seq_num)
                     .green()
                     .bold()
             );
