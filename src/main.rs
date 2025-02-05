@@ -23,7 +23,7 @@ use s2::{
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
         AppendRecord, AppendRecordBatch, BasinInfo, CommandRecord, ConvertError, FencingToken,
-        ReadOutput, StreamInfo,
+        MeteredBytes as _, ReadOutput, StreamInfo,
     },
 };
 use stream::{RecordStream, StreamService};
@@ -912,7 +912,10 @@ async fn run() -> Result<(), S2CliError> {
                             Some(read_result) => {
                                 match read_result {
                                     Ok(ReadOutput::Batch(sequenced_record_batch)) => {
-                                        match (
+                                        let num_records = sequenced_record_batch.records.len();
+                                        let mut batch_len = 0;
+
+                                        let seq_range = match (
                                             sequenced_record_batch.records.first(),
                                             sequenced_record_batch.records.last(),
                                         ) {
@@ -920,6 +923,8 @@ async fn run() -> Result<(), S2CliError> {
                                             _ => panic!("empty batch"),
                                         };
                                         for sequenced_record in sequenced_record_batch.records {
+                                            batch_len += sequenced_record.metered_bytes();
+
                                             if let Some(command_record) = sequenced_record.as_command_record() {
                                                 let (cmd, description) = match command_record {
                                                     CommandRecord::Fence { fencing_token } => (
@@ -963,6 +968,16 @@ async fn run() -> Result<(), S2CliError> {
                                                     .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
                                             }
                                         }
+
+                                        eprintln!(
+                                            "{}",
+                                            format!(
+                                                "⦿ {batch_len} bytes \
+                                                ({num_records} records in range {seq_range:?})",
+                                            )
+                                            .blue()
+                                            .bold()
+                                        );
                                     }
 
                                     Ok(ReadOutput::FirstSeqNum(seq_num)) => {
