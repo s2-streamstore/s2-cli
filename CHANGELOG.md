@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.4] - 2025-02-05
+
+### Bug Fixes
+
+- Improve output messages for command record appends ([#119](https://github.com/s2-streamstore/s2-cli/issues/119))
+- Metered bytes log ([#121](https://github.com/s2-streamstore/s2-cli/issues/121))
+
+### Miscellaneous Tasks
+
+- Improve read cli command docs ([#117](https://github.com/s2-streamstore/s2-cli/issues/117))
+- Add uri args struct ([#120](https://github.com/s2-streamstore/s2-cli/issues/120))
+
 ## [0.8.3] - 2025-01-22
 
 ### Miscellaneous Tasks
