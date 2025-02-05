@@ -31,7 +31,6 @@ use tokio::{
     fs::{File, OpenOptions},
     io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufWriter},
     select,
-    time::Instant,
 };
 use tokio::{signal, sync::mpsc};
 use tokio_stream::{
@@ -913,17 +912,11 @@ async fn run() -> Result<(), S2CliError> {
                 .await?;
             let mut writer = output.into_writer().await.unwrap();
 
-            let mut start = None;
-            let mut total_data_len = 0;
-
             loop {
                 select! {
                     maybe_read_result = read_output_stream.next() => {
                         match maybe_read_result {
                             Some(read_result) => {
-                                if start.is_none() {
-                                    start = Some(Instant::now());
-                                }
                                 match read_result {
                                     Ok(ReadOutput::Batch(sequenced_record_batch)) => {
                                         let num_records = sequenced_record_batch.records.len();
@@ -982,18 +975,12 @@ async fn run() -> Result<(), S2CliError> {
                                                     .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
                                             }
                                         }
-                                        total_data_len += batch_len;
-
-                                        let throughput_mibps = (total_data_len as f64
-                                            / start.unwrap().elapsed().as_secs_f64())
-                                            / 1024.0
-                                            / 1024.0;
 
                                         eprintln!(
                                             "{}",
                                             format!(
-                                                "⦿ {throughput_mibps:.2} MiB/s \
-                                                    ({num_records} records in range {seq_range:?})",
+                                                "⦿ {batch_len} bytes \
+                                                ({num_records} records in range {seq_range:?})",
                                             )
                                             .blue()
                                             .bold()
@@ -1022,21 +1009,6 @@ async fn run() -> Result<(), S2CliError> {
                         break;
                     }
                 }
-                let total_elapsed_time = start.unwrap().elapsed().as_secs_f64();
-
-                let total_throughput_mibps =
-                    (total_data_len as f64 / total_elapsed_time) / 1024.0 / 1024.0;
-
-                eprintln!(
-                    "{}",
-                    format!(
-                        "{total_data_len} metered bytes in \
-                                {total_elapsed_time} seconds \
-                                at {total_throughput_mibps:.2} MiB/s"
-                    )
-                    .yellow()
-                    .bold()
-                );
 
                 writer.flush().await.expect("writer flush");
             }
