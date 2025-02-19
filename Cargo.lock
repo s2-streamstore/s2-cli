@@ -1635,9 +1635,9 @@ checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 
 [[package]]
 name = "streamstore"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8030df5e5c1a2714b1b9b8a83df7a9622d9d871768b30a94bcd0186ce4e31625"
+checksum = "fb558b348addda907fe7cb9f90068ab7a609c2b1968a6de9f366ce7251c2b0b4"
 dependencies = [
  "async-stream",
  "backon",
