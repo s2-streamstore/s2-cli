@@ -563,7 +563,7 @@ async fn run() -> Result<(), S2CliError> {
             (Some(s), None) | (None, Some(s)) => Some(s),
             (None, None) => None,
         };
-        let basin_client = BasinClient::new(client_config, basin);
+        let basin_client = BasinClient::new(client_config, basin.clone());
         let streams = BasinService::new(basin_client)
             .list_streams(
                 prefix.unwrap_or_default(),
@@ -582,7 +582,8 @@ async fn run() -> Result<(), S2CliError> {
             };
 
             println!(
-                "{} {} {}",
+                "s2://{}/{} {} {}",
+                basin,
                 name,
                 date_time(created_at).to_string().green(),
                 deleted_at
