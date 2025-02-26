@@ -40,6 +40,7 @@ use tokio_stream::{
 use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{BasinConfig, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StreamConfig};
+use updates::check_for_updates;
 
 mod account;
 mod basin;
@@ -50,6 +51,7 @@ mod error;
 mod formats;
 mod ping;
 mod types;
+mod updates;
 
 const STYLES: styling::Styles = styling::Styles::styled()
     .header(styling::AnsiColor::Green.on_default().bold())
@@ -85,6 +87,9 @@ enum Commands {
         #[command(subcommand)]
         action: ConfigActions,
     },
+
+    /// Check for updates.    
+    VersionCheck,
 
     /// List basins or streams in a basin.
     ///
@@ -1199,6 +1204,26 @@ async fn run() -> Result<(), S2CliError> {
             print_stats(LatencyStats::generate(acks), "Append Acknowledgement");
             eprintln!(/* Empty line */);
             print_stats(LatencyStats::generate(e2es), "End-to-End");
+        }
+
+        Commands::VersionCheck => {
+            if let Some(version) = check_for_updates().await {
+                eprintln!(
+                    "{}",
+                    format!("Latest available version: {}", version)
+                        .green()
+                        .bold()
+                );
+
+                eprintln!(
+                    "{}",
+                    "\t> To update, visit https://s2.dev/docs/quickstart#get-started-with-the-cli"
+                        .cyan()
+                        .bold()
+                );
+            } else {
+                eprintln!("{}", "✓ Already up-to-date".green().bold());
+            }
         }
     };
 

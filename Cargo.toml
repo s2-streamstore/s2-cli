@@ -25,6 +25,7 @@ humantime = "2.1.0"
 indicatif = "0.17.9"
 miette = { version = "7.4.0", features = ["fancy"] }
 rand = "0.8.5"
+reqwest = { version = "0.12.12", features = ["json"] }
 serde = { version = "1.0.217", features = ["derive"] }
 serde_json = "1.0.137"
 streamstore = "0.8.2"
