@@ -1,3 +1,6 @@
+use crate::error::{ServiceError, ServiceErrorContext, ServiceStatus};
+use async_stream::stream;
+use futures::Stream;
 use s2::{
     client::Client,
     types::{
@@ -5,8 +8,6 @@ use s2::{
         ListBasinsRequest, ListBasinsResponse, ReconfigureBasinRequest, StreamConfig,
     },
 };
-
-use crate::error::{ServiceError, ServiceErrorContext};
 
 pub struct AccountService {
     client: Client,
@@ -17,7 +18,44 @@ impl AccountService {
         Self { client }
     }
 
-    pub async fn list_basins(
+    pub fn list_basins(
+        &self,
+        prefix: String,
+        mut start_after: String,
+        mut limit: Option<usize>,
+        no_auto_paginate: bool,
+    ) -> impl Stream<Item = Result<ListBasinsResponse, ServiceError>> + '_ {
+        stream! {
+            loop {
+                let resp = self
+                    .list_basins_internal(prefix.to_owned(), start_after.to_string(), limit.map(|l| l.min(1000)))
+                    .await;
+
+                match resp.as_ref() {
+                    Ok(ListBasinsResponse { basins, has_more }) if *has_more && !no_auto_paginate => {
+                            start_after = basins
+                                .last()
+                                .map(|s| s.name.clone())
+                                .ok_or(ServiceError::new(ServiceErrorContext::ListBasins, ServiceStatus::default()))?;
+                            if let Some(l) = limit {
+                                if l > basins.len() {
+                                    limit = Some(l - basins.len());
+                                } else {
+                                    // Limit has been exhausted.
+                                    return yield resp;
+                                }
+                            }
+                            yield resp;
+                    },
+                    _ => {
+                       return yield resp;
+                    }
+
+                }
+            }
+        }
+    }
+    async fn list_basins_internal(
         &self,
         prefix: String,
         start_after: String,

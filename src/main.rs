@@ -108,6 +108,10 @@ enum Commands {
         /// Number of results, upto a maximum of 1000.
         #[arg(short = 'n', long)]
         limit: Option<usize>,
+
+        /// Disable automatic following of pagination responses, which can make multiple RPC calls.
+        #[arg(long, default_value_t = false)]
+        no_auto_paginate: bool,
     },
 
     /// List basins.
@@ -123,6 +127,10 @@ enum Commands {
         /// Number of results, upto a maximum of 1000.
         #[arg(short = 'n', long)]
         limit: Option<usize>,
+
+        /// Disable automatic following of pagination responses, which can make multiple RPC calls.
+        #[arg(long, default_value_t = false)]
+        no_auto_paginate: bool,
     },
 
     /// Create a basin.
@@ -175,6 +183,10 @@ enum Commands {
         /// Number of results, upto a maximum of 1000.
         #[arg(short = 'n', long)]
         limit: Option<usize>,
+
+        /// Disable automatic following of pagination responses, which can make multiple RPC calls.
+        #[arg(long, default_value_t = false)]
+        no_auto_paginate: bool,
     },
 
     /// Create a stream.
@@ -520,25 +532,31 @@ async fn run() -> Result<(), S2CliError> {
         prefix: Option<String>,
         start_after: Option<String>,
         limit: Option<usize>,
+        no_auto_paginate: bool,
     ) -> Result<(), S2CliError> {
         let account_service = AccountService::new(Client::new(client_config));
-        let response = account_service
-            .list_basins(
-                prefix.unwrap_or_default(),
-                start_after.unwrap_or_default(),
-                limit,
-            )
-            .await?;
-        for basin_info in response.basins {
-            let BasinInfo { name, state, .. } = basin_info;
+        let basin_response_stream = account_service.list_basins(
+            prefix.unwrap_or_default(),
+            start_after.unwrap_or_default(),
+            limit,
+            no_auto_paginate,
+        );
 
-            let state = match state {
-                s2::types::BasinState::Active => state.to_string().green(),
-                s2::types::BasinState::Deleting => state.to_string().red(),
-                _ => state.to_string().yellow(),
-            };
-            println!("{} {}", name, state);
+        tokio::pin!(basin_response_stream);
+
+        while let Some(response) = basin_response_stream.next().await {
+            for basin_info in response?.basins {
+                let BasinInfo { name, state, .. } = basin_info;
+
+                let state = match state {
+                    s2::types::BasinState::Active => state.to_string().green(),
+                    s2::types::BasinState::Deleting => state.to_string().red(),
+                    _ => state.to_string().yellow(),
+                };
+                println!("{} {}", name, state);
+            }
         }
+
         Ok(())
     }
 
@@ -548,6 +566,7 @@ async fn run() -> Result<(), S2CliError> {
         prefix: Option<String>,
         start_after: Option<String>,
         limit: Option<usize>,
+        no_auto_paginate: bool,
     ) -> Result<(), S2CliError> {
         let S2BasinAndMaybeStreamUri {
             basin,
@@ -563,34 +582,40 @@ async fn run() -> Result<(), S2CliError> {
             (Some(s), None) | (None, Some(s)) => Some(s),
             (None, None) => None,
         };
-        let basin_client = BasinClient::new(client_config, basin.clone());
-        let streams = BasinService::new(basin_client)
-            .list_streams(
-                prefix.unwrap_or_default(),
-                start_after.unwrap_or_default(),
-                limit,
-            )
-            .await?;
-        for StreamInfo {
-            name,
-            created_at,
-            deleted_at,
-        } in streams
-        {
-            let date_time = |time: u32| {
-                humantime::format_rfc3339_seconds(UNIX_EPOCH + Duration::from_secs(time as u64))
-            };
 
-            println!(
-                "s2://{}/{} {} {}",
-                basin,
+        let basin_service = BasinService::new(BasinClient::new(client_config, basin.clone()));
+        let streams = basin_service.list_streams(
+            prefix.unwrap_or_default(),
+            start_after.unwrap_or_default(),
+            limit,
+            no_auto_paginate,
+        );
+
+        tokio::pin!(streams);
+
+        while let Some(stream) = streams.next().await {
+            for StreamInfo {
                 name,
-                date_time(created_at).to_string().green(),
-                deleted_at
-                    .map(|d| date_time(d).to_string().red())
-                    .unwrap_or_default()
-            );
+                created_at,
+                deleted_at,
+            } in stream?.streams
+            {
+                let date_time = |time: u32| {
+                    humantime::format_rfc3339_seconds(UNIX_EPOCH + Duration::from_secs(time as u64))
+                };
+
+                println!(
+                    "s2://{}/{} {} {}",
+                    basin,
+                    name,
+                    date_time(created_at).to_string().green(),
+                    deleted_at
+                        .map(|d| date_time(d).to_string().red())
+                        .unwrap_or_default()
+                );
+            }
         }
+
         Ok(())
     }
 
@@ -611,13 +636,22 @@ async fn run() -> Result<(), S2CliError> {
             prefix,
             start_after,
             limit,
+            no_auto_paginate,
         } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             if let Some(uri) = uri {
-                list_streams(client_config, uri, prefix, start_after, limit).await?;
+                list_streams(
+                    client_config,
+                    uri,
+                    prefix,
+                    start_after,
+                    limit,
+                    no_auto_paginate,
+                )
+                .await?;
             } else {
-                list_basins(client_config, prefix, start_after, limit).await?;
+                list_basins(client_config, prefix, start_after, limit, no_auto_paginate).await?;
             }
         }
 
@@ -625,10 +659,11 @@ async fn run() -> Result<(), S2CliError> {
             prefix,
             start_after,
             limit,
+            no_auto_paginate,
         } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
-            list_basins(client_config, prefix, start_after, limit).await?;
+            list_basins(client_config, prefix, start_after, limit, no_auto_paginate).await?;
         }
 
         Commands::CreateBasin { basin, config } => {
@@ -698,10 +733,19 @@ async fn run() -> Result<(), S2CliError> {
             prefix,
             start_after,
             limit,
+            no_auto_paginate,
         } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
-            list_streams(client_config, uri, prefix, start_after, limit).await?;
+            list_streams(
+                client_config,
+                uri,
+                prefix,
+                start_after,
+                limit,
+                no_auto_paginate,
+            )
+            .await?;
         }
 
         Commands::CreateStream { uri, config } => {
