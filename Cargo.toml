@@ -13,6 +13,7 @@ name = "s2"
 path = "src/main.rs"
 
 [dependencies]
+async-stream = "0.3.6"
 base64ct = { version = "1.6.0", features = ["alloc"] }
 bytes = "1.9.0"
 clap = { version = "4.5.27", features = ["derive"] }
@@ -34,7 +35,6 @@ tokio-stream = { version = "0.1.17", features = ["io-util"] }
 toml = "0.8.19"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-async-stream = "0.3.6"
 
 [profile.release]
 lto = true
