@@ -1667,6 +1667,7 @@ dependencies = [
 name = "streamstore-cli"
 version = "0.8.4"
 dependencies = [
+ "async-stream",
  "base64ct",
  "bytes",
  "clap",
