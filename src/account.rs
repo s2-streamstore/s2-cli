@@ -77,6 +77,7 @@ impl AccountService {
         basin: BasinName,
         storage_class: Option<crate::types::StorageClass>,
         retention_policy: Option<crate::types::RetentionPolicy>,
+        create_stream_on_append: bool,
     ) -> Result<BasinInfo, ServiceError> {
         let mut stream_config = StreamConfig::new();
 
@@ -90,6 +91,7 @@ impl AccountService {
 
         let basin_config = BasinConfig {
             default_stream_config: Some(stream_config),
+            create_stream_on_append,
         };
 
         let create_basin_req = CreateBasinRequest::new(basin).with_config(basin_config);

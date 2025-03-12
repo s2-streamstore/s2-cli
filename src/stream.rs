@@ -1,12 +1,12 @@
 use colored::Colorize;
 use s2::{
+    Streaming,
     batching::{AppendRecordsBatchingOpts, AppendRecordsBatchingStream},
     client::StreamClient,
     types::{
         AppendInput, AppendOutput, AppendRecordBatch, CommandRecord, FencingToken, ReadLimit,
         ReadOutput, ReadSessionRequest,
     },
-    Streaming,
 };
 
 use futures::{Stream, StreamExt};

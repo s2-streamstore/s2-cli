@@ -10,7 +10,7 @@ use std::{
 use account::AccountService;
 use base64ct::{Base64, Encoding};
 use basin::BasinService;
-use clap::{builder::styling, Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum, builder::styling};
 use colored::*;
 use config::{config_path, create_config};
 use error::{S2CliError, ServiceError, ServiceErrorContext};
@@ -34,8 +34,8 @@ use tokio::{
 };
 use tokio::{signal, sync::mpsc};
 use tokio_stream::{
-    wrappers::{LinesStream, ReceiverStream},
     Stream, StreamExt,
+    wrappers::{LinesStream, ReceiverStream},
 };
 use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
@@ -679,7 +679,12 @@ async fn run() -> Result<(), S2CliError> {
                 None => (None, None),
             };
             let BasinInfo { state, .. } = account_service
-                .create_basin(basin.into(), storage_class, retention_policy)
+                .create_basin(
+                    basin.into(),
+                    storage_class,
+                    retention_policy,
+                    config.create_stream_on_append,
+                )
                 .await?;
 
             let message = match state {

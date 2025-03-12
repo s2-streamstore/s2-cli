@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use rand::{distributions::Uniform, Rng};
+use rand::{Rng, distributions::Uniform};
 use s2::{
     batching::AppendRecordsBatchingOpts,
     types::{AppendOutput, AppendRecord, ReadOutput, SequencedRecord, SequencedRecordBatch},
