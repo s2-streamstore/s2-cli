@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] - 2025-03-12
+
+### Features
+
+- Auto-paginate for stream and basin list ([#128](https://github.com/s2-streamstore/s2-cli/issues/128))
+
+### Bug Fixes
+
+- Ls to return fully qualified s2 uri ([#126](https://github.com/s2-streamstore/s2-cli/issues/126))
+
+### Miscellaneous Tasks
+
+- Remove unused deps + bump sdk version ([#125](https://github.com/s2-streamstore/s2-cli/issues/125))
+- *(release)* Upgrade SDK ([#129](https://github.com/s2-streamstore/s2-cli/issues/129))
+
 ## [0.8.4] - 2025-02-05
 
 ### Bug Fixes
