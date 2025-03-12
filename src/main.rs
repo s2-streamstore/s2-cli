@@ -679,7 +679,12 @@ async fn run() -> Result<(), S2CliError> {
                 None => (None, None),
             };
             let BasinInfo { state, .. } = account_service
-                .create_basin(basin.into(), storage_class, retention_policy)
+                .create_basin(
+                    basin.into(),
+                    storage_class,
+                    retention_policy,
+                    config.create_stream_on_append,
+                )
                 .await?;
 
             let message = match state {
