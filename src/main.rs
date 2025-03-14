@@ -683,7 +683,7 @@ async fn run() -> Result<(), S2CliError> {
                     basin.into(),
                     storage_class,
                     retention_policy,
-                    config.create_stream_on_append,
+                    config.create_stream_on_append.unwrap_or_default(),
                 )
                 .await?;
 
@@ -724,7 +724,9 @@ async fn run() -> Result<(), S2CliError> {
                     mask.push("default_stream_config.retention_policy".to_owned());
                 }
             }
-
+            if config.create_stream_on_append.is_some() {
+                mask.push("create_stream_on_append".to_owned());
+            }
             let config: BasinConfig = account_service
                 .reconfigure_basin(basin.into(), config.into(), mask)
                 .await?

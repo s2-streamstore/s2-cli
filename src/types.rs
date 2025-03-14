@@ -146,7 +146,7 @@ pub struct BasinConfig {
     pub default_stream_config: Option<StreamConfig>,
     /// Create stream on append with basin defaults if it doesn't exist.
     #[arg(short = 'c', long)]
-    pub create_stream_on_append: bool,
+    pub create_stream_on_append: Option<bool>,
 }
 
 #[derive(Parser, Debug, Clone, Serialize)]
@@ -190,7 +190,7 @@ impl From<BasinConfig> for s2::types::BasinConfig {
         } = config;
         s2::types::BasinConfig {
             default_stream_config: default_stream_config.map(Into::into),
-            create_stream_on_append,
+            create_stream_on_append: create_stream_on_append.unwrap_or_default(),
         }
     }
 }
@@ -252,7 +252,7 @@ impl From<s2::types::BasinConfig> for BasinConfig {
     fn from(config: s2::types::BasinConfig) -> Self {
         BasinConfig {
             default_stream_config: config.default_stream_config.map(Into::into),
-            create_stream_on_append: config.create_stream_on_append,
+            create_stream_on_append: Some(config.create_stream_on_append),
         }
     }
 }
