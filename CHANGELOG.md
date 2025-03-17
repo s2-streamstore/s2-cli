@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0] - 2025-03-14
+
+### Bug Fixes
+
+- `--create-stream-on-append` to accept explicit bool ([#131](https://github.com/s2-streamstore/s2-cli/issues/131))
+
 ## [0.9.0] - 2025-03-12
 
 ### Features
