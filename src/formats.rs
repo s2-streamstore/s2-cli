@@ -162,6 +162,7 @@ mod json {
 
     #[derive(Debug, Clone, Serialize)]
     struct SerializableSequencedRecord<'a, const BIN_SAFE: bool> {
+        timestamp: u64,
         seq_num: u64,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         headers: Vec<(CowStr<'a, BIN_SAFE>, CowStr<'a, BIN_SAFE>)>,
@@ -174,6 +175,7 @@ mod json {
     {
         fn from(value: &'a SequencedRecord) -> Self {
             let SequencedRecord {
+                timestamp,
                 seq_num,
                 headers,
                 body,
@@ -187,6 +189,7 @@ mod json {
             let body: CowStr<BIN_SAFE> = body.as_ref().into();
 
             SerializableSequencedRecord {
+                timestamp: *timestamp,
                 seq_num: *seq_num,
                 headers,
                 body,
@@ -218,6 +221,7 @@ mod json {
 
     #[derive(Debug, Clone, Deserialize)]
     struct DeserializableAppendRecord<const BIN_SAFE: bool> {
+        timestamp: Option<u64>,
         #[serde(default)]
         headers: Vec<(OwnedCowStr<BIN_SAFE>, OwnedCowStr<BIN_SAFE>)>,
         #[serde(default)]
@@ -228,9 +232,14 @@ mod json {
         type Error = ConvertError;
 
         fn try_from(value: DeserializableAppendRecord<BIN_SAFE>) -> Result<Self, Self::Error> {
-            let DeserializableAppendRecord { headers, body } = value;
+            let DeserializableAppendRecord {
+                timestamp,
+                headers,
+                body,
+            } = value;
 
             let parts = AppendRecordParts {
+                timestamp,
                 headers: headers
                     .into_iter()
                     .map(|(name, value)| {

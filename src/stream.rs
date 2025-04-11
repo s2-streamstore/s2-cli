@@ -4,8 +4,8 @@ use s2::{
     batching::{AppendRecordsBatchingOpts, AppendRecordsBatchingStream},
     client::StreamClient,
     types::{
-        AppendInput, AppendOutput, AppendRecordBatch, CommandRecord, FencingToken, ReadLimit,
-        ReadOutput, ReadSessionRequest,
+        AppendInput, AppendOutput, AppendRecordBatch, Command, CommandRecord, FencingToken,
+        ReadLimit, ReadOutput, ReadSessionRequest,
     },
 };
 
@@ -77,9 +77,9 @@ impl StreamService {
         fencing_token: Option<FencingToken>,
         match_seq_num: Option<u64>,
     ) -> Result<AppendOutput, ServiceError> {
-        let context = match &cmd {
-            CommandRecord::Fence { .. } => ServiceErrorContext::Fence,
-            CommandRecord::Trim { .. } => ServiceErrorContext::Trim,
+        let context = match &cmd.command {
+            Command::Fence { .. } => ServiceErrorContext::Fence,
+            Command::Trim { .. } => ServiceErrorContext::Trim,
         };
         let records = AppendRecordBatch::try_from_iter([cmd]).expect("single valid append record");
         let append_input = AppendInput {

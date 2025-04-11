@@ -22,8 +22,8 @@ use s2::{
     batching::AppendRecordsBatchingOpts,
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
-        AppendRecord, AppendRecordBatch, BasinInfo, CommandRecord, ConvertError, FencingToken,
-        MeteredBytes as _, ReadOutput, StreamInfo,
+        AppendRecord, AppendRecordBatch, BasinInfo, Command, CommandRecord, ConvertError,
+        FencingToken, MeteredBytes as _, ReadOutput, StreamInfo,
     },
 };
 use stream::{RecordStream, StreamService};
@@ -985,15 +985,15 @@ async fn run() -> Result<(), S2CliError> {
                                             batch_len += sequenced_record.metered_bytes();
 
                                             if let Some(command_record) = sequenced_record.as_command_record() {
-                                                let (cmd, description) = match command_record {
-                                                    CommandRecord::Fence { fencing_token } => (
+                                                let (cmd, description) = match command_record.command {
+                                                    Command::Fence { fencing_token } => (
                                                         "fence",
                                                         format!(
                                                             "FencingToken({})",
                                                             Base64::encode_string(fencing_token.as_ref()),
                                                         ),
                                                     ),
-                                                    CommandRecord::Trim { seq_num } => (
+                                                    Command::Trim { seq_num } => (
                                                         "trim",
                                                         format!("TrimPoint({seq_num})"),
                                                     ),
