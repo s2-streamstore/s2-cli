@@ -266,6 +266,114 @@ impl From<s2::types::StreamConfig> for StreamConfig {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum ResourceSet<const MIN: usize, const MAX: usize> {
+    Exact(String),
+    Prefix(String),
+}
+
+impl<const MIN: usize, const MAX: usize> FromStr for ResourceSet<MIN, MAX> {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let len = s.len();
+
+        if s.starts_with('=') {
+            if len <= 1 {
+                return Err("Exact resource must have a value after '='".to_string());
+            }
+            let value = &s[1..];
+            let value_len = value.len();
+            if value_len > MAX || value_len < MIN {
+                return Err(format!(
+                    "Exact value '{}' is too long: length {} must be between {} and {}",
+                    value, value_len, MIN, MAX
+                ));
+            }
+            Ok(ResourceSet::Exact(value.to_string()))
+        } else {
+            if len > MAX {
+                return Err(format!(
+                    "Prefix value '{}' is too long: length {} exceeds maximum {}",
+                    s, len, MAX
+                ));
+            }
+            Ok(ResourceSet::Prefix(s.to_string()))
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PermittedOperationGroups {
+    pub account: Option<ReadWritePermissions>,
+    pub basin: Option<ReadWritePermissions>,
+    pub stream: Option<ReadWritePermissions>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReadWritePermissions {
+    pub read: bool,
+    pub write: bool,
+}
+
+pub fn parse_op_groups(s: &str) -> Result<PermittedOperationGroups, String> {
+    let mut account = None;
+    let mut basin = None;
+    let mut stream = None;
+
+    if s.is_empty() {
+        return Ok(PermittedOperationGroups {
+            account,
+            basin,
+            stream,
+        });
+    }
+
+    for part in s.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let (key, value) = part
+            .split_once('=')
+            .ok_or_else(|| format!("Invalid op_group format: '{}'. Expected 'key=value'", part))?;
+        let perms = parse_permissions(value)?;
+        match key {
+            "account" => account = Some(perms),
+            "basin" => basin = Some(perms),
+            "stream" => stream = Some(perms),
+            _ => {
+                return Err(format!(
+                    "Invalid op_group key: '{}'. Expected 'account', 'basin', or 'stream'",
+                    key
+                ));
+            }
+        }
+    }
+
+    Ok(PermittedOperationGroups {
+        account,
+        basin,
+        stream,
+    })
+}
+
+fn parse_permissions(s: &str) -> Result<ReadWritePermissions, String> {
+    let mut read = false;
+    let mut write = false;
+    for c in s.chars() {
+        match c {
+            'r' => read = true,
+            'w' => write = true,
+            _ => return Err(format!("Invalid permission character: {}", c)),
+        }
+    }
+    if !read && !write {
+        return Err("At least one permission ('r' or 'w') must be specified".to_string());
+    }
+    Ok(ReadWritePermissions { read, write })
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{error::S2UriParseError, types::S2BasinAndStreamUri};

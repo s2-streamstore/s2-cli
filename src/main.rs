@@ -23,7 +23,7 @@ use s2::{
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
         AppendRecord, AppendRecordBatch, BasinInfo, Command, CommandRecord, ConvertError,
-        FencingToken, MeteredBytes as _, ReadOutput, StreamInfo,
+        FencingToken, MeteredBytes as _, Operation, ReadOutput, StreamInfo,
     },
 };
 use stream::{RecordStream, StreamService};
@@ -39,7 +39,10 @@ use tokio_stream::{
 };
 use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
-use types::{BasinConfig, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StreamConfig};
+use types::{
+    BasinConfig, PermittedOperationGroups, ResourceSet, S2BasinAndMaybeStreamUri,
+    S2BasinAndStreamUri, S2BasinUri, StreamConfig, parse_op_groups,
+};
 
 mod account;
 mod basin;
@@ -162,6 +165,68 @@ enum Commands {
         /// Configuration to apply.
         #[command(flatten)]
         config: BasinConfig,
+    },
+
+    IssueAccessToken {
+        /// Access token ID.
+        #[arg(long)]
+        id: String,
+
+        /// Expiration time in seconds since Unix epoch.
+        #[arg(long)]
+        expires_at: Option<u32>,
+
+        /// Namespace streams based on the configured stream-level scope, which must be a prefix.
+        /// Stream name arguments will be automatically prefixed, and the prefix will be stripped
+        /// when listing streams.
+        #[arg(long, default_value_t = false)]
+        auto_prefix_streams: bool,
+
+        /// Basin name restrictions.
+        #[arg(long)]
+        basins: Option<ResourceSet<8, 48>>,
+
+        /// Stream name restrictions.
+        #[arg(long)]
+        streams: Option<ResourceSet<1, 512>>,
+
+        /// Token ID restrictions.
+        #[arg(long)]
+        tokens: Option<ResourceSet<1, 50>>,
+
+        /// Access permissions at operation group level.
+        #[arg(long, value_parser = parse_op_groups)]
+        op_groups: Option<PermittedOperationGroups>,
+
+        /// Operations allowed for the token.
+        /// A union of allowed operations and groups is used as an effective set of allowed operations.
+        #[arg(long, value_delimiter = ',')]
+        ops: Vec<Operation>,
+    },
+
+    /// Revoke an access token.
+    RevokeAccessToken {
+        /// ID of the access token to revoke.        
+        id: String,
+    },
+
+    /// List access tokens.
+    ListAccessTokens {
+        /// List access tokens that begin with this prefix.
+        #[arg(short = 'p', long, default_value = "")]
+        prefix: Option<String>,
+
+        /// Only return access tokens that lexicographically start after this token ID.
+        #[arg(short = 's', long, default_value = "")]
+        start_after: Option<String>,
+
+        /// Number of results, upto a maximum of 1000.
+        #[arg(short = 'n', long)]
+        limit: Option<usize>,
+
+        /// Disable automatic following of pagination responses, which can make multiple RPC calls.
+        #[arg(long, default_value_t = false)]
+        no_auto_paginate: bool,
     },
 
     /// List streams.
