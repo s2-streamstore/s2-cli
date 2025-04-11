@@ -22,8 +22,8 @@ use s2::{
     batching::AppendRecordsBatchingOpts,
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
-        AppendRecord, AppendRecordBatch, BasinInfo, Command, CommandRecord, ConvertError,
-        FencingToken, MeteredBytes as _, Operation, ReadOutput, StreamInfo,
+        AccessTokenId, AppendRecord, AppendRecordBatch, BasinInfo, Command, CommandRecord,
+        ConvertError, FencingToken, MeteredBytes as _, Operation, ReadOutput, StreamInfo,
     },
 };
 use stream::{RecordStream, StreamService};
@@ -170,7 +170,7 @@ enum Commands {
     IssueAccessToken {
         /// Access token ID.
         #[arg(long)]
-        id: String,
+        id: AccessTokenId,
 
         /// Expiration time in seconds since Unix epoch.
         #[arg(long)]
@@ -207,7 +207,7 @@ enum Commands {
     /// Revoke an access token.
     RevokeAccessToken {
         /// ID of the access token to revoke.        
-        id: String,
+        id: AccessTokenId,
     },
 
     /// List access tokens.
@@ -684,6 +684,36 @@ async fn run() -> Result<(), S2CliError> {
         Ok(())
     }
 
+    async fn list_tokens(
+        client_config: ClientConfig,
+        prefix: Option<String>,
+        start_after: Option<String>,
+        limit: Option<usize>,
+        no_auto_paginate: bool,
+    ) -> Result<(), S2CliError> {
+        let account_service = AccountService::new(Client::new(client_config));
+        let tokens = account_service.list_access_tokens(
+            prefix.unwrap_or_default(),
+            start_after.unwrap_or_default(),
+            limit,
+            no_auto_paginate,
+        );
+
+        tokio::pin!(tokens);
+
+        while let Some(token) = tokens.next().await {
+            for token_info in token?.tokens {
+                println!(
+                    "{} {}",
+                    token_info.id.parse::<String>().expect("id"),
+                    token_info.expires_at.expect("expires_at")
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     match commands.command {
         Commands::Config { action } => match action {
             ConfigActions::Set { auth_token } => {
@@ -695,7 +725,6 @@ async fn run() -> Result<(), S2CliError> {
                 );
             }
         },
-
         Commands::Ls {
             uri,
             prefix,
@@ -719,7 +748,6 @@ async fn run() -> Result<(), S2CliError> {
                 list_basins(client_config, prefix, start_after, limit, no_auto_paginate).await?;
             }
         }
-
         Commands::ListBasins {
             prefix,
             start_after,
@@ -730,7 +758,6 @@ async fn run() -> Result<(), S2CliError> {
             let client_config = client_config(cfg.auth_token)?;
             list_basins(client_config, prefix, start_after, limit, no_auto_paginate).await?;
         }
-
         Commands::CreateBasin { basin, config } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
@@ -758,7 +785,6 @@ async fn run() -> Result<(), S2CliError> {
             };
             eprintln!("{message}");
         }
-
         Commands::DeleteBasin { basin } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
@@ -766,7 +792,6 @@ async fn run() -> Result<(), S2CliError> {
             account_service.delete_basin(basin.into()).await?;
             eprintln!("{}", "✓ Basin deletion requested".green().bold());
         }
-
         Commands::GetBasinConfig { basin } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
@@ -775,7 +800,6 @@ async fn run() -> Result<(), S2CliError> {
             let basin_config: BasinConfig = basin_config.into();
             println!("{}", serde_json::to_string_pretty(&basin_config)?);
         }
-
         Commands::ReconfigureBasin { basin, config } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
@@ -799,7 +823,6 @@ async fn run() -> Result<(), S2CliError> {
             eprintln!("{}", "✓ Basin reconfigured".green().bold());
             println!("{}", serde_json::to_string_pretty(&config)?);
         }
-
         Commands::ListStreams {
             uri,
             prefix,
@@ -819,7 +842,6 @@ async fn run() -> Result<(), S2CliError> {
             )
             .await?;
         }
-
         Commands::CreateStream { uri, config } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
@@ -830,7 +852,6 @@ async fn run() -> Result<(), S2CliError> {
                 .await?;
             eprintln!("{}", "✓ Stream created".green().bold());
         }
-
         Commands::DeleteStream { uri } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
@@ -841,7 +862,6 @@ async fn run() -> Result<(), S2CliError> {
                 .await?;
             eprintln!("{}", "✓ Stream deletion requested".green().bold());
         }
-
         Commands::GetStreamConfig { uri } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
@@ -853,7 +873,6 @@ async fn run() -> Result<(), S2CliError> {
                 .into();
             println!("{}", serde_json::to_string_pretty(&config)?);
         }
-
         Commands::ReconfigureStream { uri, config } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
@@ -877,7 +896,6 @@ async fn run() -> Result<(), S2CliError> {
             eprintln!("{}", "✓ Stream reconfigured".green().bold());
             println!("{}", serde_json::to_string_pretty(&config)?);
         }
-
         Commands::CheckTail { uri } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
@@ -886,7 +904,6 @@ async fn run() -> Result<(), S2CliError> {
             let next_seq_num = StreamService::new(stream_client).check_tail().await?;
             println!("{}", next_seq_num);
         }
-
         Commands::Trim {
             uri,
             trim_point,
@@ -914,7 +931,6 @@ async fn run() -> Result<(), S2CliError> {
                 .bold()
             );
         }
-
         Commands::Fence {
             uri,
             new_fencing_token,
@@ -939,7 +955,6 @@ async fn run() -> Result<(), S2CliError> {
                     .bold()
             );
         }
-
         Commands::Append {
             uri,
             input,
@@ -1011,7 +1026,6 @@ async fn run() -> Result<(), S2CliError> {
                 }
             }
         }
-
         Commands::Read {
             uri,
             start_seq_num,
@@ -1097,7 +1111,7 @@ async fn run() -> Result<(), S2CliError> {
                                             "{}",
                                             format!(
                                                 "⦿ {batch_len} bytes \
-                                                ({num_records} records in range {seq_range:?})",
+                                            ({num_records} records in range {seq_range:?})",
                                             )
                                             .blue()
                                             .bold()
@@ -1130,7 +1144,6 @@ async fn run() -> Result<(), S2CliError> {
                 writer.flush().await.expect("writer flush");
             }
         }
-
         Commands::Ping {
             uri,
             interval,
@@ -1315,6 +1328,50 @@ async fn run() -> Result<(), S2CliError> {
             print_stats(LatencyStats::generate(acks), "Append Acknowledgement");
             eprintln!(/* Empty line */);
             print_stats(LatencyStats::generate(e2es), "End-to-End");
+        }
+        Commands::IssueAccessToken {
+            id,
+            expires_at,
+            auto_prefix_streams,
+            basins,
+            streams,
+            tokens,
+            op_groups,
+            ops,
+        } => {
+            let cfg = config::load_config(&config_path)?;
+            let client_config = client_config(cfg.auth_token)?;
+            let account_service = AccountService::new(Client::new(client_config));
+            let token = account_service
+                .issue_access_token(
+                    id,
+                    expires_at,
+                    auto_prefix_streams,
+                    basins,
+                    streams,
+                    tokens,
+                    op_groups,
+                    ops,
+                )
+                .await?;
+            println!("{token}");
+        }
+        Commands::RevokeAccessToken { id } => {
+            let cfg = config::load_config(&config_path)?;
+            let client_config = client_config(cfg.auth_token)?;
+            let account_service = AccountService::new(Client::new(client_config));
+            account_service.revoke_access_token(id).await?;
+            eprintln!("{}", "✓ Access token revoked".green().bold());
+        }
+        Commands::ListAccessTokens {
+            prefix,
+            start_after,
+            limit,
+            no_auto_paginate,
+        } => {
+            let cfg = config::load_config(&config_path)?;
+            let client_config = client_config(cfg.auth_token)?;
+            list_tokens(client_config, prefix, start_after, limit, no_auto_paginate).await?;
         }
     };
 

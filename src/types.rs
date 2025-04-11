@@ -272,6 +272,15 @@ pub enum ResourceSet<const MIN: usize, const MAX: usize> {
     Prefix(String),
 }
 
+impl<const MIN: usize, const MAX: usize> From<ResourceSet<MIN, MAX>> for s2::types::ResourceSet {
+    fn from(value: ResourceSet<MIN, MAX>) -> Self {
+        match value {
+            ResourceSet::Exact(s) => s2::types::ResourceSet::Exact(s),
+            ResourceSet::Prefix(s) => s2::types::ResourceSet::Prefix(s),
+        }
+    }
+}
+
 impl<const MIN: usize, const MAX: usize> FromStr for ResourceSet<MIN, MAX> {
     type Err = String;
 
@@ -310,10 +319,29 @@ pub struct PermittedOperationGroups {
     pub stream: Option<ReadWritePermissions>,
 }
 
+impl From<PermittedOperationGroups> for s2::types::PermittedOperationGroups {
+    fn from(groups: PermittedOperationGroups) -> Self {
+        s2::types::PermittedOperationGroups {
+            account: groups.account.map(Into::into),
+            basin: groups.basin.map(Into::into),
+            stream: groups.stream.map(Into::into),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ReadWritePermissions {
     pub read: bool,
     pub write: bool,
+}
+
+impl From<ReadWritePermissions> for s2::types::ReadWritePermissions {
+    fn from(permissions: ReadWritePermissions) -> Self {
+        s2::types::ReadWritePermissions {
+            read: permissions.read,
+            write: permissions.write,
+        }
+    }
 }
 
 pub fn parse_op_groups(s: &str) -> Result<PermittedOperationGroups, String> {

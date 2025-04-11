@@ -1,11 +1,15 @@
-use crate::error::{ServiceError, ServiceErrorContext, ServiceStatus};
+use crate::{
+    error::{ServiceError, ServiceErrorContext, ServiceStatus},
+    types::{PermittedOperationGroups, ResourceSet},
+};
 use async_stream::stream;
 use futures::Stream;
 use s2::{
     client::Client,
     types::{
-        BasinConfig, BasinInfo, BasinName, CreateBasinRequest, DeleteBasinRequest,
-        ListBasinsRequest, ListBasinsResponse, ReconfigureBasinRequest, StreamConfig,
+        AccessTokenId, AccessTokenInfo, BasinConfig, BasinInfo, BasinName, CreateBasinRequest,
+        DeleteBasinRequest, ListAccessTokensRequest, ListAccessTokensResponse, ListBasinsRequest,
+        ListBasinsResponse, Operation, ReconfigureBasinRequest, StreamConfig,
     },
 };
 
@@ -130,5 +134,106 @@ impl AccountService {
             .reconfigure_basin(reconfigure_basin_req)
             .await
             .map_err(|e| ServiceError::new(ServiceErrorContext::ReconfigureBasin, e))
+    }
+
+    pub async fn issue_access_token(
+        &self,
+        id: AccessTokenId,
+        expires_at: Option<u32>,
+        auto_prefix_streams: bool,
+        basins: Option<ResourceSet<8, 48>>,
+        streams: Option<ResourceSet<1, 512>>,
+        tokens: Option<ResourceSet<1, 50>>,
+        op_groups: Option<PermittedOperationGroups>,
+        ops: Vec<Operation>,
+    ) -> Result<String, ServiceError> {
+        let mut access_token_scope = s2::types::AccessTokenScope::new().with_ops(ops);
+        if let Some(basins) = basins {
+            access_token_scope = access_token_scope.with_basins(basins.into());
+        }
+        if let Some(streams) = streams {
+            access_token_scope = access_token_scope.with_streams(streams.into());
+        }
+        if let Some(tokens) = tokens {
+            access_token_scope = access_token_scope.with_tokens(tokens.into());
+        }
+        if let Some(op_groups) = op_groups {
+            access_token_scope = access_token_scope.with_op_groups(op_groups.into());
+        }
+        let mut access_token_info = s2::types::AccessTokenInfo::new(id)
+            .with_auto_prefix_streams(auto_prefix_streams)
+            .with_scope(access_token_scope);
+
+        if let Some(expires_at) = expires_at {
+            access_token_info = access_token_info.with_expires_at(expires_at);
+        }
+
+        self.client
+            .issue_access_token(access_token_info)
+            .await
+            .map_err(|e| ServiceError::new(ServiceErrorContext::IssueAccessToken, e))
+    }
+
+    pub async fn revoke_access_token(
+        &self,
+        id: AccessTokenId,
+    ) -> Result<AccessTokenInfo, ServiceError> {
+        self.client
+            .revoke_access_token(id)
+            .await
+            .map_err(|e| ServiceError::new(ServiceErrorContext::RevokeAccessToken, e))
+    }
+
+    pub fn list_access_tokens(
+        &self,
+        prefix: String,
+        mut start_after: String,
+        mut limit: Option<usize>,
+        no_auto_paginate: bool,
+    ) -> impl Stream<Item = Result<ListAccessTokensResponse, ServiceError>> + '_ {
+        stream! {
+            loop {
+                let resp = self
+                    .list_access_tokens_internal(prefix.to_owned(), start_after.to_string(), limit.map(|l| l.min(1000)))
+                    .await;
+
+                match resp.as_ref() {
+                    Ok(ListAccessTokensResponse { tokens, has_more }) if *has_more && !no_auto_paginate => {
+                            start_after = tokens
+                                .last()
+                                .map(|s| s.id.clone().into())
+                                .ok_or(ServiceError::new(ServiceErrorContext::ListAccessTokens, ServiceStatus::default()))?;
+                            if let Some(l) = limit {
+                                if l > tokens.len() {
+                                    limit = Some(l - tokens.len());
+                                } else {
+                                    return yield resp;
+                                }
+                            }
+                            yield resp;
+                    },
+                    _ => {
+                       return yield resp;
+                    }
+                }
+            }
+        }
+    }
+
+    async fn list_access_tokens_internal(
+        &self,
+        prefix: String,
+        start_after: String,
+        limit: Option<usize>,
+    ) -> Result<ListAccessTokensResponse, ServiceError> {
+        let list_access_tokens_req = ListAccessTokensRequest::new()
+            .with_prefix(prefix)
+            .with_start_after(start_after)
+            .with_limit(limit);
+
+        self.client
+            .list_access_tokens(list_access_tokens_req)
+            .await
+            .map_err(|e| ServiceError::new(ServiceErrorContext::ListAccessTokens, e))
     }
 }
