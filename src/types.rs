@@ -301,29 +301,28 @@ impl<const MIN: usize, const MAX: usize> FromStr for ResourceSet<MIN, MAX> {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let len = s.len();
+        if s.is_empty() {
+            return Ok(ResourceSet::Prefix(String::new()));
+        }
 
-        if s.starts_with('=') {
-            if len <= 1 {
-                return Err("Exact resource must have a value after '='".to_string());
-            }
-            let value = &s[1..];
-            let value_len = value.len();
-            if value_len > MAX || value_len < MIN {
+        if let Some(value) = s.strip_prefix('=') {
+            let len = value.len();
+            if len > MAX || len < MIN {
                 return Err(format!(
-                    "Exact value '{}' is too long: length {} must be between {} and {}",
-                    value, value_len, MIN, MAX
+                    "Exact value '{}' length {} must be between {} and {}",
+                    value, len, MIN, MAX
                 ));
             }
-            Ok(ResourceSet::Exact(value.to_string()))
+            Ok(ResourceSet::Exact(value.to_owned()))
         } else {
+            let len = s.len();
             if len > MAX {
                 return Err(format!(
-                    "Prefix value '{}' is too long: length {} exceeds maximum {}",
+                    "Prefix '{}' length {} exceeds maximum {}",
                     s, len, MAX
                 ));
             }
-            Ok(ResourceSet::Prefix(s.to_string()))
+            Ok(ResourceSet::Prefix(s.to_owned()))
         }
     }
 }
@@ -557,21 +556,20 @@ impl FromStr for Operation {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "unspecified" => Ok(Self::Unspecified),
-            "list-basins" | "listbasins" => Ok(Self::ListBasins),
-            "create-basin" | "createbasin" => Ok(Self::CreateBasin),
-            "delete-basin" | "deletebasin" => Ok(Self::DeleteBasin),
-            "reconfigure-basin" | "reconfigurebasin" => Ok(Self::ReconfigureBasin),
-            "get-basin-config" | "getbasinconfig" => Ok(Self::GetBasinConfig),
-            "issue-access-token" | "issueaccesstoken" => Ok(Self::IssueAccessToken),
-            "revoke-access-token" | "revokeaccesstoken" => Ok(Self::RevokeAccessToken),
-            "list-access-tokens" | "listaccesstokens" => Ok(Self::ListAccessTokens),
-            "list-streams" | "liststreams" => Ok(Self::ListStreams),
-            "create-stream" | "createstream" => Ok(Self::CreateStream),
-            "delete-stream" | "deletestream" => Ok(Self::DeleteStream),
-            "get-stream-config" | "getstreamconfig" => Ok(Self::GetStreamConfig),
-            "reconfigure-stream" | "reconfigurestream" => Ok(Self::ReconfigureStream),
-            "check-tail" | "checktail" => Ok(Self::CheckTail),
+            "list-basins" => Ok(Self::ListBasins),
+            "create-basin" => Ok(Self::CreateBasin),
+            "delete-basin" => Ok(Self::DeleteBasin),
+            "reconfigure-basin" => Ok(Self::ReconfigureBasin),
+            "get-basin-config" => Ok(Self::GetBasinConfig),
+            "issue-access-token" => Ok(Self::IssueAccessToken),
+            "revoke-access-token" => Ok(Self::RevokeAccessToken),
+            "list-access-tokens" => Ok(Self::ListAccessTokens),
+            "list-streams" => Ok(Self::ListStreams),
+            "create-stream" => Ok(Self::CreateStream),
+            "delete-stream" => Ok(Self::DeleteStream),
+            "get-stream-config" => Ok(Self::GetStreamConfig),
+            "reconfigure-stream" => Ok(Self::ReconfigureStream),
+            "check-tail" => Ok(Self::CheckTail),
             "append" => Ok(Self::Append),
             "read" => Ok(Self::Read),
             "trim" => Ok(Self::Trim),
