@@ -720,7 +720,7 @@ async fn run() -> Result<(), S2CliError> {
                             UNIX_EPOCH + Duration::from_secs(exp as u64),
                         )
                         .to_string()
-                        .red()
+                        .green()
                     })
                     .expect("expires_at");
 
