@@ -34,7 +34,7 @@ Command Line Tool to interact with the
 1. Generate an authentication token by logging onto the web console at
    [s2.dev](https://s2.dev/dashboard) and set the token in CLI config:
    ```bash
-   s2 config set --auth-token <YOUR AUTH TOKEN>
+   s2 config set --access-token <YOUR ACCESS TOKEN>
    ```
 
 1. You're ready to run S2 commands!

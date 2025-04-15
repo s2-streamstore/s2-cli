@@ -7,9 +7,35 @@ use thiserror::Error;
 
 use crate::error::S2CliError;
 
-#[derive(Debug, Deserialize, Serialize)]
+use serde::de;
+
+#[derive(Debug, Serialize)]
 pub struct S2Config {
-    pub auth_token: String,
+    pub access_token: String,
+}
+
+/// Note: Custom deserialization to support both old and new token formats.
+impl<'de> Deserialize<'de> for S2Config {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum TokenField {
+            New { access_token: String },
+            Old { auth_token: String },
+        }
+
+        let token = TokenField::deserialize(deserializer)?;
+
+        Ok(S2Config {
+            access_token: match token {
+                TokenField::New { access_token } => access_token,
+                TokenField::Old { auth_token } => auth_token,
+            },
+        })
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -41,8 +67,8 @@ pub fn load_config(path: &Path) -> Result<S2Config, S2ConfigError> {
     Ok(builder.build()?.try_deserialize::<S2Config>()?)
 }
 
-pub fn create_config(config_path: &PathBuf, auth_token: String) -> Result<(), S2ConfigError> {
-    let cfg = S2Config { auth_token };
+pub fn create_config(config_path: &PathBuf, access_token: String) -> Result<(), S2ConfigError> {
+    let cfg = S2Config { access_token };
 
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent).map_err(S2ConfigError::Write)?;
@@ -61,7 +87,7 @@ pub enum S2ConfigError {
 
     #[error("Failed to load config file")]
     #[diagnostic(help(
-        "Did you run `s2 config set`? or use `S2_AUTH_TOKEN` environment variable."
+        "Did you run `s2 config set`? or use `S2_ACCESS_TOKEN` environment variable."
     ))]
     Load(#[from] config::ConfigError),
 

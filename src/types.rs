@@ -145,8 +145,12 @@ pub struct BasinConfig {
     #[clap(flatten)]
     pub default_stream_config: Option<StreamConfig>,
     /// Create stream on append with basin defaults if it doesn't exist.
-    #[arg(short = 'c', long)]
+    #[arg(short = 'a', long)]
     pub create_stream_on_append: Option<bool>,
+
+    /// Create stream on read with basin defaults if it doesn't exist.
+    #[arg(short = 'r', long)]
+    pub create_stream_on_read: Option<bool>,
 }
 
 #[derive(Parser, Debug, Clone, Serialize)]
@@ -187,10 +191,12 @@ impl From<BasinConfig> for s2::types::BasinConfig {
         let BasinConfig {
             default_stream_config,
             create_stream_on_append,
+            create_stream_on_read,
         } = config;
         s2::types::BasinConfig {
             default_stream_config: default_stream_config.map(Into::into),
             create_stream_on_append: create_stream_on_append.unwrap_or_default(),
+            create_stream_on_read: create_stream_on_read.unwrap_or_default(),
         }
     }
 }
@@ -253,6 +259,7 @@ impl From<s2::types::BasinConfig> for BasinConfig {
         BasinConfig {
             default_stream_config: config.default_stream_config.map(Into::into),
             create_stream_on_append: Some(config.create_stream_on_append),
+            create_stream_on_read: Some(config.create_stream_on_read),
         }
     }
 }
@@ -266,11 +273,415 @@ impl From<s2::types::StreamConfig> for StreamConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub enum ResourceSet<const MIN: usize, const MAX: usize> {
+    Exact(String),
+    Prefix(String),
+}
+
+impl<const MIN: usize, const MAX: usize> From<ResourceSet<MIN, MAX>> for s2::types::ResourceSet {
+    fn from(value: ResourceSet<MIN, MAX>) -> Self {
+        match value {
+            ResourceSet::Exact(s) => s2::types::ResourceSet::Exact(s),
+            ResourceSet::Prefix(s) => s2::types::ResourceSet::Prefix(s),
+        }
+    }
+}
+
+impl<const MIN: usize, const MAX: usize> From<s2::types::ResourceSet> for ResourceSet<MIN, MAX> {
+    fn from(value: s2::types::ResourceSet) -> Self {
+        match value {
+            s2::types::ResourceSet::Exact(s) => ResourceSet::Exact(s),
+            s2::types::ResourceSet::Prefix(s) => ResourceSet::Prefix(s),
+        }
+    }
+}
+
+impl<const MIN: usize, const MAX: usize> FromStr for ResourceSet<MIN, MAX> {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() {
+            return Ok(ResourceSet::Prefix(String::new()));
+        }
+
+        if let Some(value) = s.strip_prefix('=') {
+            let len = value.len();
+            if len > MAX || len < MIN {
+                return Err(format!(
+                    "Exact value '{}' length {} must be between {} and {}",
+                    value, len, MIN, MAX
+                ));
+            }
+            Ok(ResourceSet::Exact(value.to_owned()))
+        } else {
+            let len = s.len();
+            if len > MAX {
+                return Err(format!(
+                    "Prefix '{}' length {} exceeds maximum {}",
+                    s, len, MAX
+                ));
+            }
+            Ok(ResourceSet::Prefix(s.to_owned()))
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct PermittedOperationGroups {
+    pub account: Option<ReadWritePermissions>,
+    pub basin: Option<ReadWritePermissions>,
+    pub stream: Option<ReadWritePermissions>,
+}
+
+impl From<PermittedOperationGroups> for s2::types::PermittedOperationGroups {
+    fn from(groups: PermittedOperationGroups) -> Self {
+        s2::types::PermittedOperationGroups {
+            account: groups.account.map(Into::into),
+            basin: groups.basin.map(Into::into),
+            stream: groups.stream.map(Into::into),
+        }
+    }
+}
+
+impl From<s2::types::PermittedOperationGroups> for PermittedOperationGroups {
+    fn from(groups: s2::types::PermittedOperationGroups) -> Self {
+        PermittedOperationGroups {
+            account: groups.account.map(Into::into),
+            basin: groups.basin.map(Into::into),
+            stream: groups.stream.map(Into::into),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ReadWritePermissions {
+    pub read: bool,
+    pub write: bool,
+}
+
+impl From<ReadWritePermissions> for s2::types::ReadWritePermissions {
+    fn from(permissions: ReadWritePermissions) -> Self {
+        s2::types::ReadWritePermissions {
+            read: permissions.read,
+            write: permissions.write,
+        }
+    }
+}
+
+impl From<s2::types::ReadWritePermissions> for ReadWritePermissions {
+    fn from(permissions: s2::types::ReadWritePermissions) -> Self {
+        ReadWritePermissions {
+            read: permissions.read,
+            write: permissions.write,
+        }
+    }
+}
+
+pub fn parse_op_groups(s: &str) -> Result<PermittedOperationGroups, String> {
+    let mut account = None;
+    let mut basin = None;
+    let mut stream = None;
+
+    if s.is_empty() {
+        return Ok(PermittedOperationGroups {
+            account,
+            basin,
+            stream,
+        });
+    }
+
+    for part in s.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let (key, value) = part
+            .split_once('=')
+            .ok_or_else(|| format!("Invalid op_group format: '{}'. Expected 'key=value'", part))?;
+        let perms = parse_permissions(value)?;
+        match key {
+            "account" => account = Some(perms),
+            "basin" => basin = Some(perms),
+            "stream" => stream = Some(perms),
+            _ => {
+                return Err(format!(
+                    "Invalid op_group key: '{}'. Expected 'account', 'basin', or 'stream'",
+                    key
+                ));
+            }
+        }
+    }
+
+    Ok(PermittedOperationGroups {
+        account,
+        basin,
+        stream,
+    })
+}
+
+fn parse_permissions(s: &str) -> Result<ReadWritePermissions, String> {
+    let mut read = false;
+    let mut write = false;
+    for c in s.chars() {
+        match c {
+            'r' => read = true,
+            'w' => write = true,
+            _ => return Err(format!("Invalid permission character: {}", c)),
+        }
+    }
+    if !read && !write {
+        return Err("At least one permission ('r' or 'w') must be specified".to_string());
+    }
+    Ok(ReadWritePermissions { read, write })
+}
+
+#[derive(Debug, Serialize)]
+pub struct AccessTokenInfo {
+    pub id: String,
+    pub expires_at: Option<u32>,
+    pub auto_prefix_streams: bool,
+    pub scope: Option<AccessTokenScope>,
+}
+
+impl From<s2::types::AccessTokenInfo> for AccessTokenInfo {
+    fn from(info: s2::types::AccessTokenInfo) -> Self {
+        AccessTokenInfo {
+            id: info.id.to_string(),
+            expires_at: info.expires_at,
+            auto_prefix_streams: info.auto_prefix_streams,
+            scope: info.scope.map(Into::into),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct AccessTokenScope {
+    pub basins: Option<ResourceSet<8, 48>>,
+    pub streams: Option<ResourceSet<1, 512>>,
+    pub tokens: Option<ResourceSet<1, 50>>,
+    pub op_groups: Option<PermittedOperationGroups>,
+    pub ops: Vec<Operation>,
+}
+
+impl From<s2::types::AccessTokenScope> for AccessTokenScope {
+    fn from(scope: s2::types::AccessTokenScope) -> Self {
+        AccessTokenScope {
+            basins: scope.basins.map(Into::into),
+            streams: scope.streams.map(Into::into),
+            tokens: scope.tokens.map(Into::into),
+            op_groups: scope.op_groups.map(Into::into),
+            ops: scope.ops.into_iter().map(Operation::from).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum Operation {
+    Unspecified,
+    ListBasins,
+    CreateBasin,
+    DeleteBasin,
+    ReconfigureBasin,
+    GetBasinConfig,
+    IssueAccessToken,
+    RevokeAccessToken,
+    ListAccessTokens,
+    ListStreams,
+    CreateStream,
+    DeleteStream,
+    GetStreamConfig,
+    ReconfigureStream,
+    CheckTail,
+    Append,
+    Read,
+    Trim,
+    Fence,
+}
+
+impl From<Operation> for s2::types::Operation {
+    fn from(op: Operation) -> Self {
+        match op {
+            Operation::Unspecified => s2::types::Operation::Unspecified,
+            Operation::ListBasins => s2::types::Operation::ListBasins,
+            Operation::CreateBasin => s2::types::Operation::CreateBasin,
+            Operation::DeleteBasin => s2::types::Operation::DeleteBasin,
+            Operation::ReconfigureBasin => s2::types::Operation::ReconfigureBasin,
+            Operation::GetBasinConfig => s2::types::Operation::GetBasinConfig,
+            Operation::IssueAccessToken => s2::types::Operation::IssueAccessToken,
+            Operation::RevokeAccessToken => s2::types::Operation::RevokeAccessToken,
+            Operation::ListAccessTokens => s2::types::Operation::ListAccessTokens,
+            Operation::ListStreams => s2::types::Operation::ListStreams,
+            Operation::CreateStream => s2::types::Operation::CreateStream,
+            Operation::DeleteStream => s2::types::Operation::DeleteStream,
+            Operation::GetStreamConfig => s2::types::Operation::GetStreamConfig,
+            Operation::ReconfigureStream => s2::types::Operation::ReconfigureStream,
+            Operation::CheckTail => s2::types::Operation::CheckTail,
+            Operation::Append => s2::types::Operation::Append,
+            Operation::Read => s2::types::Operation::Read,
+            Operation::Trim => s2::types::Operation::Trim,
+            Operation::Fence => s2::types::Operation::Fence,
+        }
+    }
+}
+
+impl From<s2::types::Operation> for Operation {
+    fn from(op: s2::types::Operation) -> Self {
+        match op {
+            s2::types::Operation::Unspecified => Operation::Unspecified,
+            s2::types::Operation::ListBasins => Operation::ListBasins,
+            s2::types::Operation::CreateBasin => Operation::CreateBasin,
+            s2::types::Operation::DeleteBasin => Operation::DeleteBasin,
+            s2::types::Operation::ReconfigureBasin => Operation::ReconfigureBasin,
+            s2::types::Operation::GetBasinConfig => Operation::GetBasinConfig,
+            s2::types::Operation::IssueAccessToken => Operation::IssueAccessToken,
+            s2::types::Operation::RevokeAccessToken => Operation::RevokeAccessToken,
+            s2::types::Operation::ListAccessTokens => Operation::ListAccessTokens,
+            s2::types::Operation::ListStreams => Operation::ListStreams,
+            s2::types::Operation::CreateStream => Operation::CreateStream,
+            s2::types::Operation::DeleteStream => Operation::DeleteStream,
+            s2::types::Operation::GetStreamConfig => Operation::GetStreamConfig,
+            s2::types::Operation::ReconfigureStream => Operation::ReconfigureStream,
+            s2::types::Operation::CheckTail => Operation::CheckTail,
+            s2::types::Operation::Append => Operation::Append,
+            s2::types::Operation::Read => Operation::Read,
+            s2::types::Operation::Trim => Operation::Trim,
+            s2::types::Operation::Fence => Operation::Fence,
+        }
+    }
+}
+
+impl FromStr for Operation {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "list-basins" => Ok(Self::ListBasins),
+            "create-basin" => Ok(Self::CreateBasin),
+            "delete-basin" => Ok(Self::DeleteBasin),
+            "reconfigure-basin" => Ok(Self::ReconfigureBasin),
+            "get-basin-config" => Ok(Self::GetBasinConfig),
+            "issue-access-token" => Ok(Self::IssueAccessToken),
+            "revoke-access-token" => Ok(Self::RevokeAccessToken),
+            "list-access-tokens" => Ok(Self::ListAccessTokens),
+            "list-streams" => Ok(Self::ListStreams),
+            "create-stream" => Ok(Self::CreateStream),
+            "delete-stream" => Ok(Self::DeleteStream),
+            "get-stream-config" => Ok(Self::GetStreamConfig),
+            "reconfigure-stream" => Ok(Self::ReconfigureStream),
+            "check-tail" => Ok(Self::CheckTail),
+            "append" => Ok(Self::Append),
+            "read" => Ok(Self::Read),
+            "trim" => Ok(Self::Trim),
+            "fence" => Ok(Self::Fence),
+            _ => Err("invalid operation".into()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{error::S2UriParseError, types::S2BasinAndStreamUri};
+    use rstest::rstest;
 
-    use super::{S2BasinAndMaybeStreamUri, S2BasinUri, S2Uri};
+    use super::{
+        PermittedOperationGroups, ReadWritePermissions, ResourceSet, S2BasinAndMaybeStreamUri,
+        S2BasinUri, S2Uri, parse_op_groups,
+    };
+
+    #[rstest]
+    #[case("", Ok(PermittedOperationGroups {
+        account: None,
+        basin: None,
+        stream: None,
+    }))]
+    #[case("account=r", Ok(PermittedOperationGroups {
+        account: Some(ReadWritePermissions {
+            read: true,
+            write: false,
+        }),
+        basin: None,
+        stream: None,
+    }))]
+    #[case("account=w", Ok(PermittedOperationGroups {
+        account: Some(ReadWritePermissions {
+            read: false,
+            write: true,
+        }),
+        basin: None,
+        stream: None,
+    }))]
+    #[case("account=rw", Ok(PermittedOperationGroups {
+        account: Some(ReadWritePermissions {
+            read: true,
+            write: true,
+        }),
+        basin: None,
+        stream: None,
+    }))]
+    #[case("basin=r,stream=w", Ok(PermittedOperationGroups {
+        account: None,
+        basin: Some(ReadWritePermissions {
+            read: true,
+            write: false,
+        }),
+        stream: Some(ReadWritePermissions {
+            read: false,
+            write: true,
+        }),
+    }))]
+    #[case("account=rw,basin=rw,stream=rw", Ok(PermittedOperationGroups {
+        account: Some(ReadWritePermissions {
+            read: true,
+            write: true,
+        }),
+        basin: Some(ReadWritePermissions {
+            read: true,
+            write: true,
+        }),
+        stream: Some(ReadWritePermissions {
+            read: true,
+            write: true,
+        }),
+    }))]
+    #[case("invalid", Err("Invalid op_group format: 'invalid'. Expected 'key=value'".to_string()))]
+    #[case("unknown=rw", Err("Invalid op_group key: 'unknown'. Expected 'account', 'basin', or 'stream'".to_string()))]
+    #[case("account=", Err("At least one permission ('r' or 'w') must be specified".to_string()))]
+    #[case("account=x", Err("Invalid permission character: x".to_string()))]
+    fn test_parse_op_groups(
+        #[case] input: &str,
+        #[case] expected: Result<PermittedOperationGroups, String>,
+    ) {
+        assert_eq!(parse_op_groups(input), expected, "Testing input: {}", input);
+    }
+
+    #[rstest]
+    // Valid empty string case
+    #[case("", Ok(ResourceSet::<8, 48>::Prefix(String::new())))]
+    // Valid exact values
+    #[case("=exact-value", Ok(ResourceSet::<8, 48>::Exact("exact-value".to_string())))]
+    #[case("=mybasintestingvalue", Ok(ResourceSet::<8, 48>::Exact("mybasintestingvalue".to_string())))]
+    // Valid prefix values
+    #[case("prefix", Ok(ResourceSet::<8, 48>::Prefix("prefix".to_string())))]
+    #[case("my-prefix", Ok(ResourceSet::<8, 48>::Prefix("my-prefix".to_string())))]
+    // Error cases for exact values - too short or too long
+    #[case("=short", Err("Exact value 'short' length 5 must be between 8 and 48".to_string()))]
+    #[case("=waytoolongvaluethatshouldexceedthemaximumlengthallowed", 
+           Err("Exact value 'waytoolongvaluethatshouldexceedthemaximumlengthallowed' length 54 must be between 8 and 48".to_string()))]
+    // Error case for prefix - too long
+    #[case("waytoolongvaluethatshouldexceedthemaximumlengthallowed", 
+           Err("Prefix 'waytoolongvaluethatshouldexceedthemaximumlengthallowed' length 54 exceeds maximum 48".to_string()))]
+    fn test_resource_set_parsing(
+        #[case] input: &str,
+        #[case] expected: Result<ResourceSet<8, 48>, String>,
+    ) {
+        assert_eq!(
+            input.parse::<ResourceSet<8, 48>>(),
+            expected,
+            "Testing input: {}",
+            input
+        );
+    }
 
     #[test]
     fn test_s2_uri_parse() {
