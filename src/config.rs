@@ -7,9 +7,34 @@ use thiserror::Error;
 
 use crate::error::S2CliError;
 
-#[derive(Debug, Deserialize, Serialize)]
+use serde::de;
+
+#[derive(Debug, Serialize)]
 pub struct S2Config {
     pub access_token: String,
+}
+
+impl<'de> Deserialize<'de> for S2Config {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum TokenField {
+            New { access_token: String },
+            Old { auth_token: String },
+        }
+
+        let token = TokenField::deserialize(deserializer)?;
+
+        Ok(S2Config {
+            access_token: match token {
+                TokenField::New { access_token } => access_token,
+                TokenField::Old { auth_token } => auth_token,
+            },
+        })
+    }
 }
 
 #[cfg(target_os = "windows")]

@@ -184,27 +184,30 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         auto_prefix_streams: bool,
 
-        /// Basin name restrictions.
+        /// Basin names allowed.
+        /// If prefixed with `=`, matches exact value. Otherwise, matches any name with this prefix.
         #[arg(long)]
         basins: Option<ResourceSet<8, 48>>,
 
-        /// Stream name restrictions.
+        /// Stream names allowed.
+        /// If prefixed with `=`, matches exact value. Otherwise, matches any name with this prefix.        
         #[arg(long)]
         streams: Option<ResourceSet<1, 512>>,
 
-        /// Token ID restrictions.
+        /// Token IDs allowed.
+        /// If prefixed with `=`, matches exact value. Otherwise, matches any name with this prefix.
         #[arg(long)]
         tokens: Option<ResourceSet<1, 50>>,
 
         /// Access permissions at the group level.
         /// Format: "account=rw,basin=r,stream=w"
         /// where 'r' indicates read permission and 'w' indicates write permission.        
-        #[arg(long, value_parser = parse_op_groups, required_unless_present = "ops")]
+        #[arg(long, value_parser = parse_op_groups)]
         op_groups: Option<PermittedOperationGroups>,
 
         /// Operations allowed for the token.
         /// A union of allowed operations and groups is used as an effective set of allowed operations.
-        #[arg(long, value_delimiter = ',', required_unless_present = "op_groups")]
+        #[arg(long, value_delimiter = ',')]
         ops: Vec<Operation>,
     },
 
@@ -426,8 +429,10 @@ enum ConfigActions {
     /// Set the authentication token to be reused in subsequent commands.
     /// Alternatively, use the S2_ACCESS_TOKEN environment variable.
     Set {
-        #[arg(short = 'a', long)]
-        access_token: String,
+        #[arg(short = 'a', long, group = "auth")]
+        access_token: Option<String>,
+        #[arg(long = "auth-token", group = "auth", hide = true)]
+        auth_token: Option<String>,
     },
 }
 
@@ -732,7 +737,15 @@ async fn run() -> Result<(), S2CliError> {
 
     match commands.command {
         Commands::Config { action } => match action {
-            ConfigActions::Set { access_token } => {
+            ConfigActions::Set {
+                access_token,
+                auth_token,
+            } => {
+                let access_token = access_token.or(auth_token).ok_or_else(|| {
+                    S2CliError::InvalidArgs(miette::miette!(
+                        "Access token not provided. Use --access-token to set it."
+                    ))
+                })?;
                 create_config(&config_path, access_token)?;
                 eprintln!("{}", "✓ Token set".green().bold());
                 eprintln!(

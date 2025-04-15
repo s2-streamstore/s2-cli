@@ -136,6 +136,7 @@ impl AccountService {
             .map_err(|e| ServiceError::new(ServiceErrorContext::ReconfigureBasin, e))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn issue_access_token(
         &self,
         id: AccessTokenId,
