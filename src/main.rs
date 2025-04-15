@@ -185,22 +185,22 @@ enum Commands {
         auto_prefix_streams: bool,
 
         /// Basin names allowed.
-        /// If prefixed with `=`, matches exact value. Otherwise, matches any name with this prefix.
+        /// Matches exact value if it starts with `=`, otherwise treats it as a prefix.
         #[arg(long)]
         basins: Option<ResourceSet<8, 48>>,
 
         /// Stream names allowed.
-        /// If prefixed with `=`, matches exact value. Otherwise, matches any name with this prefix.        
+        /// Matches exact value if it starts with `=`, otherwise treats it as a prefix.
         #[arg(long)]
         streams: Option<ResourceSet<1, 512>>,
 
         /// Token IDs allowed.
-        /// If prefixed with `=`, matches exact value. Otherwise, matches any name with this prefix.
+        /// Matches exact value if it starts with `=`, otherwise treats it as a prefix.
         #[arg(long)]
         tokens: Option<ResourceSet<1, 50>>,
 
         /// Access permissions at the group level.
-        /// Format: "account=rw,basin=r,stream=w"
+        /// The format is: "account=rw,basin=r,stream=w"
         /// where 'r' indicates read permission and 'w' indicates write permission.        
         #[arg(long, value_parser = parse_op_groups)]
         op_groups: Option<PermittedOperationGroups>,
