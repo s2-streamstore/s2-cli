@@ -168,6 +168,7 @@ enum Commands {
         config: BasinConfig,
     },
 
+    /// Issue an access token.
     IssueAccessToken {
         /// Access token ID.
         #[arg(long)]
@@ -211,7 +212,8 @@ enum Commands {
 
     /// Revoke an access token.
     RevokeAccessToken {
-        /// ID of the access token to revoke.        
+        /// ID of the access token to revoke.
+        #[arg(long)]
         id: AccessTokenId,
     },
 
