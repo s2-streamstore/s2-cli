@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.0] - 2025-04-15
+
+### Features
+
+- Access token methods ([#133](https://github.com/s2-streamstore/s2-cli/issues/133))
+
+### Miscellaneous Tasks
+
+- Release 0.11.0
+- Typed errors ([#135](https://github.com/s2-streamstore/s2-cli/issues/135))
+
 ## [0.10.0] - 2025-03-14
 
 ### Bug Fixes
