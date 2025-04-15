@@ -325,6 +325,9 @@ impl<const MIN: usize, const MAX: usize> FromStr for ResourceSet<MIN, MAX> {
         }
 
         if let Some(value) = s.strip_prefix('=') {
+            if value.is_empty() {
+                return Ok(ResourceSet::Exact(String::new()));
+            }
             let len = value.len();
             if len > MAX || len < MIN {
                 return Err(ResourceSetParseError::ExactValueLengthInvalid {
