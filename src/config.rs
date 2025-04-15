@@ -14,6 +14,7 @@ pub struct S2Config {
     pub access_token: String,
 }
 
+/// Note: Custom deserialization to support both old and new token formats.
 impl<'de> Deserialize<'de> for S2Config {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
