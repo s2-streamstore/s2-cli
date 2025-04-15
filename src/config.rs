@@ -9,7 +9,7 @@ use crate::error::S2CliError;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct S2Config {
-    pub auth_token: String,
+    pub access_token: String,
 }
 
 #[cfg(target_os = "windows")]
@@ -41,8 +41,8 @@ pub fn load_config(path: &Path) -> Result<S2Config, S2ConfigError> {
     Ok(builder.build()?.try_deserialize::<S2Config>()?)
 }
 
-pub fn create_config(config_path: &PathBuf, auth_token: String) -> Result<(), S2ConfigError> {
-    let cfg = S2Config { auth_token };
+pub fn create_config(config_path: &PathBuf, access_token: String) -> Result<(), S2ConfigError> {
+    let cfg = S2Config { access_token };
 
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent).map_err(S2ConfigError::Write)?;

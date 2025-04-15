@@ -63,7 +63,7 @@ const STYLES: styling::Styles = styling::Styles::styled()
 
 const GENERAL_USAGE: &str = color_print::cstr!(
     r#"
-    <dim>$</dim> <bold>s2 config set --auth-token ...</bold>
+    <dim>$</dim> <bold>s2 config set --access-token ...</bold>
     <dim>$</dim> <bold>s2 list-basins --prefix "foo" --limit 100</bold>
     "#
 );
@@ -427,7 +427,7 @@ enum ConfigActions {
     /// Alternatively, use the S2_ACCESS_TOKEN environment variable.
     Set {
         #[arg(short = 'a', long)]
-        auth_token: String,
+        access_token: String,
     },
 }
 
@@ -566,9 +566,9 @@ fn parse_fencing_token(s: &str) -> Result<FencingToken, ConvertError> {
         .try_into()
 }
 
-fn client_config(auth_token: String) -> Result<ClientConfig, S2CliError> {
+fn client_config(access_token: String) -> Result<ClientConfig, S2CliError> {
     let endpoints = S2Endpoints::from_env().map_err(S2CliError::EndpointsFromEnv)?;
-    let client_config = ClientConfig::new(auth_token.to_string())
+    let client_config = ClientConfig::new(access_token.to_string())
         .with_user_agent("s2-cli".parse().expect("valid user agent"))
         .with_endpoints(endpoints)
         .with_request_timeout(Duration::from_secs(30));
@@ -732,8 +732,8 @@ async fn run() -> Result<(), S2CliError> {
 
     match commands.command {
         Commands::Config { action } => match action {
-            ConfigActions::Set { auth_token } => {
-                create_config(&config_path, auth_token)?;
+            ConfigActions::Set { access_token } => {
+                create_config(&config_path, access_token)?;
                 eprintln!("{}", "✓ Token set".green().bold());
                 eprintln!(
                     "  Configuration saved to: {}",
@@ -749,7 +749,7 @@ async fn run() -> Result<(), S2CliError> {
             no_auto_paginate,
         } => {
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             if let Some(uri) = uri {
                 list_streams(
                     client_config,
@@ -771,12 +771,12 @@ async fn run() -> Result<(), S2CliError> {
             no_auto_paginate,
         } => {
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             list_basins(client_config, prefix, start_after, limit, no_auto_paginate).await?;
         }
         Commands::CreateBasin { basin, config } => {
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             let account_service = AccountService::new(Client::new(client_config));
             let (storage_class, retention_policy) = match &config.default_stream_config {
                 Some(config) => {
@@ -804,14 +804,14 @@ async fn run() -> Result<(), S2CliError> {
         }
         Commands::DeleteBasin { basin } => {
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             let account_service = AccountService::new(Client::new(client_config));
             account_service.delete_basin(basin.into()).await?;
             eprintln!("{}", "✓ Basin deletion requested".green().bold());
         }
         Commands::GetBasinConfig { basin } => {
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             let account_service = AccountService::new(Client::new(client_config));
             let basin_config = account_service.get_basin_config(basin.into()).await?;
             let basin_config: BasinConfig = basin_config.into();
@@ -822,7 +822,7 @@ async fn run() -> Result<(), S2CliError> {
         }
         Commands::ReconfigureBasin { basin, config } => {
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             let account_service = AccountService::new(Client::new(client_config));
             let mut mask = Vec::new();
             if let Some(config) = &config.default_stream_config {
@@ -854,7 +854,7 @@ async fn run() -> Result<(), S2CliError> {
             no_auto_paginate,
         } => {
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             list_streams(
                 client_config,
                 uri,
@@ -868,7 +868,7 @@ async fn run() -> Result<(), S2CliError> {
         Commands::CreateStream { uri, config } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             let basin_client = BasinClient::new(client_config, basin);
             BasinService::new(basin_client)
                 .create_stream(stream, config.map(Into::into))
@@ -878,7 +878,7 @@ async fn run() -> Result<(), S2CliError> {
         Commands::DeleteStream { uri } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             let basin_client = BasinClient::new(client_config, basin);
             BasinService::new(basin_client)
                 .delete_stream(stream)
@@ -888,7 +888,7 @@ async fn run() -> Result<(), S2CliError> {
         Commands::GetStreamConfig { uri } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             let basin_client = BasinClient::new(client_config, basin);
             let config: StreamConfig = BasinService::new(basin_client)
                 .get_stream_config(stream)
@@ -902,7 +902,7 @@ async fn run() -> Result<(), S2CliError> {
         Commands::ReconfigureStream { uri, config } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             let basin_client = BasinClient::new(client_config, basin);
             let mut mask = Vec::new();
 
@@ -928,7 +928,7 @@ async fn run() -> Result<(), S2CliError> {
         Commands::CheckTail { uri } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
             let next_seq_num = StreamService::new(stream_client).check_tail().await?;
             println!("{}", next_seq_num);
@@ -941,7 +941,7 @@ async fn run() -> Result<(), S2CliError> {
         } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
             let out = StreamService::new(stream_client)
                 .append_command_record(
@@ -968,7 +968,7 @@ async fn run() -> Result<(), S2CliError> {
         } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
             let out = StreamService::new(stream_client)
                 .append_command_record(
@@ -993,7 +993,7 @@ async fn run() -> Result<(), S2CliError> {
         } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
 
             let records_in = input
@@ -1065,7 +1065,7 @@ async fn run() -> Result<(), S2CliError> {
         } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
             let mut read_output_stream = StreamService::new(stream_client)
                 .read_session(start_seq_num, limit_count, limit_bytes)
@@ -1181,7 +1181,7 @@ async fn run() -> Result<(), S2CliError> {
         } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             let stream_client = StreamService::new(StreamClient::new(client_config, basin, stream));
 
             let interval = interval.max(Duration::from_millis(100));
@@ -1369,7 +1369,7 @@ async fn run() -> Result<(), S2CliError> {
             ops,
         } => {
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             let account_service = AccountService::new(Client::new(client_config));
             let token = account_service
                 .issue_access_token(
@@ -1387,7 +1387,7 @@ async fn run() -> Result<(), S2CliError> {
         }
         Commands::RevokeAccessToken { id } => {
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             let account_service = AccountService::new(Client::new(client_config));
             let info = account_service.revoke_access_token(id).await?;
             let info: AccessTokenInfo = info.into();
@@ -1404,7 +1404,7 @@ async fn run() -> Result<(), S2CliError> {
             no_auto_paginate,
         } => {
             let cfg = config::load_config(&config_path)?;
-            let client_config = client_config(cfg.auth_token)?;
+            let client_config = client_config(cfg.access_token)?;
             list_tokens(client_config, prefix, start_after, limit, no_auto_paginate).await?;
         }
     };
