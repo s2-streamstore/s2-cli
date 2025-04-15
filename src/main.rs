@@ -196,11 +196,9 @@ enum Commands {
         #[arg(long)]
         tokens: Option<ResourceSet<1, 50>>,
 
-        /// Access permissions at operation group level.
-        /// This follows the format: "account=rw,basin=r,stream=w"
-        /// where 'r' indicates read permission and 'w' indicates write permission.
-        /// Each group (account, basin, stream) is optional.
-        /// If using this, within a group, at least one permission must be specified.
+        /// Access permissions at the group level.
+        /// Format: "account=rw,basin=r,stream=w"
+        /// where 'r' indicates read permission and 'w' indicates write permission.        
         #[arg(long, value_parser = parse_op_groups, required_unless_present = "ops")]
         op_groups: Option<PermittedOperationGroups>,
 
@@ -817,10 +815,7 @@ async fn run() -> Result<(), S2CliError> {
             let account_service = AccountService::new(Client::new(client_config));
             let basin_config = account_service.get_basin_config(basin.into()).await?;
             let basin_config: BasinConfig = basin_config.into();
-            println!(
-                "{}",
-                json_to_table(&serde_json::to_value(&basin_config)?).to_string()
-            );
+            println!("{}", json_to_table(&serde_json::to_value(&basin_config)?));
         }
         Commands::ReconfigureBasin { basin, config } => {
             let cfg = config::load_config(&config_path)?;
@@ -843,10 +838,7 @@ async fn run() -> Result<(), S2CliError> {
                 .await?
                 .into();
             eprintln!("{}", "✓ Basin reconfigured".green().bold());
-            println!(
-                "{}",
-                json_to_table(&serde_json::to_value(&config)?).to_string()
-            );
+            println!("{}", json_to_table(&serde_json::to_value(&config)?));
         }
         Commands::ListStreams {
             uri,
@@ -896,10 +888,7 @@ async fn run() -> Result<(), S2CliError> {
                 .get_stream_config(stream)
                 .await?
                 .into();
-            println!(
-                "{}",
-                json_to_table(&serde_json::to_value(&config)?).to_string()
-            );
+            println!("{}", json_to_table(&serde_json::to_value(&config)?));
         }
         Commands::ReconfigureStream { uri, config } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
@@ -922,10 +911,7 @@ async fn run() -> Result<(), S2CliError> {
                 .into();
 
             eprintln!("{}", "✓ Stream reconfigured".green().bold());
-            println!(
-                "{}",
-                json_to_table(&serde_json::to_value(&config)?).to_string()
-            );
+            println!("{}", json_to_table(&serde_json::to_value(&config)?));
         }
         Commands::CheckTail { uri } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
@@ -1394,10 +1380,7 @@ async fn run() -> Result<(), S2CliError> {
             let info = account_service.revoke_access_token(id).await?;
             let info: AccessTokenInfo = info.into();
             eprintln!("{}", "✓ Access token revoked".green().bold());
-            println!(
-                "{}",
-                json_to_table(&serde_json::to_value(&info)?).to_string()
-            );
+            println!("{}", json_to_table(&serde_json::to_value(&info)?));
         }
         Commands::ListAccessTokens {
             prefix,

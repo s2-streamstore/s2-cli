@@ -149,16 +149,16 @@ impl AccountService {
     ) -> Result<String, ServiceError> {
         let mut access_token_scope = s2::types::AccessTokenScope::new().with_ops(ops);
         if let Some(basins) = basins {
-            access_token_scope = access_token_scope.with_basins(basins.into());
+            access_token_scope = access_token_scope.with_basins(basins);
         }
         if let Some(streams) = streams {
-            access_token_scope = access_token_scope.with_streams(streams.into());
+            access_token_scope = access_token_scope.with_streams(streams);
         }
         if let Some(tokens) = tokens {
-            access_token_scope = access_token_scope.with_tokens(tokens.into());
+            access_token_scope = access_token_scope.with_tokens(tokens);
         }
         if let Some(op_groups) = op_groups {
-            access_token_scope = access_token_scope.with_op_groups(op_groups.into());
+            access_token_scope = access_token_scope.with_op_groups(op_groups);
         }
         let mut access_token_info = s2::types::AccessTokenInfo::new(id)
             .with_auto_prefix_streams(auto_prefix_streams)
