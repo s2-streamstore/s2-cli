@@ -1,7 +1,4 @@
-use crate::{
-    error::{ServiceError, ServiceErrorContext, ServiceStatus},
-    types::{PermittedOperationGroups, ResourceSet},
-};
+use crate::error::{ServiceError, ServiceErrorContext, ServiceStatus};
 use async_stream::stream;
 use futures::Stream;
 use s2::{
@@ -9,7 +6,8 @@ use s2::{
     types::{
         AccessTokenId, AccessTokenInfo, BasinConfig, BasinInfo, BasinName, CreateBasinRequest,
         DeleteBasinRequest, ListAccessTokensRequest, ListAccessTokensResponse, ListBasinsRequest,
-        ListBasinsResponse, Operation, ReconfigureBasinRequest, StreamConfig,
+        ListBasinsResponse, Operation, PermittedOperationGroups, ReconfigureBasinRequest,
+        ResourceSet, StreamConfig,
     },
 };
 
@@ -82,6 +80,7 @@ impl AccountService {
         storage_class: Option<crate::types::StorageClass>,
         retention_policy: Option<crate::types::RetentionPolicy>,
         create_stream_on_append: bool,
+        create_stream_on_read: bool,
     ) -> Result<BasinInfo, ServiceError> {
         let mut stream_config = StreamConfig::new();
 
@@ -96,6 +95,7 @@ impl AccountService {
         let basin_config = BasinConfig {
             default_stream_config: Some(stream_config),
             create_stream_on_append,
+            create_stream_on_read,
         };
 
         let create_basin_req = CreateBasinRequest::new(basin).with_config(basin_config);
@@ -141,9 +141,9 @@ impl AccountService {
         id: AccessTokenId,
         expires_at: Option<u32>,
         auto_prefix_streams: bool,
-        basins: Option<ResourceSet<8, 48>>,
-        streams: Option<ResourceSet<1, 512>>,
-        tokens: Option<ResourceSet<1, 50>>,
+        basins: Option<ResourceSet>,
+        streams: Option<ResourceSet>,
+        tokens: Option<ResourceSet>,
         op_groups: Option<PermittedOperationGroups>,
         ops: Vec<Operation>,
     ) -> Result<String, ServiceError> {

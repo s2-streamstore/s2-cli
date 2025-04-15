@@ -1,3 +1,4 @@
+use json_to_table::json_to_table;
 use std::{
     fmt::Display,
     io::BufRead,
@@ -23,7 +24,7 @@ use s2::{
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
         AccessTokenId, AppendRecord, AppendRecordBatch, BasinInfo, Command, CommandRecord,
-        ConvertError, FencingToken, MeteredBytes as _, Operation, ReadOutput, StreamInfo,
+        ConvertError, FencingToken, MeteredBytes as _, ReadOutput, StreamInfo,
     },
 };
 use stream::{RecordStream, StreamService};
@@ -40,8 +41,8 @@ use tokio_stream::{
 use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{
-    BasinConfig, PermittedOperationGroups, ResourceSet, S2BasinAndMaybeStreamUri,
-    S2BasinAndStreamUri, S2BasinUri, StreamConfig, parse_op_groups,
+    AccessTokenInfo, BasinConfig, Operation, PermittedOperationGroups, ResourceSet,
+    S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StreamConfig, parse_op_groups,
 };
 
 mod account;
@@ -195,12 +196,16 @@ enum Commands {
         tokens: Option<ResourceSet<1, 50>>,
 
         /// Access permissions at operation group level.
-        #[arg(long, value_parser = parse_op_groups)]
+        /// This follows the format: "account=rw,basin=r,stream=w"
+        /// where 'r' indicates read permission and 'w' indicates write permission.
+        /// Each group (account, basin, stream) is optional.
+        /// If using this, within a group, at least one permission must be specified.
+        #[arg(long, value_parser = parse_op_groups, required_unless_present = "ops")]
         op_groups: Option<PermittedOperationGroups>,
 
         /// Operations allowed for the token.
         /// A union of allowed operations and groups is used as an effective set of allowed operations.
-        #[arg(long, value_delimiter = ',')]
+        #[arg(long, value_delimiter = ',', required_unless_present = "op_groups")]
         ops: Vec<Operation>,
     },
 
@@ -419,7 +424,7 @@ enum Commands {
 #[derive(Subcommand, Debug)]
 enum ConfigActions {
     /// Set the authentication token to be reused in subsequent commands.
-    /// Alternatively, use the S2_AUTH_TOKEN environment variable.
+    /// Alternatively, use the S2_ACCESS_TOKEN environment variable.
     Set {
         #[arg(short = 'a', long)]
         auth_token: String,
@@ -703,10 +708,21 @@ async fn run() -> Result<(), S2CliError> {
 
         while let Some(token) = tokens.next().await {
             for token_info in token?.tokens {
+                let exp_date = token_info
+                    .expires_at
+                    .map(|exp| {
+                        humantime::format_rfc3339_seconds(
+                            UNIX_EPOCH + Duration::from_secs(exp as u64),
+                        )
+                        .to_string()
+                        .red()
+                    })
+                    .expect("expires_at");
+
                 println!(
                     "{} {}",
                     token_info.id.parse::<String>().expect("id"),
-                    token_info.expires_at.expect("expires_at")
+                    exp_date
                 );
             }
         }
@@ -776,6 +792,7 @@ async fn run() -> Result<(), S2CliError> {
                     storage_class,
                     retention_policy,
                     config.create_stream_on_append.unwrap_or_default(),
+                    config.create_stream_on_read.unwrap_or_default(),
                 )
                 .await?;
 
@@ -798,7 +815,10 @@ async fn run() -> Result<(), S2CliError> {
             let account_service = AccountService::new(Client::new(client_config));
             let basin_config = account_service.get_basin_config(basin.into()).await?;
             let basin_config: BasinConfig = basin_config.into();
-            println!("{}", serde_json::to_string_pretty(&basin_config)?);
+            println!(
+                "{}",
+                json_to_table(&serde_json::to_value(&basin_config)?).to_string()
+            );
         }
         Commands::ReconfigureBasin { basin, config } => {
             let cfg = config::load_config(&config_path)?;
@@ -821,7 +841,10 @@ async fn run() -> Result<(), S2CliError> {
                 .await?
                 .into();
             eprintln!("{}", "✓ Basin reconfigured".green().bold());
-            println!("{}", serde_json::to_string_pretty(&config)?);
+            println!(
+                "{}",
+                json_to_table(&serde_json::to_value(&config)?).to_string()
+            );
         }
         Commands::ListStreams {
             uri,
@@ -871,7 +894,10 @@ async fn run() -> Result<(), S2CliError> {
                 .get_stream_config(stream)
                 .await?
                 .into();
-            println!("{}", serde_json::to_string_pretty(&config)?);
+            println!(
+                "{}",
+                json_to_table(&serde_json::to_value(&config)?).to_string()
+            );
         }
         Commands::ReconfigureStream { uri, config } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
@@ -894,7 +920,10 @@ async fn run() -> Result<(), S2CliError> {
                 .into();
 
             eprintln!("{}", "✓ Stream reconfigured".green().bold());
-            println!("{}", serde_json::to_string_pretty(&config)?);
+            println!(
+                "{}",
+                json_to_table(&serde_json::to_value(&config)?).to_string()
+            );
         }
         Commands::CheckTail { uri } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
@@ -1347,11 +1376,11 @@ async fn run() -> Result<(), S2CliError> {
                     id,
                     expires_at,
                     auto_prefix_streams,
-                    basins,
-                    streams,
-                    tokens,
-                    op_groups,
-                    ops,
+                    basins.map(Into::into),
+                    streams.map(Into::into),
+                    tokens.map(Into::into),
+                    op_groups.map(Into::into),
+                    ops.into_iter().map(Into::into).collect(),
                 )
                 .await?;
             println!("{token}");
@@ -1360,8 +1389,13 @@ async fn run() -> Result<(), S2CliError> {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.auth_token)?;
             let account_service = AccountService::new(Client::new(client_config));
-            account_service.revoke_access_token(id).await?;
+            let info = account_service.revoke_access_token(id).await?;
+            let info: AccessTokenInfo = info.into();
             eprintln!("{}", "✓ Access token revoked".green().bold());
+            println!(
+                "{}",
+                json_to_table(&serde_json::to_value(&info)?).to_string()
+            );
         }
         Commands::ListAccessTokens {
             prefix,
