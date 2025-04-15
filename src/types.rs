@@ -4,6 +4,7 @@ use clap::{Parser, ValueEnum};
 use s2::types::BasinName;
 use serde::Serialize;
 use std::{str::FromStr, time::Duration};
+use thiserror::Error;
 
 use crate::error::S2UriParseError;
 
@@ -297,8 +298,26 @@ impl<const MIN: usize, const MAX: usize> From<s2::types::ResourceSet> for Resour
     }
 }
 
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum ResourceSetError {
+    #[error("Exact value '{value}' length {length} must be between {min} and {max}")]
+    ExactValueLengthInvalid {
+        value: String,
+        length: usize,
+        min: usize,
+        max: usize,
+    },
+
+    #[error("Prefix '{value}' length {length} exceeds maximum {max}")]
+    PrefixTooLong {
+        value: String,
+        length: usize,
+        max: usize,
+    },
+}
+
 impl<const MIN: usize, const MAX: usize> FromStr for ResourceSet<MIN, MAX> {
-    type Err = String;
+    type Err = ResourceSetError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.is_empty() {
@@ -308,19 +327,22 @@ impl<const MIN: usize, const MAX: usize> FromStr for ResourceSet<MIN, MAX> {
         if let Some(value) = s.strip_prefix('=') {
             let len = value.len();
             if len > MAX || len < MIN {
-                return Err(format!(
-                    "Exact value '{}' length {} must be between {} and {}",
-                    value, len, MIN, MAX
-                ));
+                return Err(ResourceSetError::ExactValueLengthInvalid {
+                    value: value.to_owned(),
+                    length: len,
+                    min: MIN,
+                    max: MAX,
+                });
             }
             Ok(ResourceSet::Exact(value.to_owned()))
         } else {
             let len = s.len();
             if len > MAX {
-                return Err(format!(
-                    "Prefix '{}' length {} exceeds maximum {}",
-                    s, len, MAX
-                ));
+                return Err(ResourceSetError::PrefixTooLong {
+                    value: s.to_owned(),
+                    length: len,
+                    max: MAX,
+                });
             }
             Ok(ResourceSet::Prefix(s.to_owned()))
         }
@@ -378,7 +400,22 @@ impl From<s2::types::ReadWritePermissions> for ReadWritePermissions {
     }
 }
 
-pub fn parse_op_groups(s: &str) -> Result<PermittedOperationGroups, String> {
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum OpGroupsError {
+    #[error("Invalid op_group format: '{value}'. Expected 'key=value'")]
+    InvalidFormat { value: String },
+
+    #[error("Invalid op_group key: '{key}'. Expected 'account', 'basin', or 'stream'")]
+    InvalidKey { key: String },
+
+    #[error("At least one permission ('r' or 'w') must be specified")]
+    MissingPermission,
+
+    #[error("Invalid permission character: {0}")]
+    InvalidPermissionChar(char),
+}
+
+pub fn parse_op_groups(s: &str) -> Result<PermittedOperationGroups, OpGroupsError> {
     let mut account = None;
     let mut basin = None;
     let mut stream = None;
@@ -398,17 +435,18 @@ pub fn parse_op_groups(s: &str) -> Result<PermittedOperationGroups, String> {
         }
         let (key, value) = part
             .split_once('=')
-            .ok_or_else(|| format!("Invalid op_group format: '{}'. Expected 'key=value'", part))?;
+            .ok_or_else(|| OpGroupsError::InvalidFormat {
+                value: part.to_owned(),
+            })?;
         let perms = parse_permissions(value)?;
         match key {
             "account" => account = Some(perms),
             "basin" => basin = Some(perms),
             "stream" => stream = Some(perms),
             _ => {
-                return Err(format!(
-                    "Invalid op_group key: '{}'. Expected 'account', 'basin', or 'stream'",
-                    key
-                ));
+                return Err(OpGroupsError::InvalidKey {
+                    key: key.to_owned(),
+                });
             }
         }
     }
@@ -420,18 +458,18 @@ pub fn parse_op_groups(s: &str) -> Result<PermittedOperationGroups, String> {
     })
 }
 
-fn parse_permissions(s: &str) -> Result<ReadWritePermissions, String> {
+fn parse_permissions(s: &str) -> Result<ReadWritePermissions, OpGroupsError> {
     let mut read = false;
     let mut write = false;
     for c in s.chars() {
         match c {
             'r' => read = true,
             'w' => write = true,
-            _ => return Err(format!("Invalid permission character: {}", c)),
+            _ => return Err(OpGroupsError::InvalidPermissionChar(c)),
         }
     }
     if !read && !write {
-        return Err("At least one permission ('r' or 'w') must be specified".to_string());
+        return Err(OpGroupsError::MissingPermission);
     }
     Ok(ReadWritePermissions { read, write })
 }
@@ -551,8 +589,14 @@ impl From<s2::types::Operation> for Operation {
     }
 }
 
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum OperationError {
+    #[error("Invalid operation: '{0}'")]
+    InvalidOperation(String),
+}
+
 impl FromStr for Operation {
-    type Err = String;
+    type Err = OperationError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
@@ -574,7 +618,7 @@ impl FromStr for Operation {
             "read" => Ok(Self::Read),
             "trim" => Ok(Self::Trim),
             "fence" => Ok(Self::Fence),
-            _ => Err("invalid operation".into()),
+            _ => Err(OperationError::InvalidOperation(s.to_owned())),
         }
     }
 }
@@ -585,8 +629,8 @@ mod tests {
     use rstest::rstest;
 
     use super::{
-        PermittedOperationGroups, ReadWritePermissions, ResourceSet, S2BasinAndMaybeStreamUri,
-        S2BasinUri, S2Uri, parse_op_groups,
+        OpGroupsError, PermittedOperationGroups, ReadWritePermissions, ResourceSet,
+        ResourceSetError, S2BasinAndMaybeStreamUri, S2BasinUri, S2Uri, parse_op_groups,
     };
 
     #[rstest]
@@ -644,13 +688,13 @@ mod tests {
             write: true,
         }),
     }))]
-    #[case("invalid", Err("Invalid op_group format: 'invalid'. Expected 'key=value'".to_string()))]
-    #[case("unknown=rw", Err("Invalid op_group key: 'unknown'. Expected 'account', 'basin', or 'stream'".to_string()))]
-    #[case("account=", Err("At least one permission ('r' or 'w') must be specified".to_string()))]
-    #[case("account=x", Err("Invalid permission character: x".to_string()))]
+    #[case("invalid", Err(OpGroupsError::InvalidFormat { value: "invalid".to_owned() }))]
+    #[case("unknown=rw", Err(OpGroupsError::InvalidKey { key: "unknown".to_owned() }))]
+    #[case("account=", Err(OpGroupsError::MissingPermission))]
+    #[case("account=x", Err(OpGroupsError::InvalidPermissionChar('x')))]
     fn test_parse_op_groups(
         #[case] input: &str,
-        #[case] expected: Result<PermittedOperationGroups, String>,
+        #[case] expected: Result<PermittedOperationGroups, OpGroupsError>,
     ) {
         assert_eq!(parse_op_groups(input), expected, "Testing input: {}", input);
     }
@@ -665,15 +709,23 @@ mod tests {
     #[case("prefix", Ok(ResourceSet::<8, 48>::Prefix("prefix".to_string())))]
     #[case("my-prefix", Ok(ResourceSet::<8, 48>::Prefix("my-prefix".to_string())))]
     // Error cases for exact values - too short or too long
-    #[case("=short", Err("Exact value 'short' length 5 must be between 8 and 48".to_string()))]
+    #[case("=short", Err(ResourceSetError::ExactValueLengthInvalid {
+        value: "short".to_owned(), length: 5, min: 8, max: 48
+    }))]
     #[case("=waytoolongvaluethatshouldexceedthemaximumlengthallowed", 
-           Err("Exact value 'waytoolongvaluethatshouldexceedthemaximumlengthallowed' length 54 must be between 8 and 48".to_string()))]
+           Err(ResourceSetError::ExactValueLengthInvalid {
+               value: "waytoolongvaluethatshouldexceedthemaximumlengthallowed".to_owned(), 
+               length: 54, min: 8, max: 48
+           }))]
     // Error case for prefix - too long
     #[case("waytoolongvaluethatshouldexceedthemaximumlengthallowed", 
-           Err("Prefix 'waytoolongvaluethatshouldexceedthemaximumlengthallowed' length 54 exceeds maximum 48".to_string()))]
+           Err(ResourceSetError::PrefixTooLong {
+               value: "waytoolongvaluethatshouldexceedthemaximumlengthallowed".to_owned(), 
+               length: 54, max: 48
+           }))]
     fn test_resource_set_parsing(
         #[case] input: &str,
-        #[case] expected: Result<ResourceSet<8, 48>, String>,
+        #[case] expected: Result<ResourceSet<8, 48>, ResourceSetError>,
     ) {
         assert_eq!(
             input.parse::<ResourceSet<8, 48>>(),
