@@ -273,7 +273,7 @@ impl From<s2::types::StreamConfig> for StreamConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub enum ResourceSet<const MIN: usize, const MAX: usize> {
     Exact(String),
     Prefix(String),
@@ -584,7 +584,10 @@ mod tests {
     use crate::{error::S2UriParseError, types::S2BasinAndStreamUri};
     use rstest::rstest;
 
-    use super::{S2BasinAndMaybeStreamUri, S2BasinUri, S2Uri, PermittedOperationGroups, ReadWritePermissions, parse_op_groups};
+    use super::{
+        PermittedOperationGroups, ReadWritePermissions, ResourceSet, S2BasinAndMaybeStreamUri,
+        S2BasinUri, S2Uri, parse_op_groups,
+    };
 
     #[rstest]
     #[case("", Ok(PermittedOperationGroups {
@@ -645,8 +648,39 @@ mod tests {
     #[case("unknown=rw", Err("Invalid op_group key: 'unknown'. Expected 'account', 'basin', or 'stream'".to_string()))]
     #[case("account=", Err("At least one permission ('r' or 'w') must be specified".to_string()))]
     #[case("account=x", Err("Invalid permission character: x".to_string()))]
-    fn test_parse_op_groups(#[case] input: &str, #[case] expected: Result<PermittedOperationGroups, String>) {
+    fn test_parse_op_groups(
+        #[case] input: &str,
+        #[case] expected: Result<PermittedOperationGroups, String>,
+    ) {
         assert_eq!(parse_op_groups(input), expected, "Testing input: {}", input);
+    }
+
+    #[rstest]
+    // Valid empty string case
+    #[case("", Ok(ResourceSet::<8, 48>::Prefix(String::new())))]
+    // Valid exact values
+    #[case("=exact-value", Ok(ResourceSet::<8, 48>::Exact("exact-value".to_string())))]
+    #[case("=mybasintestingvalue", Ok(ResourceSet::<8, 48>::Exact("mybasintestingvalue".to_string())))]
+    // Valid prefix values
+    #[case("prefix", Ok(ResourceSet::<8, 48>::Prefix("prefix".to_string())))]
+    #[case("my-prefix", Ok(ResourceSet::<8, 48>::Prefix("my-prefix".to_string())))]
+    // Error cases for exact values - too short or too long
+    #[case("=short", Err("Exact value 'short' length 5 must be between 8 and 48".to_string()))]
+    #[case("=waytoolongvaluethatshouldexceedthemaximumlengthallowed", 
+           Err("Exact value 'waytoolongvaluethatshouldexceedthemaximumlengthallowed' length 54 must be between 8 and 48".to_string()))]
+    // Error case for prefix - too long
+    #[case("waytoolongvaluethatshouldexceedthemaximumlengthallowed", 
+           Err("Prefix 'waytoolongvaluethatshouldexceedthemaximumlengthallowed' length 54 exceeds maximum 48".to_string()))]
+    fn test_resource_set_parsing(
+        #[case] input: &str,
+        #[case] expected: Result<ResourceSet<8, 48>, String>,
+    ) {
+        assert_eq!(
+            input.parse::<ResourceSet<8, 48>>(),
+            expected,
+            "Testing input: {}",
+            input
+        );
     }
 
     #[test]
