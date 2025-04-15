@@ -582,105 +582,71 @@ impl FromStr for Operation {
 #[cfg(test)]
 mod tests {
     use crate::{error::S2UriParseError, types::S2BasinAndStreamUri};
+    use rstest::rstest;
 
     use super::{S2BasinAndMaybeStreamUri, S2BasinUri, S2Uri, PermittedOperationGroups, ReadWritePermissions, parse_op_groups};
 
-    #[test]
-    fn test_parse_op_groups() {
-        let test_cases = vec![
-            (
-                "",
-                Ok(PermittedOperationGroups {
-                    account: None,
-                    basin: None,
-                    stream: None,
-                }),
-            ),
-            (
-                "account=r",
-                Ok(PermittedOperationGroups {
-                    account: Some(ReadWritePermissions {
-                        read: true,
-                        write: false,
-                    }),
-                    basin: None,
-                    stream: None,
-                }),
-            ),
-            (
-                "account=w",
-                Ok(PermittedOperationGroups {
-                    account: Some(ReadWritePermissions {
-                        read: false,
-                        write: true,
-                    }),
-                    basin: None,
-                    stream: None,
-                }),
-            ),
-            (
-                "account=rw",
-                Ok(PermittedOperationGroups {
-                    account: Some(ReadWritePermissions {
-                        read: true,
-                        write: true,
-                    }),
-                    basin: None,
-                    stream: None,
-                }),
-            ),
-            (
-                "basin=r,stream=w",
-                Ok(PermittedOperationGroups {
-                    account: None,
-                    basin: Some(ReadWritePermissions {
-                        read: true,
-                        write: false,
-                    }),
-                    stream: Some(ReadWritePermissions {
-                        read: false,
-                        write: true,
-                    }),
-                }),
-            ),
-            (
-                "account=rw,basin=rw,stream=rw",
-                Ok(PermittedOperationGroups {
-                    account: Some(ReadWritePermissions {
-                        read: true,
-                        write: true,
-                    }),
-                    basin: Some(ReadWritePermissions {
-                        read: true,
-                        write: true,
-                    }),
-                    stream: Some(ReadWritePermissions {
-                        read: true,
-                        write: true,
-                    }),
-                }),
-            ),
-            (
-                "invalid",
-                Err("Invalid op_group format: 'invalid'. Expected 'key=value'".to_string()),
-            ),
-            (
-                "unknown=rw",
-                Err("Invalid op_group key: 'unknown'. Expected 'account', 'basin', or 'stream'".to_string()),
-            ),
-            (
-                "account=",
-                Err("At least one permission ('r' or 'w') must be specified".to_string()),
-            ),
-            (
-                "account=x",
-                Err("Invalid permission character: x".to_string()),
-            ),
-        ];
-
-        for (input, expected) in test_cases {
-            assert_eq!(parse_op_groups(input), expected, "Testing input: {}", input);
-        }
+    #[rstest]
+    #[case("", Ok(PermittedOperationGroups {
+        account: None,
+        basin: None,
+        stream: None,
+    }))]
+    #[case("account=r", Ok(PermittedOperationGroups {
+        account: Some(ReadWritePermissions {
+            read: true,
+            write: false,
+        }),
+        basin: None,
+        stream: None,
+    }))]
+    #[case("account=w", Ok(PermittedOperationGroups {
+        account: Some(ReadWritePermissions {
+            read: false,
+            write: true,
+        }),
+        basin: None,
+        stream: None,
+    }))]
+    #[case("account=rw", Ok(PermittedOperationGroups {
+        account: Some(ReadWritePermissions {
+            read: true,
+            write: true,
+        }),
+        basin: None,
+        stream: None,
+    }))]
+    #[case("basin=r,stream=w", Ok(PermittedOperationGroups {
+        account: None,
+        basin: Some(ReadWritePermissions {
+            read: true,
+            write: false,
+        }),
+        stream: Some(ReadWritePermissions {
+            read: false,
+            write: true,
+        }),
+    }))]
+    #[case("account=rw,basin=rw,stream=rw", Ok(PermittedOperationGroups {
+        account: Some(ReadWritePermissions {
+            read: true,
+            write: true,
+        }),
+        basin: Some(ReadWritePermissions {
+            read: true,
+            write: true,
+        }),
+        stream: Some(ReadWritePermissions {
+            read: true,
+            write: true,
+        }),
+    }))]
+    #[case("invalid", Err("Invalid op_group format: 'invalid'. Expected 'key=value'".to_string()))]
+    #[case("unknown=rw", Err("Invalid op_group key: 'unknown'. Expected 'account', 'basin', or 'stream'".to_string()))]
+    #[case("account=", Err("At least one permission ('r' or 'w') must be specified".to_string()))]
+    #[case("account=x", Err("Invalid permission character: x".to_string()))]
+    fn test_parse_op_groups(#[case] input: &str, #[case] expected: Result<PermittedOperationGroups, String>) {
+        assert_eq!(parse_op_groups(input), expected, "Testing input: {}", input);
     }
 
     #[test]

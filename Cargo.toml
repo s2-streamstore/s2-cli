@@ -37,5 +37,8 @@ toml = "0.8.19"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
+[dev-dependencies]
+rstest = "0.18.2"
+
 [profile.release]
 lto = true
