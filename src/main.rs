@@ -42,7 +42,7 @@ use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{
     AccessTokenInfo, BasinConfig, Operation, PermittedOperationGroups, ResourceSet,
-    S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StreamConfig, parse_op_groups,
+    S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StreamConfig,
 };
 
 mod account;
@@ -202,7 +202,7 @@ enum Commands {
         /// Access permissions at the group level.
         /// The format is: "account=rw,basin=r,stream=w"
         /// where 'r' indicates read permission and 'w' indicates write permission.        
-        #[arg(long, value_parser = parse_op_groups)]
+        #[arg(long)]
         op_groups: Option<PermittedOperationGroups>,
 
         /// Operations allowed for the token.
