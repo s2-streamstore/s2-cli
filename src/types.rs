@@ -376,10 +376,73 @@ impl From<s2::types::PermittedOperationGroups> for PermittedOperationGroups {
     }
 }
 
+impl FromStr for PermittedOperationGroups {
+    type Err = OpGroupsError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut account = None;
+        let mut basin = None;
+        let mut stream = None;
+
+        if s.is_empty() {
+            return Ok(PermittedOperationGroups {
+                account,
+                basin,
+                stream,
+            });
+        }
+
+        for part in s.split(',') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            let (key, value) = part
+                .split_once('=')
+                .ok_or_else(|| OpGroupsError::InvalidFormat { value: part.to_owned() })?;
+            let perms = value.parse::<ReadWritePermissions>()?;
+            match key {
+                "account" => account = Some(perms),
+                "basin" => basin = Some(perms),
+                "stream" => stream = Some(perms),
+                _ => {
+                    return Err(OpGroupsError::InvalidKey { key: key.to_owned() });
+                }
+            }
+        }
+
+        Ok(PermittedOperationGroups {
+            account,
+            basin,
+            stream,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ReadWritePermissions {
     pub read: bool,
     pub write: bool,
+}
+
+impl FromStr for ReadWritePermissions {
+    type Err = OpGroupsError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut read = false;
+        let mut write = false;
+        for c in s.chars() {
+            match c {
+                'r' => read = true,
+                'w' => write = true,
+                _ => return Err(OpGroupsError::InvalidPermissionChar(c)),
+            }
+        }
+        if !read && !write {
+            return Err(OpGroupsError::MissingPermission);
+        }
+        Ok(ReadWritePermissions { read, write })
+    }
 }
 
 impl From<ReadWritePermissions> for s2::types::ReadWritePermissions {
@@ -415,64 +478,6 @@ pub enum OpGroupsError {
     InvalidPermissionChar(char),
 }
 
-pub fn parse_op_groups(s: &str) -> Result<PermittedOperationGroups, OpGroupsError> {
-    let mut account = None;
-    let mut basin = None;
-    let mut stream = None;
-
-    if s.is_empty() {
-        return Ok(PermittedOperationGroups {
-            account,
-            basin,
-            stream,
-        });
-    }
-
-    for part in s.split(',') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        let (key, value) = part
-            .split_once('=')
-            .ok_or_else(|| OpGroupsError::InvalidFormat {
-                value: part.to_owned(),
-            })?;
-        let perms = parse_permissions(value)?;
-        match key {
-            "account" => account = Some(perms),
-            "basin" => basin = Some(perms),
-            "stream" => stream = Some(perms),
-            _ => {
-                return Err(OpGroupsError::InvalidKey {
-                    key: key.to_owned(),
-                });
-            }
-        }
-    }
-
-    Ok(PermittedOperationGroups {
-        account,
-        basin,
-        stream,
-    })
-}
-
-fn parse_permissions(s: &str) -> Result<ReadWritePermissions, OpGroupsError> {
-    let mut read = false;
-    let mut write = false;
-    for c in s.chars() {
-        match c {
-            'r' => read = true,
-            'w' => write = true,
-            _ => return Err(OpGroupsError::InvalidPermissionChar(c)),
-        }
-    }
-    if !read && !write {
-        return Err(OpGroupsError::MissingPermission);
-    }
-    Ok(ReadWritePermissions { read, write })
-}
 
 #[derive(Debug, Serialize)]
 pub struct AccessTokenInfo {
@@ -630,7 +635,7 @@ mod tests {
 
     use super::{
         OpGroupsError, PermittedOperationGroups, ReadWritePermissions, ResourceSet,
-        ResourceSetError, S2BasinAndMaybeStreamUri, S2BasinUri, S2Uri, parse_op_groups,
+        ResourceSetError, S2BasinAndMaybeStreamUri, S2BasinUri, S2Uri,
     };
 
     #[rstest]
@@ -696,7 +701,7 @@ mod tests {
         #[case] input: &str,
         #[case] expected: Result<PermittedOperationGroups, OpGroupsError>,
     ) {
-        assert_eq!(parse_op_groups(input), expected, "Testing input: {}", input);
+        assert_eq!(input.parse::<PermittedOperationGroups>(), expected, "Testing input: {}", input);
     }
 
     #[rstest]
