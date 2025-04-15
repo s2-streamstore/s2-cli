@@ -327,7 +327,7 @@ impl<const MIN: usize, const MAX: usize> FromStr for ResourceSet<MIN, MAX> {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct PermittedOperationGroups {
     pub account: Option<ReadWritePermissions>,
     pub basin: Option<ReadWritePermissions>,
@@ -354,7 +354,7 @@ impl From<s2::types::PermittedOperationGroups> for PermittedOperationGroups {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ReadWritePermissions {
     pub read: bool,
     pub write: bool,
@@ -583,7 +583,105 @@ impl FromStr for Operation {
 mod tests {
     use crate::{error::S2UriParseError, types::S2BasinAndStreamUri};
 
-    use super::{S2BasinAndMaybeStreamUri, S2BasinUri, S2Uri};
+    use super::{S2BasinAndMaybeStreamUri, S2BasinUri, S2Uri, PermittedOperationGroups, ReadWritePermissions, parse_op_groups};
+
+    #[test]
+    fn test_parse_op_groups() {
+        let test_cases = vec![
+            (
+                "",
+                Ok(PermittedOperationGroups {
+                    account: None,
+                    basin: None,
+                    stream: None,
+                }),
+            ),
+            (
+                "account=r",
+                Ok(PermittedOperationGroups {
+                    account: Some(ReadWritePermissions {
+                        read: true,
+                        write: false,
+                    }),
+                    basin: None,
+                    stream: None,
+                }),
+            ),
+            (
+                "account=w",
+                Ok(PermittedOperationGroups {
+                    account: Some(ReadWritePermissions {
+                        read: false,
+                        write: true,
+                    }),
+                    basin: None,
+                    stream: None,
+                }),
+            ),
+            (
+                "account=rw",
+                Ok(PermittedOperationGroups {
+                    account: Some(ReadWritePermissions {
+                        read: true,
+                        write: true,
+                    }),
+                    basin: None,
+                    stream: None,
+                }),
+            ),
+            (
+                "basin=r,stream=w",
+                Ok(PermittedOperationGroups {
+                    account: None,
+                    basin: Some(ReadWritePermissions {
+                        read: true,
+                        write: false,
+                    }),
+                    stream: Some(ReadWritePermissions {
+                        read: false,
+                        write: true,
+                    }),
+                }),
+            ),
+            (
+                "account=rw,basin=rw,stream=rw",
+                Ok(PermittedOperationGroups {
+                    account: Some(ReadWritePermissions {
+                        read: true,
+                        write: true,
+                    }),
+                    basin: Some(ReadWritePermissions {
+                        read: true,
+                        write: true,
+                    }),
+                    stream: Some(ReadWritePermissions {
+                        read: true,
+                        write: true,
+                    }),
+                }),
+            ),
+            (
+                "invalid",
+                Err("Invalid op_group format: 'invalid'. Expected 'key=value'".to_string()),
+            ),
+            (
+                "unknown=rw",
+                Err("Invalid op_group key: 'unknown'. Expected 'account', 'basin', or 'stream'".to_string()),
+            ),
+            (
+                "account=",
+                Err("At least one permission ('r' or 'w') must be specified".to_string()),
+            ),
+            (
+                "account=x",
+                Err("Invalid permission character: x".to_string()),
+            ),
+        ];
+
+        for (input, expected) in test_cases {
+            assert_eq!(parse_op_groups(input), expected, "Testing input: {}", input);
+        }
+    }
 
     #[test]
     fn test_s2_uri_parse() {
