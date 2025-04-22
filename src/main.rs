@@ -201,7 +201,7 @@ enum Commands {
 
         /// Access permissions at the group level.
         /// The format is: "account=rw,basin=r,stream=w"
-        /// where 'r' indicates read permission and 'w' indicates write permission.        
+        /// where 'r' indicates read permission and 'w' indicates write permission.
         #[arg(long)]
         op_groups: Option<PermittedOperationGroups>,
 
@@ -845,6 +845,9 @@ async fn run() -> Result<(), S2CliError> {
             }
             if config.create_stream_on_append.is_some() {
                 mask.push("create_stream_on_append".to_owned());
+            }
+            if config.create_stream_on_read.is_some() {
+                mask.push("create_stream_on_read".to_owned());
             }
             let config: BasinConfig = account_service
                 .reconfigure_basin(basin.into(), config.into(), mask)

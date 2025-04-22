@@ -148,9 +148,8 @@ pub struct BasinConfig {
     /// Create stream on append with basin defaults if it doesn't exist.
     #[arg(short = 'a', long)]
     pub create_stream_on_append: Option<bool>,
-
     /// Create stream on read with basin defaults if it doesn't exist.
-    #[arg(short = 'r', long)]
+    #[arg(short = 'R', long)]
     pub create_stream_on_read: Option<bool>,
 }
 
