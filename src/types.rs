@@ -508,7 +508,7 @@ impl From<s2::types::AccessTokenInfo> for AccessTokenInfo {
 pub struct AccessTokenScope {
     pub basins: Option<ResourceSet<8, 48>>,
     pub streams: Option<ResourceSet<1, 512>>,
-    pub tokens: Option<ResourceSet<1, 50>>,
+    pub access_tokens: Option<ResourceSet<1, 128>>,
     pub op_groups: Option<PermittedOperationGroups>,
     pub ops: Vec<Operation>,
 }
@@ -518,7 +518,7 @@ impl From<s2::types::AccessTokenScope> for AccessTokenScope {
         AccessTokenScope {
             basins: scope.basins.map(Into::into),
             streams: scope.streams.map(Into::into),
-            tokens: scope.tokens.map(Into::into),
+            access_tokens: scope.access_tokens.map(Into::into),
             op_groups: scope.op_groups.map(Into::into),
             ops: scope.ops.into_iter().map(Operation::from).collect(),
         }

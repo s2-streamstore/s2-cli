@@ -4,8 +4,8 @@ use s2::{
     batching::{AppendRecordsBatchingOpts, AppendRecordsBatchingStream},
     client::StreamClient,
     types::{
-        AppendInput, AppendOutput, AppendRecordBatch, Command, CommandRecord, FencingToken,
-        ReadLimit, ReadOutput, ReadSessionRequest,
+        AppendAck, AppendInput, AppendRecordBatch, Command, CommandRecord, FencingToken, ReadLimit,
+        ReadOutput, ReadSessionRequest, ReadStart, StreamPosition,
     },
 };
 
@@ -64,7 +64,7 @@ impl StreamService {
         Self { client }
     }
 
-    pub async fn check_tail(&self) -> Result<u64, ServiceError> {
+    pub async fn check_tail(&self) -> Result<StreamPosition, ServiceError> {
         self.client
             .check_tail()
             .await
@@ -76,7 +76,7 @@ impl StreamService {
         cmd: CommandRecord,
         fencing_token: Option<FencingToken>,
         match_seq_num: Option<u64>,
-    ) -> Result<AppendOutput, ServiceError> {
+    ) -> Result<AppendAck, ServiceError> {
         let context = match &cmd.command {
             Command::Fence { .. } => ServiceErrorContext::Fence,
             Command::Trim { .. } => ServiceErrorContext::Trim,
@@ -97,7 +97,7 @@ impl StreamService {
         &self,
         stream: impl 'static + Send + Stream<Item = AppendRecord> + Unpin,
         opts: AppendRecordsBatchingOpts,
-    ) -> Result<Streaming<AppendOutput>, ServiceError> {
+    ) -> Result<Streaming<AppendAck>, ServiceError> {
         let append_record_stream = AppendRecordsBatchingStream::new(stream, opts);
 
         self.client
@@ -108,12 +108,12 @@ impl StreamService {
 
     pub async fn read_session(
         &self,
-        start_seq_num: u64,
+        start: ReadStart,
         limit_count: Option<u64>,
         limit_bytes: Option<u64>,
     ) -> Result<Streaming<ReadOutput>, ServiceError> {
         let read_session_req = ReadSessionRequest {
-            start_seq_num,
+            start,
             limit: ReadLimit {
                 count: limit_count,
                 bytes: limit_bytes,

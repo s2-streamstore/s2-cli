@@ -199,14 +199,14 @@ impl AccountService {
                     .await;
 
                 match resp.as_ref() {
-                    Ok(ListAccessTokensResponse { tokens, has_more }) if *has_more && !no_auto_paginate => {
-                            start_after = tokens
+                    Ok(ListAccessTokensResponse { access_tokens, has_more }) if *has_more && !no_auto_paginate => {
+                            start_after = access_tokens
                                 .last()
                                 .map(|s| s.id.clone().into())
                                 .ok_or(ServiceError::new(ServiceErrorContext::ListAccessTokens, ServiceStatus::default()))?;
                             if let Some(l) = limit {
-                                if l > tokens.len() {
-                                    limit = Some(l - tokens.len());
+                                if l > access_tokens.len() {
+                                    limit = Some(l - access_tokens.len());
                                 } else {
                                     return yield resp;
                                 }
