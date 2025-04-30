@@ -146,19 +146,19 @@ pub struct BasinConfig {
     #[clap(flatten)]
     pub default_stream_config: Option<StreamConfig>,
     /// Create stream on append with basin defaults if it doesn't exist.
-    #[arg(short = 'a', long)]
+    #[arg(long)]
     pub create_stream_on_append: Option<bool>,
     /// Create stream on read with basin defaults if it doesn't exist.
-    #[arg(short = 'R', long)]
+    #[arg(long)]
     pub create_stream_on_read: Option<bool>,
 }
 
 #[derive(Parser, Debug, Clone, Serialize)]
 pub struct StreamConfig {
-    #[arg(short = 's', long)]
+    #[arg(long)]
     /// Storage class for a stream.
     pub storage_class: Option<StorageClass>,
-    #[arg(short = 'r', long, help("Example: 1d, 1w, 1y"))]
+    #[arg(long, help("Example: 1d, 1w, 1y"))]
     /// Retention policy for a stream.
     pub retention_policy: Option<RetentionPolicy>,
 }
