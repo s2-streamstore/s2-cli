@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
     pin::Pin,
     str::FromStr,
-    time::{Duration, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use account::AccountService;
@@ -24,7 +24,7 @@ use s2::{
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
         AccessTokenId, AppendRecord, AppendRecordBatch, BasinInfo, Command, CommandRecord,
-        ConvertError, FencingToken, MeteredBytes as _, ReadOutput, StreamInfo,
+        ConvertError, FencingToken, MeteredBytes as _, ReadOutput, ReadStart, StreamInfo,
     },
 };
 use stream::{RecordStream, StreamService};
@@ -381,32 +381,37 @@ enum Commands {
 
         /// Starting sequence number (inclusive).
         #[arg(short = 's', long, group = "start")]
-        start_seq_num: Option<u64>,
+        seq_num: Option<u64>,
 
-        /// Starting timestamp in milliseconds since Unix epoch (inclusive).
-        #[arg(short = 't', long, group = "start")]
-        start_timestamp: Option<u64>,
+        /// Starting timestamp (inclusive).
+        #[arg(long, group = "start")]
+        timestamp: Option<u64>,
+
+        /// Starting timestamp as a human-friendly delta from current time, e.g. "5m".
+        /// Stream timestamps must be milliseconds since Unix epoch (the default).
+        #[arg(long, group = "start")]
+        lookback: Option<humantime::Duration>,
 
         /// Start from N records before the tail of the stream.
-        #[arg(short = 'o', long, group = "start")]
-        start_tail_offset: Option<u64>,
+        #[arg(long, group = "start")]
+        tail_offset: Option<u64>,
 
         /// Output format.
         #[arg(long, value_enum, default_value_t)]
         format: Format,
 
-        /// Output records to a file or stdout.
-        /// Use "-" to write to stdout.
-        #[arg(short = 'w', long, value_parser = parse_records_output_source, default_value = "-")]
-        output: RecordsOut,
-
         /// Limit the number of records returned.
         #[arg(short = 'n', long)]
-        limit_count: Option<u64>,
+        count: Option<u64>,
 
         /// Limit the number of bytes returned.
         #[arg(short = 'b', long)]
-        limit_bytes: Option<u64>,
+        bytes: Option<u64>,
+
+        /// Output records to a file or stdout.
+        /// Use "-" to write to stdout.
+        #[arg(short = 'o', long, value_parser = parse_records_output_source, default_value = "-")]
+        output: RecordsOut,
     },
 
     /// Ping the stream to get append acknowledgement and end-to-end latencies.
@@ -1067,12 +1072,13 @@ async fn run() -> Result<(), S2CliError> {
         }
         Commands::Read {
             uri,
-            start_seq_num,
-            start_timestamp,
-            start_tail_offset,
+            seq_num,
+            timestamp,
+            tail_offset,
+            lookback,
             output,
-            limit_count,
-            limit_bytes,
+            count,
+            bytes,
             format,
         } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
@@ -1080,17 +1086,26 @@ async fn run() -> Result<(), S2CliError> {
             let client_config = client_config(cfg.access_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
 
-            // Determine the ReadStart variant based on the provided arguments
-            let read_start = match (start_seq_num, start_timestamp, start_tail_offset) {
-                (Some(seq_num), None, None) => s2::types::ReadStart::SeqNum(seq_num),
-                (None, Some(timestamp), None) => s2::types::ReadStart::Timestamp(timestamp),
-                (None, None, Some(offset)) => s2::types::ReadStart::TailOffset(offset),
-                (None, None, None) => s2::types::ReadStart::SeqNum(0), // Default to beginning of stream
+            let read_start = match (seq_num, timestamp, tail_offset, lookback) {
+                (Some(seq_num), None, None, None) => ReadStart::SeqNum(seq_num),
+                (None, Some(timestamp), None, None) => ReadStart::Timestamp(timestamp),
+                (None, None, Some(offset), None) => ReadStart::TailOffset(offset),
+                (None, None, None, Some(lookback)) => {
+                    let timestamp = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()
+                        .saturating_sub(lookback.as_millis())
+                        as u64;
+                    ReadStart::Timestamp(timestamp)
+                }
+                // Default to beginning of stream
+                (None, None, None, None) => s2::types::ReadStart::SeqNum(0),
                 _ => unreachable!("clap ensures only one start option is provided"),
             };
 
             let mut read_output_stream = StreamService::new(stream_client)
-                .read_session(read_start, limit_count, limit_bytes)
+                .read_session(read_start, count, bytes)
                 .await?;
             let mut writer = output.into_writer().await.unwrap();
 
