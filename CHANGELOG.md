@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0] - 2025-04-30
+
+### Features
+
+- Support reading from timestamp or tail-offset ([#137](https://github.com/s2-streamstore/s2-cli/issues/137))
+
+### Bug Fixes
+
+- Ping ([#138](https://github.com/s2-streamstore/s2-cli/issues/138))
+- `create_stream_on_read` for reconfigure basin ([#136](https://github.com/s2-streamstore/s2-cli/issues/136))
+
 ## [0.11.0] - 2025-04-15
 
 ### Features
