@@ -1,9 +1,11 @@
 use std::time::Duration;
 
-use rand::{Rng, distributions::Uniform};
+use rand::Rng;
 use s2::{
     batching::AppendRecordsBatchingOpts,
-    types::{AppendOutput, AppendRecord, ReadOutput, SequencedRecord, SequencedRecordBatch},
+    types::{
+        AppendAck, AppendRecord, ReadOutput, ReadStart, SequencedRecord, SequencedRecordBatch,
+    },
 };
 use tokio::{join, select, signal, sync::mpsc, task::JoinHandle, time::Instant};
 use tokio_stream::StreamExt;
@@ -31,7 +33,9 @@ impl Pinger {
     pub async fn init(stream_client: &StreamService) -> Result<Self, S2CliError> {
         let tail = stream_client.check_tail().await?;
 
-        let mut read_stream = stream_client.read_session(tail, None, None).await?;
+        let mut read_stream = stream_client
+            .read_session(ReadStart::SeqNum(tail.seq_num), None, None)
+            .await?;
 
         let (records_tx, records_rx) = mpsc::unbounded_channel();
         let mut append_stream = stream_client
@@ -39,7 +43,7 @@ impl Pinger {
                 tokio_stream::wrappers::UnboundedReceiverStream::new(records_rx),
                 AppendRecordsBatchingOpts::new()
                     .with_max_batch_records(1)
-                    .with_match_seq_num(Some(tail)),
+                    .with_match_seq_num(Some(tail.seq_num)),
             )
             .await?;
 
@@ -49,7 +53,7 @@ impl Pinger {
             .expect("stream channel open");
 
         match append_stream.next().await.expect("warmup batch ack") {
-            Ok(AppendOutput { start_seq_num, .. }) if start_seq_num == tail => (),
+            Ok(AppendAck { start, .. }) if start == tail => (),
             Ok(_) => return Err(S2CliError::PingStreamMutated),
             Err(e) => return Err(ServiceError::new(ServiceErrorContext::AppendSession, e).into()),
         };
@@ -103,13 +107,9 @@ impl Pinger {
         let appends_handle = tokio::spawn(async move {
             while let Some(next) = append_stream.next().await {
                 match next {
-                    Ok(AppendOutput {
-                        start_seq_num,
-                        end_seq_num,
-                        ..
-                    }) => {
+                    Ok(AppendAck { start, end, .. }) => {
                         let append = Instant::now();
-                        let records = end_seq_num - start_seq_num;
+                        let records = end.seq_num - start.seq_num;
                         if records != 1 {
                             appends_tx
                                 .send(Err(S2CliError::PingStreamMutated))
@@ -140,8 +140,10 @@ impl Pinger {
     }
 
     pub async fn ping(&mut self, bytes: u64) -> Result<Option<PingResult>, S2CliError> {
-        let body = rand::thread_rng()
-            .sample_iter(&Uniform::new_inclusive(0, u8::MAX))
+        let body = rand::rng()
+            .sample_iter(
+                rand::distr::Uniform::new_inclusive(0, u8::MAX).expect("valid distribution"),
+            )
             .take(bytes as usize)
             .collect::<Vec<_>>();
 

@@ -14,31 +14,31 @@ path = "src/main.rs"
 
 [dependencies]
 async-stream = "0.3.6"
-base64ct = { version = "1.6.0", features = ["alloc"] }
-bytes = "1.9.0"
-clap = { version = "4.5.27", features = ["derive"] }
+base64ct = { version = "1.7.3", features = ["alloc"] }
+bytes = "1.10.1"
+clap = { version = "4.5.37", features = ["derive"] }
 color-print = "0.3.7"
 colored = "3.0.0"
-config = "0.15.6"
+config = "0.15.11"
 dirs = "6.0.0"
 futures = "0.3.31"
-humantime = "2.1.0"
-indicatif = "0.17.9"
-json_to_table = "0.10.0"
-miette = { version = "7.4.0", features = ["fancy"] }
-rand = "0.8.5"
-serde = { version = "1.0.217", features = ["derive"] }
-serde_json = "1.0.137"
-streamstore = "0.11.0"
-thiserror = "2.0.11"
-tokio = { version = "1.43.0", features = ["full"] }
+humantime = "2.2.0"
+indicatif = "0.17.11"
+json_to_table = "0.11.0"
+miette = { version = "7.6.0", features = ["fancy"] }
+rand = "0.9.1"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+streamstore = "0.13.0"
+thiserror = "2.0.12"
+tokio = { version = "1.44.2", features = ["full"] }
 tokio-stream = { version = "0.1.17", features = ["io-util"] }
-toml = "0.8.19"
+toml = "0.8.22"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
 [dev-dependencies]
-rstest = "0.18.2"
+rstest = "0.25.0"
 
 [profile.release]
 lto = true
