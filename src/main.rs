@@ -1079,7 +1079,7 @@ async fn run() -> Result<(), S2CliError> {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.access_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
-            
+
             // Determine the ReadStart variant based on the provided arguments
             let read_start = match (start_seq_num, start_timestamp, start_tail_offset) {
                 (Some(seq_num), None, None) => s2::types::ReadStart::SeqNum(seq_num),
@@ -1088,13 +1088,9 @@ async fn run() -> Result<(), S2CliError> {
                 (None, None, None) => s2::types::ReadStart::SeqNum(0), // Default to beginning of stream
                 _ => unreachable!("clap ensures only one start option is provided"),
             };
-            
+
             let mut read_output_stream = StreamService::new(stream_client)
-                .read_session(
-                    read_start,
-                    limit_count,
-                    limit_bytes,
-                )
+                .read_session(read_start, limit_count, limit_bytes)
                 .await?;
             let mut writer = output.into_writer().await.unwrap();
 
@@ -1206,7 +1202,7 @@ async fn run() -> Result<(), S2CliError> {
             let client_config = client_config(cfg.access_token)?;
             let stream_client = StreamService::new(StreamClient::new(client_config, basin, stream));
 
-            let interval = interval.max(Duration::from_millis(100));
+            let interval = Duration::from(interval).max(Duration::from_millis(100));
             let batch_bytes = batch_bytes.min(128 * 1024);
 
             let prepare_loader = ProgressBar::new_spinner()
@@ -1282,8 +1278,7 @@ async fn run() -> Result<(), S2CliError> {
 
                 let max_jitter = batch_bytes / 4;
 
-                let record_bytes =
-                    jitter_op(batch_bytes, rand::thread_rng().gen_range(0..=max_jitter));
+                let record_bytes = jitter_op(batch_bytes, rand::rng().random_range(0..=max_jitter));
 
                 let Some(res) = pinger.ping(record_bytes).await? else {
                     return Ok(());

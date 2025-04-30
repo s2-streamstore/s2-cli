@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use rand::{Rng, distributions::Uniform};
+use rand::Rng;
 use s2::{
     batching::AppendRecordsBatchingOpts,
     types::{
@@ -140,8 +140,10 @@ impl Pinger {
     }
 
     pub async fn ping(&mut self, bytes: u64) -> Result<Option<PingResult>, S2CliError> {
-        let body = rand::thread_rng()
-            .sample_iter(&Uniform::new_inclusive(0, u8::MAX))
+        let body = rand::rng()
+            .sample_iter(
+                rand::distr::Uniform::new_inclusive(0, u8::MAX).expect("valid distribution"),
+            )
             .take(bytes as usize)
             .collect::<Vec<_>>();
 
