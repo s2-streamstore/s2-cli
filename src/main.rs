@@ -387,10 +387,10 @@ enum Commands {
         #[arg(long, group = "start")]
         timestamp: Option<u64>,
 
-        /// Starting timestamp as a human-friendly delta from current time, e.g. "5m".
-        /// Stream timestamps must be milliseconds since Unix epoch (the default).
+        /// Starting timestamp as a human-friendly delta from current time e.g. "1h",
+        /// which will be converted to milliseconds since Unix epoch.
         #[arg(long, group = "start")]
-        lookback: Option<humantime::Duration>,
+        ago: Option<humantime::Duration>,
 
         /// Start from N records before the tail of the stream.
         #[arg(long, group = "start")]
