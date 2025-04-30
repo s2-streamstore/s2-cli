@@ -53,7 +53,7 @@ impl Pinger {
             .expect("stream channel open");
 
         match append_stream.next().await.expect("warmup batch ack") {
-            Ok(AppendAck { start, .. }) if start == tail => (),
+            Ok(AppendAck { start, .. }) if start.seq_num == tail.seq_num => (),
             Ok(_) => return Err(S2CliError::PingStreamMutated),
             Err(e) => return Err(ServiceError::new(ServiceErrorContext::AppendSession, e).into()),
         };
