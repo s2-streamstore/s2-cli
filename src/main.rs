@@ -1075,7 +1075,7 @@ async fn run() -> Result<(), S2CliError> {
             seq_num,
             timestamp,
             tail_offset,
-            lookback,
+            ago,
             output,
             count,
             bytes,
@@ -1086,17 +1086,16 @@ async fn run() -> Result<(), S2CliError> {
             let client_config = client_config(cfg.access_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
 
-            let read_start = match (seq_num, timestamp, tail_offset, lookback) {
+            let read_start = match (seq_num, timestamp, tail_offset, ago) {
                 (Some(seq_num), None, None, None) => ReadStart::SeqNum(seq_num),
                 (None, Some(timestamp), None, None) => ReadStart::Timestamp(timestamp),
                 (None, None, Some(offset), None) => ReadStart::TailOffset(offset),
-                (None, None, None, Some(lookback)) => {
+                (None, None, None, Some(ago)) => {
                     let timestamp = SystemTime::now()
                         .duration_since(SystemTime::UNIX_EPOCH)
                         .unwrap()
                         .as_millis()
-                        .saturating_sub(lookback.as_millis())
-                        as u64;
+                        .saturating_sub(ago.as_millis()) as u64;
                     ReadStart::Timestamp(timestamp)
                 }
                 // Default to beginning of stream
