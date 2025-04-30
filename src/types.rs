@@ -508,7 +508,7 @@ impl From<s2::types::AccessTokenInfo> for AccessTokenInfo {
 pub struct AccessTokenScope {
     pub basins: Option<ResourceSet<8, 48>>,
     pub streams: Option<ResourceSet<1, 512>>,
-    pub access_tokens: Option<ResourceSet<1, 128>>,
+    pub access_tokens: Option<ResourceSet<1, 96>>,
     pub op_groups: Option<PermittedOperationGroups>,
     pub ops: Vec<Operation>,
 }
