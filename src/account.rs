@@ -144,7 +144,7 @@ impl AccountService {
         auto_prefix_streams: bool,
         basins: Option<ResourceSet>,
         streams: Option<ResourceSet>,
-        tokens: Option<ResourceSet>,
+        access_tokens: Option<ResourceSet>,
         op_groups: Option<PermittedOperationGroups>,
         ops: Vec<Operation>,
     ) -> Result<String, ServiceError> {
@@ -155,8 +155,8 @@ impl AccountService {
         if let Some(streams) = streams {
             access_token_scope = access_token_scope.with_streams(streams);
         }
-        if let Some(tokens) = tokens {
-            access_token_scope = access_token_scope.with_tokens(tokens);
+        if let Some(access_tokens) = access_tokens {
+            access_token_scope = access_token_scope.with_tokens(access_tokens);
         }
         if let Some(op_groups) = op_groups {
             access_token_scope = access_token_scope.with_op_groups(op_groups);

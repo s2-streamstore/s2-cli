@@ -197,7 +197,7 @@ enum Commands {
         /// Token IDs allowed.
         /// Matches exact value if it starts with `=`, otherwise treats it as a prefix.
         #[arg(long)]
-        tokens: Option<ResourceSet<1, 50>>,
+        access_tokens: Option<ResourceSet<1, 96>>,
 
         /// Access permissions at the group level.
         /// The format is: "account=rw,basin=r,stream=w"
@@ -1396,26 +1396,26 @@ async fn run() -> Result<(), S2CliError> {
             auto_prefix_streams,
             basins,
             streams,
-            tokens,
+            access_tokens,
             op_groups,
             ops,
         } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.access_token)?;
             let account_service = AccountService::new(Client::new(client_config));
-            let token = account_service
+            let access_token = account_service
                 .issue_access_token(
                     id,
                     expires_at,
                     auto_prefix_streams,
                     basins.map(Into::into),
                     streams.map(Into::into),
-                    tokens.map(Into::into),
+                    access_tokens.map(Into::into),
                     op_groups.map(Into::into),
                     ops.into_iter().map(Into::into).collect(),
                 )
                 .await?;
-            println!("{token}");
+            println!("{access_token}");
         }
         Commands::RevokeAccessToken { id } => {
             let cfg = config::load_config(&config_path)?;
