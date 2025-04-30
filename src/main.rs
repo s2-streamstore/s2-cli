@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
     pin::Pin,
     str::FromStr,
-    time::{Duration, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use account::AccountService;
@@ -24,7 +24,7 @@ use s2::{
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
         AccessTokenId, AppendRecord, AppendRecordBatch, BasinInfo, Command, CommandRecord,
-        ConvertError, FencingToken, MeteredBytes as _, ReadOutput, StreamInfo,
+        ConvertError, FencingToken, MeteredBytes as _, ReadOutput, ReadStart, StreamInfo,
     },
 };
 use stream::{RecordStream, StreamService};
@@ -197,11 +197,11 @@ enum Commands {
         /// Token IDs allowed.
         /// Matches exact value if it starts with `=`, otherwise treats it as a prefix.
         #[arg(long)]
-        tokens: Option<ResourceSet<1, 50>>,
+        access_tokens: Option<ResourceSet<1, 96>>,
 
         /// Access permissions at the group level.
         /// The format is: "account=rw,basin=r,stream=w"
-        /// where 'r' indicates read permission and 'w' indicates write permission.        
+        /// where 'r' indicates read permission and 'w' indicates write permission.
         #[arg(long)]
         op_groups: Option<PermittedOperationGroups>,
 
@@ -380,25 +380,38 @@ enum Commands {
         uri: S2BasinAndStreamUriArgs,
 
         /// Starting sequence number (inclusive).
-        #[arg(short = 's', long, default_value_t = 0)]
-        start_seq_num: u64,
+        #[arg(short = 's', long, group = "start")]
+        seq_num: Option<u64>,
+
+        /// Starting timestamp (inclusive).
+        #[arg(long, group = "start")]
+        timestamp: Option<u64>,
+
+        /// Starting timestamp as a human-friendly delta from current time e.g. "1h",
+        /// which will be converted to milliseconds since Unix epoch.
+        #[arg(long, group = "start")]
+        ago: Option<humantime::Duration>,
+
+        /// Start from N records before the tail of the stream.
+        #[arg(long, group = "start")]
+        tail_offset: Option<u64>,
 
         /// Output format.
         #[arg(long, value_enum, default_value_t)]
         format: Format,
 
+        /// Limit the number of records returned.
+        #[arg(short = 'n', long)]
+        count: Option<u64>,
+
+        /// Limit the number of bytes returned.
+        #[arg(short = 'b', long)]
+        bytes: Option<u64>,
+
         /// Output records to a file or stdout.
         /// Use "-" to write to stdout.
         #[arg(short = 'o', long, value_parser = parse_records_output_source, default_value = "-")]
         output: RecordsOut,
-
-        /// Limit the number of records returned.
-        #[arg(short = 'n', long)]
-        limit_count: Option<u64>,
-
-        /// Limit the number of bytes returned.
-        #[arg(short = 'b', long)]
-        limit_bytes: Option<u64>,
     },
 
     /// Ping the stream to get append acknowledgement and end-to-end latencies.
@@ -712,7 +725,7 @@ async fn run() -> Result<(), S2CliError> {
         tokio::pin!(tokens);
 
         while let Some(token) = tokens.next().await {
-            for token_info in token?.tokens {
+            for token_info in token?.access_tokens {
                 let exp_date = token_info
                     .expires_at
                     .map(|exp| {
@@ -931,8 +944,8 @@ async fn run() -> Result<(), S2CliError> {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.access_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
-            let next_seq_num = StreamService::new(stream_client).check_tail().await?;
-            println!("{}", next_seq_num);
+            let tail = StreamService::new(stream_client).check_tail().await?;
+            println!("{}\t{}", tail.seq_num, tail.timestamp);
         }
         Commands::Trim {
             uri,
@@ -954,8 +967,8 @@ async fn run() -> Result<(), S2CliError> {
             eprintln!(
                 "{}",
                 format!(
-                    "✓ Trim request for trim point {} appended at seq_num: {}",
-                    trim_point, out.start_seq_num,
+                    "✓ Trim request for trim point {trim_point} appended at: {:?}",
+                    out.start
                 )
                 .green()
                 .bold()
@@ -980,7 +993,7 @@ async fn run() -> Result<(), S2CliError> {
                 .await?;
             eprintln!(
                 "{}",
-                format!("✓ Fencing token appended at seq_num: {}", out.start_seq_num)
+                format!("✓ Fencing token appended at seq_num: {:?}", out.start)
                     .green()
                     .bold()
             );
@@ -1030,10 +1043,11 @@ async fn run() -> Result<(), S2CliError> {
                                         eprintln!(
                                             "{}",
                                             format!(
-                                                "✓ [APPENDED] start: {}, end: {}, next: {}",
-                                                append_result.start_seq_num,
-                                                append_result.end_seq_num,
-                                                append_result.next_seq_num
+                                                "✓ [APPENDED] {}..{} // tail: {} @ {}",
+                                                append_result.start.seq_num,
+                                                append_result.end.seq_num,
+                                                append_result.tail.seq_num,
+                                                append_result.tail.timestamp
                                             )
                                             .green()
                                             .bold()
@@ -1058,18 +1072,39 @@ async fn run() -> Result<(), S2CliError> {
         }
         Commands::Read {
             uri,
-            start_seq_num,
+            seq_num,
+            timestamp,
+            tail_offset,
+            ago,
             output,
-            limit_count,
-            limit_bytes,
+            count,
+            bytes,
             format,
         } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.access_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
+
+            let read_start = match (seq_num, timestamp, tail_offset, ago) {
+                (Some(seq_num), None, None, None) => ReadStart::SeqNum(seq_num),
+                (None, Some(timestamp), None, None) => ReadStart::Timestamp(timestamp),
+                (None, None, Some(offset), None) => ReadStart::TailOffset(offset),
+                (None, None, None, Some(ago)) => {
+                    let timestamp = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()
+                        .saturating_sub(ago.as_millis()) as u64;
+                    ReadStart::Timestamp(timestamp)
+                }
+                // Default to beginning of stream
+                (None, None, None, None) => s2::types::ReadStart::SeqNum(0),
+                _ => unreachable!("clap ensures only one start option is provided"),
+            };
+
             let mut read_output_stream = StreamService::new(stream_client)
-                .read_session(start_seq_num, limit_count, limit_bytes)
+                .read_session(read_start, count, bytes)
                 .await?;
             let mut writer = output.into_writer().await.unwrap();
 
@@ -1148,10 +1183,6 @@ async fn run() -> Result<(), S2CliError> {
                                         );
                                     }
 
-                                    Ok(ReadOutput::FirstSeqNum(seq_num)) => {
-                                        eprintln!("{}", format!("first_seq_num: {seq_num}").blue().bold());
-                                    }
-
                                     Ok(ReadOutput::NextSeqNum(seq_num)) => {
                                         eprintln!("{}", format!("next_seq_num: {seq_num}").blue().bold());
                                     }
@@ -1185,7 +1216,7 @@ async fn run() -> Result<(), S2CliError> {
             let client_config = client_config(cfg.access_token)?;
             let stream_client = StreamService::new(StreamClient::new(client_config, basin, stream));
 
-            let interval = interval.max(Duration::from_millis(100));
+            let interval = Duration::from(interval).max(Duration::from_millis(100));
             let batch_bytes = batch_bytes.min(128 * 1024);
 
             let prepare_loader = ProgressBar::new_spinner()
@@ -1261,8 +1292,7 @@ async fn run() -> Result<(), S2CliError> {
 
                 let max_jitter = batch_bytes / 4;
 
-                let record_bytes =
-                    jitter_op(batch_bytes, rand::thread_rng().gen_range(0..=max_jitter));
+                let record_bytes = jitter_op(batch_bytes, rand::rng().random_range(0..=max_jitter));
 
                 let Some(res) = pinger.ping(record_bytes).await? else {
                     return Ok(());
@@ -1365,26 +1395,26 @@ async fn run() -> Result<(), S2CliError> {
             auto_prefix_streams,
             basins,
             streams,
-            tokens,
+            access_tokens,
             op_groups,
             ops,
         } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.access_token)?;
             let account_service = AccountService::new(Client::new(client_config));
-            let token = account_service
+            let access_token = account_service
                 .issue_access_token(
                     id,
                     expires_at,
                     auto_prefix_streams,
                     basins.map(Into::into),
                     streams.map(Into::into),
-                    tokens.map(Into::into),
+                    access_tokens.map(Into::into),
                     op_groups.map(Into::into),
                     ops.into_iter().map(Into::into).collect(),
                 )
                 .await?;
-            println!("{token}");
+            println!("{access_token}");
         }
         Commands::RevokeAccessToken { id } => {
             let cfg = config::load_config(&config_path)?;
