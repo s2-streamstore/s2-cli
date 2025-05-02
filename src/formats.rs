@@ -162,8 +162,8 @@ mod json {
 
     #[derive(Debug, Clone, Serialize)]
     struct SerializableSequencedRecord<'a, const BIN_SAFE: bool> {
-        timestamp: u64,
         seq_num: u64,
+        timestamp: u64,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         headers: Vec<(CowStr<'a, BIN_SAFE>, CowStr<'a, BIN_SAFE>)>,
         #[serde(skip_serializing_if = "CowStr::is_empty")]
