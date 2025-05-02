@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0] - 2025-05-02
+
+### Features
+
+- `tail` command ([#140](https://github.com/s2-streamstore/s2-cli/issues/140))
+
+### Miscellaneous Tasks
+
+- Reorder fields for json format
+
 ## [0.12.0] - 2025-04-30
 
 ### Features
