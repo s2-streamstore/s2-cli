@@ -589,107 +589,6 @@ impl RecordsOut {
     }
 }
 
-async fn handle_read_output_stream(
-    read_outputs: &mut Streaming<ReadOutput>,
-    writer: &mut Box<dyn AsyncWrite + Send + Unpin>,
-    format: Format,
-) -> Result<bool, S2CliError> {
-    select! {
-        maybe_read_result = read_outputs.next() => {
-            match maybe_read_result {
-                Some(read_result) => {
-                    match read_result {
-                        Ok(ReadOutput::Batch(sequenced_record_batch)) => {
-                            let num_records = sequenced_record_batch.records.len();
-                            let mut batch_len = 0;
-
-                            let seq_range = match (
-                                sequenced_record_batch.records.first(),
-                                sequenced_record_batch.records.last(),
-                            ) {
-                                (Some(first), Some(last)) => first.seq_num..=last.seq_num,
-                                _ => panic!("empty batch"),
-                            };
-                            for sequenced_record in sequenced_record_batch.records {
-                                batch_len += sequenced_record.metered_bytes();
-
-                                if let Some(command_record) = sequenced_record.as_command_record() {
-                                    let (cmd, description) = match command_record.command {
-                                        Command::Fence { fencing_token } => (
-                                            "fence",
-                                            format!(
-                                                "FencingToken({})",
-                                                Base64::encode_string(fencing_token.as_ref()),
-                                            ),
-                                        ),
-                                        Command::Trim { seq_num } => (
-                                            "trim",
-                                            format!("TrimPoint({seq_num})"),
-                                        ),
-                                    };
-                                    eprintln!("{} with {}", cmd.bold(), description.green().bold());
-                                } else {
-                                    match format {
-                                        Format::Text => {
-                                            TextFormatter::write_record(
-                                                &sequenced_record,
-                                                writer,
-                                            ).await
-                                        },
-                                        Format::Json => {
-                                            JsonFormatter::write_record(
-                                                &sequenced_record,
-                                                writer,
-                                            ).await
-                                        },
-                                        Format::JsonBinsafe => {
-                                            JsonBinsafeFormatter::write_record(
-                                                &sequenced_record,
-                                                writer,
-                                            ).await
-                                        },
-                                    }
-                                    .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
-                                    writer
-                                        .write_all(b"\n")
-                                        .await
-                                        .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
-                                }
-                            }
-
-                            eprintln!(
-                                "{}",
-                                format!("⦿ {batch_len} bytes ({num_records} records in range {seq_range:?})")
-                                .blue()
-                                .bold()
-                            );
-                        }
-
-                        Ok(ReadOutput::NextSeqNum(seq_num)) => {
-                            eprintln!("{}", format!("next_seq_num: {seq_num}").blue().bold());
-                            return Ok(false);
-                        }
-
-                        Err(e) => {
-                            return Err(ServiceError::new(ServiceErrorContext::ReadSession, e).into());
-                        }
-                    }
-                }
-                None => return Ok(false),
-            }
-        },
-        _ = signal::ctrl_c() => {
-            eprintln!("{}", "■ [ABORTED]".red().bold());
-            return Ok(false);
-        }
-    }
-    writer
-        .flush()
-        .await
-        .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
-    Ok(true)
-}
-
 fn parse_records_input_source(s: &str) -> Result<RecordsIn, std::io::Error> {
     match s {
         "" | "-" => Ok(RecordsIn::Stdin),
@@ -1492,4 +1391,105 @@ async fn run() -> Result<(), S2CliError> {
     };
 
     Ok(())
+}
+
+async fn handle_read_output_stream(
+    read_outputs: &mut Streaming<ReadOutput>,
+    writer: &mut Box<dyn AsyncWrite + Send + Unpin>,
+    format: Format,
+) -> Result<bool, S2CliError> {
+    select! {
+        maybe_read_result = read_outputs.next() => {
+            match maybe_read_result {
+                Some(read_result) => {
+                    match read_result {
+                        Ok(ReadOutput::Batch(sequenced_record_batch)) => {
+                            let num_records = sequenced_record_batch.records.len();
+                            let mut batch_len = 0;
+
+                            let seq_range = match (
+                                sequenced_record_batch.records.first(),
+                                sequenced_record_batch.records.last(),
+                            ) {
+                                (Some(first), Some(last)) => first.seq_num..=last.seq_num,
+                                _ => panic!("empty batch"),
+                            };
+                            for sequenced_record in sequenced_record_batch.records {
+                                batch_len += sequenced_record.metered_bytes();
+
+                                if let Some(command_record) = sequenced_record.as_command_record() {
+                                    let (cmd, description) = match command_record.command {
+                                        Command::Fence { fencing_token } => (
+                                            "fence",
+                                            format!(
+                                                "FencingToken({})",
+                                                Base64::encode_string(fencing_token.as_ref()),
+                                            ),
+                                        ),
+                                        Command::Trim { seq_num } => (
+                                            "trim",
+                                            format!("TrimPoint({seq_num})"),
+                                        ),
+                                    };
+                                    eprintln!("{} with {}", cmd.bold(), description.green().bold());
+                                } else {
+                                    match format {
+                                        Format::Text => {
+                                            TextFormatter::write_record(
+                                                &sequenced_record,
+                                                writer,
+                                            ).await
+                                        },
+                                        Format::Json => {
+                                            JsonFormatter::write_record(
+                                                &sequenced_record,
+                                                writer,
+                                            ).await
+                                        },
+                                        Format::JsonBinsafe => {
+                                            JsonBinsafeFormatter::write_record(
+                                                &sequenced_record,
+                                                writer,
+                                            ).await
+                                        },
+                                    }
+                                    .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
+                                    writer
+                                        .write_all(b"\n")
+                                        .await
+                                        .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
+                                }
+                            }
+
+                            eprintln!(
+                                "{}",
+                                format!("⦿ {batch_len} bytes ({num_records} records in range {seq_range:?})")
+                                .blue()
+                                .bold()
+                            );
+                        }
+
+                        Ok(ReadOutput::NextSeqNum(seq_num)) => {
+                            eprintln!("{}", format!("next_seq_num: {seq_num}").blue().bold());
+                            return Ok(false);
+                        }
+
+                        Err(e) => {
+                            return Err(ServiceError::new(ServiceErrorContext::ReadSession, e).into());
+                        }
+                    }
+                }
+                None => return Ok(false),
+            }
+        },
+        _ = signal::ctrl_c() => {
+            eprintln!("{}", "■ [ABORTED]".red().bold());
+            return Ok(false);
+        }
+    }
+    writer
+        .flush()
+        .await
+        .map_err(|e| S2CliError::RecordWrite(e.to_string()))?;
+    Ok(true)
 }
