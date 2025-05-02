@@ -4,7 +4,8 @@ use rand::Rng;
 use s2::{
     batching::AppendRecordsBatchingOpts,
     types::{
-        AppendAck, AppendRecord, ReadOutput, ReadStart, SequencedRecord, SequencedRecordBatch,
+        AppendAck, AppendRecord, ReadLimit, ReadOutput, ReadStart, SequencedRecord,
+        SequencedRecordBatch,
     },
 };
 use tokio::{join, select, signal, sync::mpsc, task::JoinHandle, time::Instant};
@@ -34,7 +35,7 @@ impl Pinger {
         let tail = stream_client.check_tail().await?;
 
         let mut read_stream = stream_client
-            .read_session(ReadStart::SeqNum(tail.seq_num), None, None)
+            .read_session(ReadStart::SeqNum(tail.seq_num), ReadLimit::default())
             .await?;
 
         let (records_tx, records_rx) = mpsc::unbounded_channel();
