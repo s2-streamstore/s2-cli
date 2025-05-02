@@ -1115,11 +1115,11 @@ async fn run() -> Result<(), S2CliError> {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.access_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
-            let mut read_output_stream = StreamService::new(stream_client)
+            let mut read_outputs = StreamService::new(stream_client)
                 .read_session(read_start, read_limit)
                 .await?;
             let mut writer = output.into_writer().await.unwrap();
-            while handle_read_output_stream(&mut read_output_stream, &mut writer, format).await? {}
+            while handle_read_outputs(&mut read_outputs, &mut writer, format).await? {}
         }
         Commands::Read {
             uri,
@@ -1152,11 +1152,11 @@ async fn run() -> Result<(), S2CliError> {
                 _ => unreachable!("clap ensures only one start option is provided"),
             };
             let read_limit = ReadLimit { count, bytes };
-            let mut read_output_stream = StreamService::new(stream_client)
+            let mut read_outputs = StreamService::new(stream_client)
                 .read_session(read_start, read_limit)
                 .await?;
             let mut writer = output.into_writer().await.unwrap();
-            while handle_read_output_stream(&mut read_output_stream, &mut writer, format).await? {}
+            while handle_read_outputs(&mut read_outputs, &mut writer, format).await? {}
         }
         Commands::Ping {
             uri,
@@ -1393,7 +1393,7 @@ async fn run() -> Result<(), S2CliError> {
     Ok(())
 }
 
-async fn handle_read_output_stream(
+async fn handle_read_outputs(
     read_outputs: &mut Streaming<ReadOutput>,
     writer: &mut Box<dyn AsyncWrite + Send + Unpin>,
     format: Format,
