@@ -109,19 +109,10 @@ impl StreamService {
     pub async fn read_session(
         &self,
         start: ReadStart,
-        limit_count: Option<u64>,
-        limit_bytes: Option<u64>,
+        limit: ReadLimit,
     ) -> Result<Streaming<ReadOutput>, ServiceError> {
-        let read_session_req = ReadSessionRequest {
-            start,
-            limit: ReadLimit {
-                count: limit_count,
-                bytes: limit_bytes,
-            },
-        };
-
         self.client
-            .read_session(read_session_req)
+            .read_session(ReadSessionRequest { start, limit })
             .await
             .map_err(|e| ServiceError::new(ServiceErrorContext::ReadSession, e))
     }

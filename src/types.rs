@@ -543,6 +543,7 @@ pub enum Operation {
     CheckTail,
     Append,
     Read,
+    Tail,
     Trim,
     Fence,
 }
@@ -567,6 +568,7 @@ impl From<Operation> for s2::types::Operation {
             Operation::CheckTail => s2::types::Operation::CheckTail,
             Operation::Append => s2::types::Operation::Append,
             Operation::Read => s2::types::Operation::Read,
+            Operation::Tail => s2::types::Operation::Read, // Tail uses Read operation
             Operation::Trim => s2::types::Operation::Trim,
             Operation::Fence => s2::types::Operation::Fence,
         }
@@ -592,7 +594,7 @@ impl From<s2::types::Operation> for Operation {
             s2::types::Operation::ReconfigureStream => Operation::ReconfigureStream,
             s2::types::Operation::CheckTail => Operation::CheckTail,
             s2::types::Operation::Append => Operation::Append,
-            s2::types::Operation::Read => Operation::Read,
+            s2::types::Operation::Read => Operation::Read, // Note: both Read and Tail map to the same s2 operation
             s2::types::Operation::Trim => Operation::Trim,
             s2::types::Operation::Fence => Operation::Fence,
         }
@@ -626,6 +628,7 @@ impl FromStr for Operation {
             "check-tail" => Ok(Self::CheckTail),
             "append" => Ok(Self::Append),
             "read" => Ok(Self::Read),
+            "tail" => Ok(Self::Tail),
             "trim" => Ok(Self::Trim),
             "fence" => Ok(Self::Fence),
             _ => Err(OperationParseError::InvalidOperation(s.to_owned())),
