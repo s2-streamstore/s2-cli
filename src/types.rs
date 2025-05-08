@@ -161,14 +161,35 @@ pub struct StreamConfig {
     #[arg(long, help("Example: 1d, 1w, 1y"))]
     /// Retention policy for a stream.
     pub retention_policy: Option<RetentionPolicy>,
+    #[clap(flatten)]
+    /// Timestamping configuration.
+    pub timestamping: Option<TimestampingConfig>,
 }
 
 #[derive(ValueEnum, Debug, Clone, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StorageClass {
-    Unspecified,
     Standard,
     Express,
+}
+
+#[derive(ValueEnum, Debug, Clone, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TimestampingMode {
+    ClientPrefer,
+    ClientRequire,
+    Arrival,
+}
+
+#[derive(Parser, Debug, Clone, Serialize)]
+pub struct TimestampingConfig {
+    #[arg(long)]
+    /// Timestamping mode.
+    pub timestamping_mode: Option<TimestampingMode>,
+
+    #[arg(long)]
+    /// Uncapped timestamps.
+    pub timestamping_uncapped: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -203,25 +224,31 @@ impl From<BasinConfig> for s2::types::BasinConfig {
 
 impl From<StreamConfig> for s2::types::StreamConfig {
     fn from(config: StreamConfig) -> Self {
-        let storage_class = config
-            .storage_class
-            .map(s2::types::StorageClass::from)
-            .unwrap_or(s2::types::StorageClass::Unspecified);
-        let retention_policy = config.retention_policy.map(|r| r.into());
-        let stream_config = s2::types::StreamConfig::new().with_storage_class(storage_class);
+        let storage_class = config.storage_class.map(s2::types::StorageClass::from);
 
-        if let Some(retention_policy) = retention_policy {
-            stream_config.with_retention_policy(retention_policy)
-        } else {
-            stream_config
+        let retention_policy = config
+            .retention_policy
+            .map(s2::types::RetentionPolicy::from);
+
+        let timestamping_config = config.timestamping.map(s2::types::TimestampingConfig::from);
+
+        let mut stream_config = s2::types::StreamConfig::new();
+        if let Some(storage_class) = storage_class {
+            stream_config = stream_config.with_storage_class(storage_class);
         }
+        if let Some(retention_policy) = retention_policy {
+            stream_config = stream_config.with_retention_policy(retention_policy);
+        }
+        if let Some(timestamping) = timestamping_config {
+            stream_config = stream_config.with_timestamping(timestamping);
+        }
+        stream_config
     }
 }
 
 impl From<StorageClass> for s2::types::StorageClass {
     fn from(class: StorageClass) -> Self {
         match class {
-            StorageClass::Unspecified => s2::types::StorageClass::Unspecified,
             StorageClass::Standard => s2::types::StorageClass::Standard,
             StorageClass::Express => s2::types::StorageClass::Express,
         }
@@ -231,9 +258,46 @@ impl From<StorageClass> for s2::types::StorageClass {
 impl From<s2::types::StorageClass> for StorageClass {
     fn from(class: s2::types::StorageClass) -> Self {
         match class {
-            s2::types::StorageClass::Unspecified => StorageClass::Unspecified,
             s2::types::StorageClass::Standard => StorageClass::Standard,
             s2::types::StorageClass::Express => StorageClass::Express,
+        }
+    }
+}
+
+impl From<TimestampingMode> for s2::types::TimestampingMode {
+    fn from(mode: TimestampingMode) -> Self {
+        match mode {
+            TimestampingMode::ClientPrefer => s2::types::TimestampingMode::ClientPrefer,
+            TimestampingMode::ClientRequire => s2::types::TimestampingMode::ClientRequire,
+            TimestampingMode::Arrival => s2::types::TimestampingMode::Arrival,
+        }
+    }
+}
+
+impl From<s2::types::TimestampingMode> for TimestampingMode {
+    fn from(mode: s2::types::TimestampingMode) -> Self {
+        match mode {
+            s2::types::TimestampingMode::ClientPrefer => TimestampingMode::ClientPrefer,
+            s2::types::TimestampingMode::ClientRequire => TimestampingMode::ClientRequire,
+            s2::types::TimestampingMode::Arrival => TimestampingMode::Arrival,
+        }
+    }
+}
+
+impl From<TimestampingConfig> for s2::types::TimestampingConfig {
+    fn from(config: TimestampingConfig) -> Self {
+        s2::types::TimestampingConfig {
+            mode: config.timestamping_mode.map(Into::into),
+            uncapped: config.timestamping_uncapped,
+        }
+    }
+}
+
+impl From<s2::types::TimestampingConfig> for TimestampingConfig {
+    fn from(config: s2::types::TimestampingConfig) -> Self {
+        TimestampingConfig {
+            timestamping_mode: config.mode.map(Into::into),
+            timestamping_uncapped: config.uncapped,
         }
     }
 }
@@ -267,8 +331,9 @@ impl From<s2::types::BasinConfig> for BasinConfig {
 impl From<s2::types::StreamConfig> for StreamConfig {
     fn from(config: s2::types::StreamConfig) -> Self {
         StreamConfig {
-            storage_class: Some(config.storage_class.into()),
-            retention_policy: config.retention_policy.map(|r| r.into()),
+            storage_class: config.storage_class.map(Into::into),
+            retention_policy: config.retention_policy.map(Into::into),
+            timestamping: config.timestamping.map(Into::into),
         }
     }
 }
@@ -526,7 +591,6 @@ impl From<s2::types::AccessTokenScope> for AccessTokenScope {
 
 #[derive(Debug, Clone, Serialize)]
 pub enum Operation {
-    Unspecified,
     ListBasins,
     CreateBasin,
     DeleteBasin,
@@ -550,7 +614,6 @@ pub enum Operation {
 impl From<Operation> for s2::types::Operation {
     fn from(op: Operation) -> Self {
         match op {
-            Operation::Unspecified => s2::types::Operation::Unspecified,
             Operation::ListBasins => s2::types::Operation::ListBasins,
             Operation::CreateBasin => s2::types::Operation::CreateBasin,
             Operation::DeleteBasin => s2::types::Operation::DeleteBasin,
@@ -576,7 +639,6 @@ impl From<Operation> for s2::types::Operation {
 impl From<s2::types::Operation> for Operation {
     fn from(op: s2::types::Operation) -> Self {
         match op {
-            s2::types::Operation::Unspecified => Operation::Unspecified,
             s2::types::Operation::ListBasins => Operation::ListBasins,
             s2::types::Operation::CreateBasin => Operation::CreateBasin,
             s2::types::Operation::DeleteBasin => Operation::DeleteBasin,

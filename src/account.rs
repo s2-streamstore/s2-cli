@@ -85,7 +85,7 @@ impl AccountService {
         let mut stream_config = StreamConfig::new();
 
         if let Some(storage_class) = storage_class {
-            stream_config = stream_config.with_storage_class(storage_class);
+            stream_config = stream_config.with_storage_class(storage_class.into());
         }
 
         if let Some(retention_policy) = retention_policy {
