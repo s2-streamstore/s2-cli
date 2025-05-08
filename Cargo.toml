@@ -29,8 +29,7 @@ miette = { version = "7.6.0", features = ["fancy"] }
 rand = "0.9.1"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
-# TODO: replace with released version
-streamstore = { git = "https://github.com/s2-streamstore/s2-sdk-rust", rev = "e1b9c343385f0dd018bdfa18bf83fc74718e31a3" }
+streamstore = "0.14.0"
 thiserror = "2.0.12"
 tokio = { version = "1.45.0", features = ["full"] }
 tokio-stream = { version = "0.1.17", features = ["io-util"] }
