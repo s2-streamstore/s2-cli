@@ -77,16 +77,10 @@ impl BasinService {
     pub async fn create_stream(
         &self,
         stream: String,
-        config: Option<StreamConfig>,
+        config: StreamConfig,
     ) -> Result<StreamInfo, ServiceError> {
-        let mut create_stream_req = CreateStreamRequest::new(stream);
-
-        if let Some(config) = config {
-            create_stream_req = create_stream_req.with_config(config);
-        };
-
         self.client
-            .create_stream(create_stream_req)
+            .create_stream(CreateStreamRequest::new(stream).with_config(config))
             .await
             .map_err(|e| ServiceError::new(ServiceErrorContext::CreateStream, e))
     }

@@ -271,7 +271,7 @@ enum Commands {
 
         /// Configuration to apply.
         #[command(flatten)]
-        config: Option<StreamConfig>,
+        config: StreamConfig,
     },
 
     /// Delete a stream.
@@ -660,11 +660,14 @@ async fn run() -> Result<(), S2CliError> {
         while let Some(response) = basin_response_stream.next().await {
             for basin_info in response?.basins {
                 let BasinInfo { name, state, .. } = basin_info;
-
-                let state = match state {
-                    s2::types::BasinState::Active => state.to_string().green(),
-                    s2::types::BasinState::Deleting => state.to_string().red(),
-                    _ => state.to_string().yellow(),
+                let state = if let Some(state) = state {
+                    match state {
+                        s2::types::BasinState::Active => state.to_string().green(),
+                        s2::types::BasinState::Creating => state.to_string().yellow(),
+                        s2::types::BasinState::Deleting => state.to_string().red(),
+                    }
+                } else {
+                    "unknown".to_owned().blue()
                 };
                 println!("{} {}", name, state);
             }
@@ -848,8 +851,11 @@ async fn run() -> Result<(), S2CliError> {
                 .await?;
 
             let message = match state {
-                s2::types::BasinState::Creating => "✓ Basin creation requested".yellow().bold(),
-                _ => "✓ Basin created".green().bold(),
+                Some(s2::types::BasinState::Creating) => {
+                    "✓ Basin creation requested".yellow().bold()
+                }
+                Some(s2::types::BasinState::Active) => "✓ Basin created".green().bold(),
+                s => format!("Unexpected state: {s:?}").red().bold(),
             };
             eprintln!("{message}");
         }
@@ -919,7 +925,7 @@ async fn run() -> Result<(), S2CliError> {
             let client_config = client_config(cfg.access_token)?;
             let basin_client = BasinClient::new(client_config, basin);
             BasinService::new(basin_client)
-                .create_stream(stream, config.map(Into::into))
+                .create_stream(stream, config.into())
                 .await?;
             eprintln!("{}", "✓ Stream created".green().bold());
         }
