@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.0] - 2025-05-08
+
+### Features
+
+- Support timestamping configs ([#143](https://github.com/s2-streamstore/s2-cli/issues/143))
+
 ## [0.13.2] - 2025-05-02
 
 ### Miscellaneous Tasks
