@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.0] - 2025-05-10
+
+### Miscellaneous Tasks
+
+- Bump SDK version ([#146](https://github.com/s2-streamstore/s2-cli/issues/146))
+
 ## [0.14.0] - 2025-05-08
 
 ### Features
