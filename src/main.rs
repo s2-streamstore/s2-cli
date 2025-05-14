@@ -371,6 +371,10 @@ enum Commands {
         /// Use "-" to read from stdin.
         #[arg(short = 'i', long, value_parser = parse_records_input_source, default_value = "-")]
         input: RecordsIn,
+
+        /// How long to wait while accumulating records before emitting a batch.
+        #[arg(long, default_value = "5ms")]
+        linger: humantime::Duration,
     },
 
     /// Read records from a stream.
@@ -1038,6 +1042,7 @@ async fn run() -> Result<(), S2CliError> {
             fencing_token,
             match_seq_num,
             format,
+            linger,
         } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
@@ -1063,7 +1068,8 @@ async fn run() -> Result<(), S2CliError> {
                     append_input_stream,
                     AppendRecordsBatchingOpts::new()
                         .with_fencing_token(fencing_token)
-                        .with_match_seq_num(match_seq_num),
+                        .with_match_seq_num(match_seq_num)
+                        .with_linger(linger),
                 )
                 .await?;
 
