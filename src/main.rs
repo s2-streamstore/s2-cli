@@ -1160,7 +1160,7 @@ async fn run() -> Result<(), S2CliError> {
                         .saturating_sub(ago.as_millis()) as u64;
                     ReadStart::Timestamp(timestamp)
                 }
-                (None, None, None, None) => s2::types::ReadStart::SeqNum(0),
+                (None, None, None, None) => s2::types::ReadStart::TailOffset(0),
                 _ => unreachable!("clap ensures only one start option is provided"),
             };
             let read_limit = ReadLimit { count, bytes };
