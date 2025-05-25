@@ -1427,7 +1427,7 @@ async fn handle_read_outputs(
                                             "fence",
                                             format!(
                                                 "FencingToken({})",
-                                                &*fencing_token,
+                                                fencing_token,
                                             ),
                                         ),
                                         Command::Trim { seq_num } => (
