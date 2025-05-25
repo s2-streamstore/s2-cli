@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.0] - 2025-05-25
+
+### Features
+
+- Add linger opt for append ([#148](https://github.com/s2-streamstore/s2-cli/issues/148))
+- Fencing token as string rather than base64-encoded bytes ([#150](https://github.com/s2-streamstore/s2-cli/issues/150))
+
+### Miscellaneous Tasks
+
+- Default `read` to tailing rather than reading from head of stream ([#149](https://github.com/s2-streamstore/s2-cli/issues/149))
+- Updated `--format` names ([#151](https://github.com/s2-streamstore/s2-cli/issues/151))
+
 ## [0.15.0] - 2025-05-10
 
 ### Miscellaneous Tasks
