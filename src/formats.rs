@@ -28,11 +28,11 @@ pub trait RecordWriter {
     ) -> io::Result<()>;
 }
 
-pub use text::Formatter as TextFormatter;
+pub use body::RawFormatter as RawBodyFormatter;
 pub type RawJsonFormatter = json::Formatter<false>;
 pub type Base64JsonFormatter = json::Formatter<true>;
 
-mod text {
+mod body {
     use std::{
         io,
         pin::Pin,
@@ -45,19 +45,19 @@ mod text {
 
     use super::{RecordParseError, RecordParser, RecordWriter};
 
-    pub struct Formatter;
+    pub struct RawFormatter;
 
-    impl RecordWriter for Formatter {
+    impl RecordWriter for RawFormatter {
         async fn write_record(
             record: &SequencedRecord,
             writer: &mut (impl AsyncWrite + Unpin),
         ) -> io::Result<()> {
             let s = String::from_utf8_lossy(&record.body);
-            writer.write_all(s.as_ref().as_bytes()).await
+            writer.write_all(s.as_bytes()).await
         }
     }
 
-    impl<I> RecordParser<I> for Formatter
+    impl<I> RecordParser<I> for RawFormatter
     where
         I: Stream<Item = io::Result<String>> + Send + Unpin,
     {
