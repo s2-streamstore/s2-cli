@@ -29,8 +29,8 @@ pub trait RecordWriter {
 }
 
 pub use text::Formatter as TextFormatter;
-pub type JsonFormatter = json::Formatter<false>;
-pub type JsonBinsafeFormatter = json::Formatter<true>;
+pub type RawJsonFormatter = json::Formatter<false>;
+pub type Base64JsonFormatter = json::Formatter<true>;
 
 mod text {
     use std::{

@@ -14,7 +14,7 @@ use clap::{Parser, Subcommand, ValueEnum, builder::styling};
 use colored::Colorize;
 use config::{config_path, create_config};
 use error::{S2CliError, ServiceError, ServiceErrorContext};
-use formats::{JsonBinsafeFormatter, JsonFormatter, RecordWriter, TextFormatter};
+use formats::{Base64JsonFormatter, RawJsonFormatter, RecordWriter, TextFormatter};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use ping::{LatencyStats, PingResult, Pinger};
 use rand::Rng;
@@ -478,26 +478,22 @@ enum ConfigActions {
 
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
 pub enum Format {
-    /// Newline delimited records with UTF-8 bodies.
+    /// Record bodies with a potentially-lossy decoding as UTF-8.
+    /// Command records are skipped and sent to stderr.
     #[default]
-    Text,
+    BodyOnly,
     /// Newline delimited records in JSON format with UTF-8 headers and body.
-    Json,
-    /// Newline delimited records in JSON format with base64 encoded headers
-    /// and body.
-    JsonBinsafe,
+    Raw,
+    /// Newline delimited records in JSON format with headers and body encoded in Base64.
+    Base64,
 }
 
 impl Format {
-    const TEXT: &str = "text";
-    const JSON: &str = "json";
-    const JSON_BINSAFE: &str = "json-binsafe";
-
     fn as_str(&self) -> &str {
         match self {
-            Self::Text => Self::TEXT,
-            Self::Json => Self::JSON,
-            Self::JsonBinsafe => Self::JSON_BINSAFE,
+            Self::BodyOnly => "",
+            Self::Raw => "raw",
+            Self::Base64 => "base64",
         }
     }
 }
@@ -512,14 +508,11 @@ impl FromStr for Format {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.eq_ignore_ascii_case(Self::TEXT) {
-            Ok(Self::Text)
-        } else if s.eq_ignore_ascii_case(Self::JSON) {
-            Ok(Self::Json)
-        } else if s.eq_ignore_ascii_case(Self::JSON_BINSAFE) {
-            Ok(Self::JsonBinsafe)
-        } else {
-            Err("Unsupported format".to_owned())
+        match s.trim().to_lowercase().as_str() {
+            "" => Ok(Self::BodyOnly),
+            "json" | "raw" => Ok(Self::Raw),
+            "json-binsafe" | "base64" => Ok(Self::Base64),
+            x => Err(format!("Unsupported format: {x}")),
         }
     }
 }
@@ -1048,10 +1041,10 @@ async fn run() -> Result<(), S2CliError> {
 
             let append_input_stream: Box<dyn Stream<Item = AppendRecord> + Send + Unpin> =
                 match format {
-                    Format::Text => Box::new(RecordStream::<_, TextFormatter>::new(records_in)),
-                    Format::Json => Box::new(RecordStream::<_, JsonFormatter>::new(records_in)),
-                    Format::JsonBinsafe => {
-                        Box::new(RecordStream::<_, JsonBinsafeFormatter>::new(records_in))
+                    Format::BodyOnly => Box::new(RecordStream::<_, TextFormatter>::new(records_in)),
+                    Format::Raw => Box::new(RecordStream::<_, RawJsonFormatter>::new(records_in)),
+                    Format::Base64 => {
+                        Box::new(RecordStream::<_, Base64JsonFormatter>::new(records_in))
                     }
                 };
 
@@ -1437,20 +1430,20 @@ async fn handle_read_outputs(
                                     eprintln!("{} with {}", cmd.bold(), description.green().bold());
                                 } else {
                                     match format {
-                                        Format::Text => {
+                                        Format::BodyOnly => {
                                             TextFormatter::write_record(
                                                 &sequenced_record,
                                                 writer,
                                             ).await
                                         },
-                                        Format::Json => {
-                                            JsonFormatter::write_record(
+                                        Format::Raw => {
+                                            RawJsonFormatter::write_record(
                                                 &sequenced_record,
                                                 writer,
                                             ).await
                                         },
-                                        Format::JsonBinsafe => {
-                                            JsonBinsafeFormatter::write_record(
+                                        Format::Base64 => {
+                                            Base64JsonFormatter::write_record(
                                                 &sequenced_record,
                                                 writer,
                                             ).await
