@@ -11,7 +11,7 @@ use std::{
 use account::AccountService;
 use basin::BasinService;
 use clap::{Parser, Subcommand, ValueEnum, builder::styling};
-use colored::*;
+use colored::Colorize;
 use config::{config_path, create_config};
 use error::{S2CliError, ServiceError, ServiceErrorContext};
 use formats::{JsonBinsafeFormatter, JsonFormatter, RecordWriter, TextFormatter};
@@ -955,11 +955,11 @@ async fn run() -> Result<(), S2CliError> {
 
             if config.storage_class.is_some() {
                 mask.push("storage_class".to_string());
-            };
+            }
 
             if config.retention_policy.is_some() {
                 mask.push("retention_policy".to_string());
-            };
+            }
 
             let config: StreamConfig = BasinService::new(basin_client)
                 .reconfigure_stream(stream, config.into(), mask)
@@ -1319,7 +1319,7 @@ async fn run() -> Result<(), S2CliError> {
                         key,
                         format!("{} ms", val.as_millis()).green().bold(),
                         bar
-                    )
+                    );
                 }
 
                 let stats = stats.into_vec();
@@ -1392,7 +1392,7 @@ async fn run() -> Result<(), S2CliError> {
             let client_config = client_config(cfg.access_token)?;
             list_tokens(client_config, prefix, start_after, limit, no_auto_paginate).await?;
         }
-    };
+    }
 
     Ok(())
 }
@@ -1426,8 +1426,7 @@ async fn handle_read_outputs(
                                         Command::Fence { fencing_token } => (
                                             "fence",
                                             format!(
-                                                "FencingToken({})",
-                                                fencing_token,
+                                                "FencingToken({fencing_token})",
                                             ),
                                         ),
                                         Command::Trim { seq_num } => (
