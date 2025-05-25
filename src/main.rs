@@ -9,7 +9,6 @@ use std::{
 };
 
 use account::AccountService;
-use base64ct::{Base64, Encoding};
 use basin::BasinService;
 use clap::{Parser, Subcommand, ValueEnum, builder::styling};
 use colored::*;
@@ -25,8 +24,7 @@ use s2::{
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
         AccessTokenId, AppendRecord, AppendRecordBatch, BasinInfo, Command, CommandRecord,
-        ConvertError, FencingToken, MeteredBytes as _, ReadLimit, ReadOutput, ReadStart,
-        StreamInfo,
+        FencingToken, MeteredBytes as _, ReadLimit, ReadOutput, ReadStart, StreamInfo,
     },
 };
 use stream::{RecordStream, StreamService};
@@ -315,8 +313,8 @@ enum Commands {
         /// and any regression will be ignored.
         trim_point: u64,
 
-        /// Enforce fencing token specified in base64.
-        #[arg(short = 'f', long, value_parser = parse_fencing_token)]
+        /// Enforce fencing token.
+        #[arg(short = 'f', long)]
         fencing_token: Option<FencingToken>,
 
         /// Enforce that the sequence number issued to the first record matches.
@@ -335,13 +333,13 @@ enum Commands {
         #[command(flatten)]
         uri: S2BasinAndStreamUriArgs,
 
-        /// New fencing token specified in base64.
-        /// It may be upto 16 bytes, and can be empty.
-        #[arg(value_parser = parse_fencing_token)]
+        /// New fencing token.
+        /// It may be upto 36 characters, and can be empty.
+        #[arg()]
         new_fencing_token: FencingToken,
 
-        /// Enforce existing fencing token, specified in base64.
-        #[arg(short = 'f', long, value_parser = parse_fencing_token)]
+        /// Enforce existing fencing token.
+        #[arg(short = 'f', long)]
         fencing_token: Option<FencingToken>,
 
         /// Enforce that the sequence number issued to this command matches.
@@ -354,8 +352,8 @@ enum Commands {
         #[command(flatten)]
         uri: S2BasinAndStreamUriArgs,
 
-        /// Enforce fencing token specified in base64.
-        #[arg(short = 'f', long, value_parser = parse_fencing_token)]
+        /// Enforce fencing token.
+        #[arg(short = 'f', long)]
         fencing_token: Option<FencingToken>,
 
         /// Enforce that the sequence number issued to the first record matches.
@@ -605,12 +603,6 @@ fn parse_records_output_source(s: &str) -> Result<RecordsOut, std::io::Error> {
         "" | "-" => Ok(RecordsOut::Stdout),
         _ => Ok(RecordsOut::File(PathBuf::from(s))),
     }
-}
-
-fn parse_fencing_token(s: &str) -> Result<FencingToken, ConvertError> {
-    Base64::decode_vec(s)
-        .map_err(|_| "invalid base64")?
-        .try_into()
 }
 
 fn client_config(access_token: String) -> Result<ClientConfig, S2CliError> {
@@ -1435,7 +1427,7 @@ async fn handle_read_outputs(
                                             "fence",
                                             format!(
                                                 "FencingToken({})",
-                                                Base64::encode_string(fencing_token.as_ref()),
+                                                &*fencing_token,
                                             ),
                                         ),
                                         Command::Trim { seq_num } => (
