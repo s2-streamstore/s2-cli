@@ -17,7 +17,7 @@ struct S2Uri {
 #[cfg(test)]
 impl PartialEq for S2Uri {
     fn eq(&self, other: &Self) -> bool {
-        self.basin.as_ref().eq(other.basin.as_ref()) && self.stream.eq(&other.stream)
+        *self.basin == *other.basin && self.stream == other.stream
     }
 }
 
@@ -62,7 +62,7 @@ impl From<S2BasinUri> for BasinName {
 #[cfg(test)]
 impl PartialEq for S2BasinUri {
     fn eq(&self, other: &Self) -> bool {
-        self.0.as_ref().eq(other.0.as_ref())
+        *self.0 == *other.0
     }
 }
 
@@ -98,7 +98,7 @@ pub struct S2BasinAndMaybeStreamUri {
 #[cfg(test)]
 impl PartialEq for S2BasinAndMaybeStreamUri {
     fn eq(&self, other: &Self) -> bool {
-        self.basin.as_ref().eq(other.basin.as_ref()) && self.stream.eq(&other.stream)
+        *self.basin == *other.basin && self.stream == other.stream
     }
 }
 
@@ -127,7 +127,7 @@ pub struct S2BasinAndStreamUri {
 #[cfg(test)]
 impl PartialEq for S2BasinAndStreamUri {
     fn eq(&self, other: &Self) -> bool {
-        self.basin.as_ref().eq(other.basin.as_ref()) && self.stream == other.stream
+        *self.basin == *other.basin && self.stream == other.stream
     }
 }
 

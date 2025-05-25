@@ -9,10 +9,9 @@ use std::{
 };
 
 use account::AccountService;
-use base64ct::{Base64, Encoding};
 use basin::BasinService;
 use clap::{Parser, Subcommand, ValueEnum, builder::styling};
-use colored::*;
+use colored::Colorize;
 use config::{config_path, create_config};
 use error::{S2CliError, ServiceError, ServiceErrorContext};
 use formats::{JsonBinsafeFormatter, JsonFormatter, RecordWriter, TextFormatter};
@@ -25,8 +24,7 @@ use s2::{
     client::{BasinClient, Client, ClientConfig, S2Endpoints, StreamClient},
     types::{
         AccessTokenId, AppendRecord, AppendRecordBatch, BasinInfo, Command, CommandRecord,
-        ConvertError, FencingToken, MeteredBytes as _, ReadLimit, ReadOutput, ReadStart,
-        StreamInfo,
+        FencingToken, MeteredBytes as _, ReadLimit, ReadOutput, ReadStart, StreamInfo,
     },
 };
 use stream::{RecordStream, StreamService};
@@ -315,8 +313,8 @@ enum Commands {
         /// and any regression will be ignored.
         trim_point: u64,
 
-        /// Enforce fencing token specified in base64.
-        #[arg(short = 'f', long, value_parser = parse_fencing_token)]
+        /// Enforce fencing token.
+        #[arg(short = 'f', long)]
         fencing_token: Option<FencingToken>,
 
         /// Enforce that the sequence number issued to the first record matches.
@@ -335,13 +333,13 @@ enum Commands {
         #[command(flatten)]
         uri: S2BasinAndStreamUriArgs,
 
-        /// New fencing token specified in base64.
-        /// It may be upto 16 bytes, and can be empty.
-        #[arg(value_parser = parse_fencing_token)]
+        /// New fencing token.
+        /// It may be upto 36 characters, and can be empty.
+        #[arg()]
         new_fencing_token: FencingToken,
 
-        /// Enforce existing fencing token, specified in base64.
-        #[arg(short = 'f', long, value_parser = parse_fencing_token)]
+        /// Enforce existing fencing token.
+        #[arg(short = 'f', long)]
         fencing_token: Option<FencingToken>,
 
         /// Enforce that the sequence number issued to this command matches.
@@ -354,8 +352,8 @@ enum Commands {
         #[command(flatten)]
         uri: S2BasinAndStreamUriArgs,
 
-        /// Enforce fencing token specified in base64.
-        #[arg(short = 'f', long, value_parser = parse_fencing_token)]
+        /// Enforce fencing token.
+        #[arg(short = 'f', long)]
         fencing_token: Option<FencingToken>,
 
         /// Enforce that the sequence number issued to the first record matches.
@@ -605,12 +603,6 @@ fn parse_records_output_source(s: &str) -> Result<RecordsOut, std::io::Error> {
         "" | "-" => Ok(RecordsOut::Stdout),
         _ => Ok(RecordsOut::File(PathBuf::from(s))),
     }
-}
-
-fn parse_fencing_token(s: &str) -> Result<FencingToken, ConvertError> {
-    Base64::decode_vec(s)
-        .map_err(|_| "invalid base64")?
-        .try_into()
 }
 
 fn client_config(access_token: String) -> Result<ClientConfig, S2CliError> {
@@ -963,11 +955,11 @@ async fn run() -> Result<(), S2CliError> {
 
             if config.storage_class.is_some() {
                 mask.push("storage_class".to_string());
-            };
+            }
 
             if config.retention_policy.is_some() {
                 mask.push("retention_policy".to_string());
-            };
+            }
 
             let config: StreamConfig = BasinService::new(basin_client)
                 .reconfigure_stream(stream, config.into(), mask)
@@ -1327,7 +1319,7 @@ async fn run() -> Result<(), S2CliError> {
                         key,
                         format!("{} ms", val.as_millis()).green().bold(),
                         bar
-                    )
+                    );
                 }
 
                 let stats = stats.into_vec();
@@ -1400,7 +1392,7 @@ async fn run() -> Result<(), S2CliError> {
             let client_config = client_config(cfg.access_token)?;
             list_tokens(client_config, prefix, start_after, limit, no_auto_paginate).await?;
         }
-    };
+    }
 
     Ok(())
 }
@@ -1434,8 +1426,7 @@ async fn handle_read_outputs(
                                         Command::Fence { fencing_token } => (
                                             "fence",
                                             format!(
-                                                "FencingToken({})",
-                                                Base64::encode_string(fencing_token.as_ref()),
+                                                "FencingToken({fencing_token})",
                                             ),
                                         ),
                                         Command::Trim { seq_num } => (
