@@ -574,10 +574,16 @@ fn parse_records_output_source(s: &str) -> Result<RecordsOut, std::io::Error> {
 
 fn client_config(access_token: String) -> Result<ClientConfig, S2CliError> {
     let endpoints = S2Endpoints::from_env().map_err(S2CliError::EndpointsFromEnv)?;
+    let disable_compression = std::env::var("S2_DISABLE_COMPRESSION")
+        .ok()
+        .and_then(|val| val.to_lowercase().parse::<bool>().ok())
+        .unwrap_or(false);
     let client_config = ClientConfig::new(access_token.to_string())
         .with_user_agent("s2-cli".parse().expect("valid user agent"))
         .with_endpoints(endpoints)
+        .with_compression(!disable_compression)
         .with_request_timeout(Duration::from_secs(30));
+    trace!(?client_config);
     Ok(client_config)
 }
 
