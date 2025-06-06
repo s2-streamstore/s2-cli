@@ -8,17 +8,10 @@ use thiserror::Error;
 
 use crate::error::S2UriParseError;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct S2Uri {
     basin: BasinName,
     stream: Option<String>,
-}
-
-#[cfg(test)]
-impl PartialEq for S2Uri {
-    fn eq(&self, other: &Self) -> bool {
-        *self.basin == *other.basin && self.stream == other.stream
-    }
 }
 
 impl FromStr for S2Uri {
@@ -50,19 +43,12 @@ impl FromStr for S2Uri {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct S2BasinUri(pub BasinName);
 
 impl From<S2BasinUri> for BasinName {
     fn from(value: S2BasinUri) -> Self {
         value.0
-    }
-}
-
-#[cfg(test)]
-impl PartialEq for S2BasinUri {
-    fn eq(&self, other: &Self) -> bool {
-        *self.0 == *other.0
     }
 }
 
@@ -89,17 +75,10 @@ impl FromStr for S2BasinUri {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct S2BasinAndMaybeStreamUri {
     pub basin: BasinName,
     pub stream: Option<String>,
-}
-
-#[cfg(test)]
-impl PartialEq for S2BasinAndMaybeStreamUri {
-    fn eq(&self, other: &Self) -> bool {
-        *self.basin == *other.basin && self.stream == other.stream
-    }
 }
 
 impl FromStr for S2BasinAndMaybeStreamUri {
@@ -118,17 +97,10 @@ impl FromStr for S2BasinAndMaybeStreamUri {
 }
 
 /// String Format: s2://{basin}/{stream}
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct S2BasinAndStreamUri {
     pub basin: BasinName,
     pub stream: String,
-}
-
-#[cfg(test)]
-impl PartialEq for S2BasinAndStreamUri {
-    fn eq(&self, other: &Self) -> bool {
-        *self.basin == *other.basin && self.stream == other.stream
-    }
 }
 
 impl FromStr for S2BasinAndStreamUri {
@@ -609,6 +581,9 @@ pub enum Operation {
     Read,
     Trim,
     Fence,
+    AccountMetrics,
+    BasinMetrics,
+    StreamMetrics,
 }
 
 impl From<Operation> for s2::types::Operation {
@@ -632,6 +607,9 @@ impl From<Operation> for s2::types::Operation {
             Operation::Read => s2::types::Operation::Read,
             Operation::Trim => s2::types::Operation::Trim,
             Operation::Fence => s2::types::Operation::Fence,
+            Operation::AccountMetrics => s2::types::Operation::AccountMetrics,
+            Operation::BasinMetrics => s2::types::Operation::BasinMetrics,
+            Operation::StreamMetrics => s2::types::Operation::StreamMetrics,
         }
     }
 }
@@ -657,6 +635,9 @@ impl From<s2::types::Operation> for Operation {
             s2::types::Operation::Read => Operation::Read,
             s2::types::Operation::Trim => Operation::Trim,
             s2::types::Operation::Fence => Operation::Fence,
+            s2::types::Operation::AccountMetrics => Operation::AccountMetrics,
+            s2::types::Operation::BasinMetrics => Operation::BasinMetrics,
+            s2::types::Operation::StreamMetrics => Operation::StreamMetrics,
         }
     }
 }

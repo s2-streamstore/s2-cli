@@ -1,11 +1,3 @@
-use json_to_table::json_to_table;
-use std::{
-    io::BufRead,
-    path::PathBuf,
-    pin::Pin,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
-
 use account::AccountService;
 use basin::BasinService;
 use clap::{Parser, Subcommand, ValueEnum, builder::styling};
@@ -14,6 +6,7 @@ use config::{config_path, create_config};
 use error::{S2CliError, ServiceError, ServiceErrorContext};
 use formats::{Base64JsonFormatter, RawBodyFormatter, RawJsonFormatter, RecordWriter};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use json_to_table::json_to_table;
 use ping::{LatencyStats, PingResult, Pinger};
 use rand::Rng;
 use s2::{
@@ -24,6 +17,12 @@ use s2::{
         AccessTokenId, AppendRecord, AppendRecordBatch, BasinInfo, Command, CommandRecord,
         FencingToken, MeteredBytes as _, ReadLimit, ReadOutput, ReadStart, StreamInfo,
     },
+};
+use std::{
+    io::BufRead,
+    path::PathBuf,
+    pin::Pin,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use stream::{RecordStream, StreamService};
 use tokio::{
@@ -414,6 +413,12 @@ enum Commands {
         /// Use "-" to write to stdout.
         #[arg(short = 'o', long, value_parser = parse_records_output_source, default_value = "-")]
         output: RecordsOut,
+
+        /// Exclusive end-timestamp.
+        /// If provided, results will be limited such that all records returned
+        /// will have a timestamp < the one provided via `until`.
+        #[arg(long)]
+        until: Option<u64>,
     },
 
     /// Tail a stream, showing the last N records.
@@ -1097,7 +1102,7 @@ async fn run() -> Result<(), S2CliError> {
             let client_config = client_config(cfg.access_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
             let mut read_outputs = StreamService::new(stream_client)
-                .read_session(read_start, read_limit)
+                .read_session(read_start, read_limit, None)
                 .await?;
             let mut writer = output.into_writer().await.unwrap();
             while handle_read_outputs(&mut read_outputs, &mut writer, format).await? {}
@@ -1112,6 +1117,7 @@ async fn run() -> Result<(), S2CliError> {
             count,
             bytes,
             format,
+            until,
         } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
@@ -1134,7 +1140,7 @@ async fn run() -> Result<(), S2CliError> {
             };
             let read_limit = ReadLimit { count, bytes };
             let mut read_outputs = StreamService::new(stream_client)
-                .read_session(read_start, read_limit)
+                .read_session(read_start, read_limit, until.map(|end| ..end))
                 .await?;
             let mut writer = output.into_writer().await.unwrap();
             while handle_read_outputs(&mut read_outputs, &mut writer, format).await? {}
