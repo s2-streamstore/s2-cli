@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.0] - 2025-06-06
+
+### Features
+
+- Compress by default ([#153](https://github.com/s2-streamstore/s2-cli/issues/153))
+- Add `until` timestamp support + metrics ops ([#154](https://github.com/s2-streamstore/s2-cli/issues/154))
+
 ## [0.16.0] - 2025-05-25
 
 ### Features
