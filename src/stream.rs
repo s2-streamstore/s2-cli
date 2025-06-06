@@ -8,6 +8,7 @@ use s2::{
         ReadOutput, ReadSessionRequest, ReadStart, StreamPosition,
     },
 };
+use std::ops::RangeTo;
 
 use futures::{Stream, StreamExt};
 use s2::types::AppendRecord;
@@ -110,9 +111,14 @@ impl StreamService {
         &self,
         start: ReadStart,
         limit: ReadLimit,
+        until: Option<RangeTo<u64>>,
     ) -> Result<Streaming<ReadOutput>, ServiceError> {
         self.client
-            .read_session(ReadSessionRequest { start, limit })
+            .read_session(ReadSessionRequest {
+                start,
+                limit,
+                until,
+            })
             .await
             .map_err(|e| ServiceError::new(ServiceErrorContext::ReadSession, e))
     }

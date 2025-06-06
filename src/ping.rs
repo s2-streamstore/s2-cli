@@ -35,7 +35,7 @@ impl Pinger {
         let tail = stream_client.check_tail().await?;
 
         let mut read_stream = stream_client
-            .read_session(ReadStart::SeqNum(tail.seq_num), ReadLimit::default())
+            .read_session(ReadStart::SeqNum(tail.seq_num), ReadLimit::default(), None)
             .await?;
 
         let (records_tx, records_rx) = mpsc::unbounded_channel();
