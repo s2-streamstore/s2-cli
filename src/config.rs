@@ -27,7 +27,8 @@ impl<'de> Deserialize<'de> for S2Config {
             Old { auth_token: String },
         }
 
-        let token = TokenField::deserialize(deserializer)?;
+        let token = TokenField::deserialize(deserializer)
+            .map_err(|_| de::Error::custom("Missing required field: 'access_token'"))?;
 
         Ok(S2Config {
             access_token: match token {

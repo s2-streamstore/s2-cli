@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.0] - 2025-06-13
+
+### Bug Fixes
+
+- Error message for missing access token
+
 ## [0.18.0] - 2025-06-13
 
 ### Miscellaneous Tasks
