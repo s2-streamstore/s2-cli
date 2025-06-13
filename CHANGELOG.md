@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.0] - 2025-06-13
+
+### Miscellaneous Tasks
+
+- Update ubuntu version in release
+
 ## [0.17.0] - 2025-06-06
 
 ### Features
