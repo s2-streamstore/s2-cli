@@ -1926,6 +1926,7 @@ dependencies = [
  "config",
  "dirs",
  "futures",
+ "http",
  "humantime",
  "indicatif",
  "json_to_table",
