@@ -652,7 +652,7 @@ async fn run() -> Result<(), S2CliError> {
                 } else {
                     "unknown".to_owned().blue()
                 };
-                println!("{} {}", name, state);
+                println!("{name} {state}");
             }
         }
 

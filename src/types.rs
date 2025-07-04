@@ -752,8 +752,7 @@ mod tests {
         assert_eq!(
             input.parse::<PermittedOperationGroups>(),
             expected,
-            "Testing input: {}",
-            input
+            "Testing input: {input}"
         );
     }
 
@@ -788,8 +787,7 @@ mod tests {
         assert_eq!(
             input.parse::<ResourceSet<8, 48>>(),
             expected,
-            "Testing input: {}",
-            input
+            "Testing input: {input}"
         );
     }
 
