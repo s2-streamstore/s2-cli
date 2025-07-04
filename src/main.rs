@@ -583,10 +583,19 @@ fn client_config(access_token: String) -> Result<ClientConfig, S2CliError> {
         .ok()
         .and_then(|val| val.to_lowercase().parse::<bool>().ok())
         .unwrap_or(false);
+    let disable_tls = std::env::var("S2_DISABLE_TLS")
+        .ok()
+        .and_then(|val| val.to_lowercase().parse::<bool>().ok())
+        .unwrap_or(false);
     let client_config = ClientConfig::new(access_token.to_string())
         .with_user_agent("s2-cli".parse().expect("valid user agent"))
         .with_endpoints(endpoints)
         .with_compression(!disable_compression)
+        .with_uri_scheme(if disable_tls {
+            http::uri::Scheme::HTTP
+        } else {
+            http::uri::Scheme::HTTPS
+        })
         .with_request_timeout(Duration::from_secs(30));
     trace!(?client_config);
     Ok(client_config)
