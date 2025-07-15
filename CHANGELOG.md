@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.2] - 2025-07-15
+
+### Bug Fixes
+
+- Reconfigure-* ([#158](https://github.com/s2-streamstore/s2-cli/issues/158))
+
 ## [0.19.1] - 2025-07-04
 
 ### Features
