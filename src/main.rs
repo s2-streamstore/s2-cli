@@ -39,7 +39,8 @@ use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{
     AccessTokenInfo, BasinConfig, Operation, PermittedOperationGroups, ResourceSet,
-    S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StreamConfig,
+    RetentionPolicy, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass,
+    StreamConfig, TimestampingConfig, TimestampingMode,
 };
 
 mod account;
@@ -160,9 +161,29 @@ enum Commands {
         /// Name of the basin to reconfigure.
         basin: S2BasinUri,
 
-        /// Configuration to apply.
-        #[command(flatten)]
-        config: BasinConfig,
+        /// Storage class for the default stream config.
+        #[arg(long)]
+        storage_class: Option<StorageClass>,
+
+        /// Retention policy for the default stream config (e.g., "1d", "1w", "1y").
+        #[arg(long)]
+        retention_policy: Option<RetentionPolicy>,
+
+        /// Timestamping mode for the default stream config.
+        #[arg(long)]
+        timestamping_mode: Option<TimestampingMode>,
+
+        /// Uncapped timestamps for the default stream config.
+        #[arg(long)]
+        timestamping_uncapped: Option<bool>,
+
+        /// Create stream on append with basin defaults if it doesn't exist.
+        #[arg(long)]
+        create_stream_on_append: Option<bool>,
+
+        /// Create stream on read with basin defaults if it doesn't exist.
+        #[arg(long)]
+        create_stream_on_read: Option<bool>,
     },
 
     /// Issue an access token.
@@ -286,9 +307,21 @@ enum Commands {
         #[command(flatten)]
         uri: S2BasinAndStreamUriArgs,
 
-        /// Configuration to apply.
-        #[command(flatten)]
-        config: StreamConfig,
+        /// Storage class for the stream.
+        #[arg(long)]
+        storage_class: Option<StorageClass>,
+
+        /// Retention policy for the stream (e.g., "1d", "1w", "1y").
+        #[arg(long)]
+        retention_policy: Option<RetentionPolicy>,
+
+        /// Timestamping mode for the stream.
+        #[arg(long)]
+        timestamping_mode: Option<TimestampingMode>,
+
+        /// Uncapped timestamps for the stream.
+        #[arg(long)]
+        timestamping_uncapped: Option<bool>,
     },
 
     /// Get the next sequence number that will be assigned by a stream.
@@ -601,6 +634,100 @@ fn client_config(access_token: String) -> Result<ClientConfig, S2CliError> {
     Ok(client_config)
 }
 
+fn build_basin_reconfig(
+    storage_class: Option<&StorageClass>,
+    retention_policy: Option<&RetentionPolicy>,
+    timestamping_mode: Option<&TimestampingMode>,
+    timestamping_uncapped: Option<&bool>,
+    create_stream_on_append: Option<&bool>,
+    create_stream_on_read: Option<&bool>,
+) -> (Option<StreamConfig>, Vec<String>) {
+    let mut mask = Vec::new();
+    let has_stream_args = storage_class.is_some()
+        || retention_policy.is_some()
+        || timestamping_mode.is_some()
+        || timestamping_uncapped.is_some();
+
+    let default_stream_config = if has_stream_args {
+        let timestamping = if timestamping_mode.is_some() || timestamping_uncapped.is_some() {
+            Some(TimestampingConfig {
+                timestamping_mode: timestamping_mode.cloned(),
+                timestamping_uncapped: timestamping_uncapped.copied(),
+            })
+        } else {
+            None
+        };
+
+        Some(StreamConfig {
+            storage_class: storage_class.cloned(),
+            retention_policy: retention_policy.cloned(),
+            timestamping,
+        })
+    } else {
+        None
+    };
+
+    if storage_class.is_some() {
+        mask.push("default_stream_config.storage_class".to_owned());
+    }
+    if retention_policy.is_some() {
+        mask.push("default_stream_config.retention_policy".to_owned());
+    }
+    if timestamping_mode.is_some() {
+        mask.push("default_stream_config.timestamping.mode".to_owned());
+    }
+    if timestamping_uncapped.is_some() {
+        mask.push("default_stream_config.timestamping.uncapped".to_owned());
+    }
+    if create_stream_on_append.is_some() {
+        mask.push("create_stream_on_append".to_owned());
+    }
+    if create_stream_on_read.is_some() {
+        mask.push("create_stream_on_read".to_owned());
+    }
+
+    (default_stream_config, mask)
+}
+
+fn build_stream_reconfig(
+    storage_class: Option<&StorageClass>,
+    retention_policy: Option<&RetentionPolicy>,
+    timestamping_mode: Option<&TimestampingMode>,
+    timestamping_uncapped: Option<&bool>,
+) -> (StreamConfig, Vec<String>) {
+    let mut mask = Vec::new();
+
+    let timestamping = if timestamping_mode.is_some() || timestamping_uncapped.is_some() {
+        Some(TimestampingConfig {
+            timestamping_mode: timestamping_mode.cloned(),
+            timestamping_uncapped: timestamping_uncapped.copied(),
+        })
+    } else {
+        None
+    };
+
+    let stream_config = StreamConfig {
+        storage_class: storage_class.cloned(),
+        retention_policy: retention_policy.cloned(),
+        timestamping,
+    };
+
+    if storage_class.is_some() {
+        mask.push("storage_class".to_string());
+    }
+    if retention_policy.is_some() {
+        mask.push("retention_policy".to_string());
+    }
+    if timestamping_mode.is_some() {
+        mask.push("timestamping.mode".to_string());
+    }
+    if timestamping_uncapped.is_some() {
+        mask.push("timestamping.uncapped".to_string());
+    }
+
+    (stream_config, mask)
+}
+
 #[tokio::main]
 async fn main() -> miette::Result<()> {
     miette::set_panic_hook();
@@ -857,27 +984,36 @@ async fn run() -> Result<(), S2CliError> {
             let basin_config: BasinConfig = basin_config.into();
             println!("{}", json_to_table(&serde_json::to_value(&basin_config)?));
         }
-        Commands::ReconfigureBasin { basin, config } => {
+        Commands::ReconfigureBasin {
+            basin,
+            storage_class,
+            retention_policy,
+            timestamping_mode,
+            timestamping_uncapped,
+            create_stream_on_append,
+            create_stream_on_read,
+        } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.access_token)?;
             let account_service = AccountService::new(Client::new(client_config));
-            let mut mask = Vec::new();
-            if let Some(config) = &config.default_stream_config {
-                if config.storage_class.is_some() {
-                    mask.push("default_stream_config.storage_class".to_owned());
-                }
-                if config.retention_policy.is_some() {
-                    mask.push("default_stream_config.retention_policy".to_owned());
-                }
-            }
-            if config.create_stream_on_append.is_some() {
-                mask.push("create_stream_on_append".to_owned());
-            }
-            if config.create_stream_on_read.is_some() {
-                mask.push("create_stream_on_read".to_owned());
-            }
+
+            let (default_stream_config, mask) = build_basin_reconfig(
+                storage_class.as_ref(),
+                retention_policy.as_ref(),
+                timestamping_mode.as_ref(),
+                timestamping_uncapped.as_ref(),
+                create_stream_on_append.as_ref(),
+                create_stream_on_read.as_ref(),
+            );
+
+            let basin_config = BasinConfig {
+                default_stream_config,
+                create_stream_on_append,
+                create_stream_on_read,
+            };
+
             let config: BasinConfig = account_service
-                .reconfigure_basin(basin.into(), config.into(), mask)
+                .reconfigure_basin(basin.into(), basin_config.into(), mask)
                 .await?
                 .into();
             eprintln!("{}", "✓ Basin reconfigured".green().bold());
@@ -933,23 +1069,27 @@ async fn run() -> Result<(), S2CliError> {
                 .into();
             println!("{}", json_to_table(&serde_json::to_value(&config)?));
         }
-        Commands::ReconfigureStream { uri, config } => {
+        Commands::ReconfigureStream {
+            uri,
+            storage_class,
+            retention_policy,
+            timestamping_mode,
+            timestamping_uncapped,
+        } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.access_token)?;
             let basin_client = BasinClient::new(client_config, basin);
-            let mut mask = Vec::new();
 
-            if config.storage_class.is_some() {
-                mask.push("storage_class".to_string());
-            }
-
-            if config.retention_policy.is_some() {
-                mask.push("retention_policy".to_string());
-            }
+            let (stream_config, mask) = build_stream_reconfig(
+                storage_class.as_ref(),
+                retention_policy.as_ref(),
+                timestamping_mode.as_ref(),
+                timestamping_uncapped.as_ref(),
+            );
 
             let config: StreamConfig = BasinService::new(basin_client)
-                .reconfigure_stream(stream, config.into(), mask)
+                .reconfigure_stream(stream, stream_config.into(), mask)
                 .await?
                 .into();
 
