@@ -498,6 +498,11 @@ enum Commands {
         #[arg(short = 'n', long)]
         num_batches: Option<usize>,
     },
+
+    Update {
+        #[arg(short = 'f', long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1524,8 +1529,257 @@ async fn run() -> Result<(), S2CliError> {
             let client_config = client_config(cfg.access_token)?;
             list_tokens(client_config, prefix, start_after, limit, no_auto_paginate).await?;
         }
+        Commands::Update { force } => {
+            update_s2_cli(force).await?;
+        }
     }
 
+    Ok(())
+}
+
+async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
+    use serde_json::Value;
+    use std::env;
+    use std::process::Command;
+
+    let current_version = env!("CARGO_PKG_VERSION");
+    eprintln!("Current version: {}", current_version.cyan().bold());
+
+    eprintln!("Checking for updates...");
+    let output = Command::new("curl")
+        .args([
+            "-s",
+            "-H",
+            "User-Agent: s2-cli-updater",
+            "https://api.github.com/repos/s2-streamstore/s2-cli/releases/latest",
+        ])
+        .output()
+        .map_err(|e| {
+            S2CliError::InvalidArgs(miette::miette!("Failed to fetch latest version: {}", e))
+        })?;
+
+    if !output.status.success() {
+        return Err(S2CliError::InvalidArgs(miette::miette!(
+            "Failed to fetch latest version: HTTP {}",
+            output.status
+        )));
+    }
+
+    let release_info: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| S2CliError::InvalidArgs(miette::miette!("Failed to parse response: {}", e)))?;
+
+    let latest_version = release_info["tag_name"]
+        .as_str()
+        .ok_or_else(|| S2CliError::InvalidArgs(miette::miette!("No tag_name in response")))?
+        .trim_start_matches('v');
+
+    eprintln!("Latest version: {}", latest_version.cyan().bold());
+
+    if current_version == latest_version && !force {
+        eprintln!("{}", "Already up to date!".green().bold());
+        return Ok(());
+    }
+
+    let exe_path = env::current_exe().map_err(|e| {
+        S2CliError::InvalidArgs(miette::miette!("Failed to get executable path: {}", e))
+    })?;
+
+    eprintln!("Starting update...");
+
+    let exe_path_str = exe_path.to_string_lossy();
+
+    if exe_path_str.contains("homebrew/bin")
+        || exe_path_str.contains("Cellar")
+        || exe_path_str.contains("/opt/homebrew/")
+        || exe_path_str.contains("/usr/local/bin/")
+    {
+        eprintln!("Detected Homebrew installation");
+        let status = Command::new("brew")
+            .args(["upgrade", "s2-streamstore/s2/s2"])
+            .status()
+            .map_err(|e| {
+                S2CliError::InvalidArgs(miette::miette!("Failed to run brew upgrade: {}", e))
+            })?;
+
+        if status.success() {
+            eprintln!("{}", "Successfully updated via Homebrew".green().bold());
+        } else {
+            return Err(S2CliError::InvalidArgs(miette::miette!(
+                "Homebrew upgrade failed with exit code: {}",
+                status
+            )));
+        }
+    } else if exe_path_str.contains(".cargo")
+        || exe_path_str.contains("target/release")
+        || exe_path_str.contains("target/debug")
+    {
+        eprintln!("Detected Cargo installation");
+        let status = Command::new("cargo")
+            .args(["install", "--locked", "--force", "streamstore-cli"])
+            .status()
+            .map_err(|e| {
+                S2CliError::InvalidArgs(miette::miette!("Failed to run cargo install: {}", e))
+            })?;
+
+        if status.success() {
+            eprintln!("{}", "Successfully updated via Cargo".green().bold());
+        } else {
+            return Err(S2CliError::InvalidArgs(miette::miette!(
+                "Cargo install failed with exit code: {}",
+                status
+            )));
+        }
+    } else {
+        eprintln!("Detected binary installation");
+
+        let (_os, arch) = if cfg!(target_os = "macos") {
+            if cfg!(target_arch = "aarch64") {
+                ("aarch64-apple-darwin", "aarch64-apple-darwin.zip")
+            } else {
+                ("x86_64-apple-darwin", "x86_64-apple-darwin.zip")
+            }
+        } else if cfg!(target_os = "linux") {
+            if cfg!(target_arch = "aarch64") {
+                ("aarch64-unknown-linux-gnu", "aarch64-unknown-linux-gnu.zip")
+            } else {
+                ("x86_64-unknown-linux-gnu", "x86_64-unknown-linux-gnu.zip")
+            }
+        } else {
+            return Err(S2CliError::InvalidArgs(miette::miette!(
+                "Unsupported OS: {}",
+                std::env::consts::OS
+            )));
+        };
+
+        let download_url = format!(
+            "https://github.com/s2-streamstore/s2-cli/releases/download/{}/s2-{}",
+            latest_version, arch
+        );
+
+        eprintln!("Downloading from: {}", download_url.cyan());
+
+        let temp_dir = std::env::temp_dir();
+        let extract_dir = temp_dir.join(format!("s2-update-{}", latest_version));
+        let zip_file = temp_dir.join(format!("s2-{}.zip", latest_version));
+
+        tokio::fs::create_dir_all(&extract_dir).await.map_err(|e| {
+            S2CliError::InvalidArgs(miette::miette!("Failed to create temp directory: {}", e))
+        })?;
+
+        let download_status = Command::new("curl")
+            .args([
+                "-L",
+                "-o",
+                zip_file.to_str().unwrap(),
+                "-H",
+                "User-Agent: s2-cli-updater",
+                &download_url,
+            ])
+            .status()
+            .map_err(|e| {
+                S2CliError::InvalidArgs(miette::miette!("Failed to download binary: {}", e))
+            })?;
+
+        if !download_status.success() {
+            return Err(S2CliError::InvalidArgs(miette::miette!(
+                "Failed to download binary with exit code: {}",
+                download_status
+            )));
+        }
+
+        let unzip_status = Command::new("unzip")
+            .args([
+                "-q",
+                "-o",
+                zip_file.to_str().unwrap(),
+                "-d",
+                extract_dir.to_str().unwrap(),
+            ])
+            .status()
+            .map_err(|e| {
+                S2CliError::InvalidArgs(miette::miette!("Failed to extract zip file: {}", e))
+            })?;
+
+        if !unzip_status.success() {
+            return Err(S2CliError::InvalidArgs(miette::miette!(
+                "Failed to extract zip file with exit code: {}",
+                unzip_status
+            )));
+        }
+
+        let extracted_binary = extract_dir.join("s2");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = tokio::fs::metadata(&extracted_binary)
+                .await
+                .map_err(|e| {
+                    S2CliError::InvalidArgs(miette::miette!("Failed to get file metadata: {}", e))
+                })?
+                .permissions();
+            perms.set_mode(0o755);
+            tokio::fs::set_permissions(&extracted_binary, perms)
+                .await
+                .map_err(|e| {
+                    S2CliError::InvalidArgs(miette::miette!(
+                        "Failed to set executable permissions: {}",
+                        e
+                    ))
+                })?;
+        }
+
+        let status = Command::new("mv")
+            .args([
+                extracted_binary.to_str().unwrap(),
+                exe_path.to_str().unwrap(),
+            ])
+            .status();
+
+        if let Ok(status) = status {
+            if status.success() {
+                eprintln!("{}", "✓ Successfully updated binary".green().bold());
+
+                let _ = tokio::fs::remove_file(zip_file).await;
+                let _ = tokio::fs::remove_dir_all(extract_dir).await;
+            } else {
+                return Err(S2CliError::InvalidArgs(miette::miette!(
+                    "Failed to replace binary with exit code: {}",
+                    status
+                )));
+            }
+        } else {
+            eprintln!("Trying alternative update method...");
+            let cp_status = Command::new("cp")
+                .args([
+                    extracted_binary.to_str().unwrap(),
+                    exe_path.to_str().unwrap(),
+                ])
+                .status()
+                .map_err(|e| {
+                    S2CliError::InvalidArgs(miette::miette!("Failed to copy binary: {}", e))
+                })?;
+
+            if cp_status.success() {
+                eprintln!(
+                    "{}",
+                    "✓ Successfully updated binary (using copy method)"
+                        .green()
+                        .bold()
+                );
+
+                let _ = tokio::fs::remove_file(zip_file).await;
+                let _ = tokio::fs::remove_dir_all(extract_dir).await;
+            } else {
+                return Err(S2CliError::InvalidArgs(miette::miette!(
+                    "Failed to copy binary with exit code: {}",
+                    cp_status
+                )));
+            }
+        }
+    }
+
+    eprintln!("{}", "✓ Update completed successfully!".green().bold());
     Ok(())
 }
 
