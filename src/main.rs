@@ -1580,6 +1580,24 @@ async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
         return Ok(());
     }
 
+    if !force {
+        eprintln!("Update available: {} → {}", current_version, latest_version);
+        eprint!("Proceed with update? [y/N]: ");
+        std::io::Write::flush(&mut std::io::stdout()).map_err(|e| {
+            S2CliError::InvalidArgs(miette::miette!("Failed to flush stdout: {}", e))
+        })?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).map_err(|e| {
+            S2CliError::InvalidArgs(miette::miette!("Failed to read input: {}", e))
+        })?;
+
+        if !input.trim().to_lowercase().starts_with('y') {
+            eprintln!("Update cancelled.");
+            return Ok(());
+        }
+    }
+
     let exe_path = env::current_exe().map_err(|e| {
         S2CliError::InvalidArgs(miette::miette!("Failed to get executable path: {}", e))
     })?;
