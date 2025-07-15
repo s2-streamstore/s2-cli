@@ -1543,9 +1543,28 @@ async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
     use std::process::Command;
 
     let current_version = env!("CARGO_PKG_VERSION");
-    eprintln!("Current version: {}", current_version.cyan().bold());
 
-    eprintln!("Checking for updates...");
+    println!();
+    println!(
+        "┌─────────────────────────────────────────────────────────────────────────────────────┐"
+    );
+    println!(
+        "│                                    s2.dev                                           │"
+    );
+    println!(
+        "│            The serverless API for streaming data, backed by object storage.         │"
+    );
+    println!(
+        "└─────────────────────────────────────────────────────────────────────────────────────┘"
+    );
+    println!();
+
+    println!("   Current version: {}", current_version.cyan().bold());
+    println!();
+
+    print!("   ");
+    print!("{}", "Checking for updates".dimmed());
+
     let output = Command::new("curl")
         .args([
             "-s",
@@ -1573,27 +1592,35 @@ async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
         .ok_or_else(|| S2CliError::InvalidArgs(miette::miette!("No tag_name in response")))?
         .trim_start_matches('v');
 
-    eprintln!("Latest version: {}", latest_version.cyan().bold());
+    println!("   ... done");
+    println!("   Latest version:  {}", latest_version.cyan().bold());
+    println!();
 
     if current_version == latest_version && !force {
-        eprintln!("{}", "Already up to date!".green().bold());
+        println!("   {}", "Already up to date!".green().bold());
+        println!();
         return Ok(());
     }
 
     if !force {
-        eprintln!("Update available: {} → {}", current_version, latest_version);
-        eprint!("Proceed with update? [y/N]: ");
+        println!(
+            "   Update available: {} → {}",
+            current_version.dimmed(),
+            latest_version.green().bold()
+        );
+        print!("   Proceed with update? [y/N]: ");
         std::io::Write::flush(&mut std::io::stdout()).map_err(|e| {
             S2CliError::InvalidArgs(miette::miette!("Failed to flush stdout: {}", e))
         })?;
 
         let mut input = String::new();
-        std::io::stdin().read_line(&mut input).map_err(|e| {
-            S2CliError::InvalidArgs(miette::miette!("Failed to read input: {}", e))
-        })?;
+        std::io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| S2CliError::InvalidArgs(miette::miette!("Failed to read input: {}", e)))?;
 
         if !input.trim().to_lowercase().starts_with('y') {
-            eprintln!("Update cancelled.");
+            println!("   Update cancelled.");
+            println!();
             return Ok(());
         }
     }
@@ -1602,7 +1629,9 @@ async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
         S2CliError::InvalidArgs(miette::miette!("Failed to get executable path: {}", e))
     })?;
 
-    eprintln!("Starting update...");
+    println!();
+    println!("   {}", "Starting update...".blue().bold());
+    println!();
 
     let exe_path_str = exe_path.to_string_lossy();
 
@@ -1611,7 +1640,10 @@ async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
         || exe_path_str.contains("/opt/homebrew/")
         || exe_path_str.contains("/usr/local/bin/")
     {
-        eprintln!("Detected Homebrew installation");
+        println!("   Installation method: {}", "Homebrew".cyan());
+        println!("   Running: brew upgrade s2-streamstore/s2/s2");
+        println!();
+
         let status = Command::new("brew")
             .args(["upgrade", "s2-streamstore/s2/s2"])
             .status()
@@ -1620,7 +1652,11 @@ async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
             })?;
 
         if status.success() {
-            eprintln!("{}", "Successfully updated via Homebrew".green().bold());
+            println!(
+                "   {} {}",
+                "Success:".green().bold(),
+                "Updated via Homebrew".green()
+            );
         } else {
             return Err(S2CliError::InvalidArgs(miette::miette!(
                 "Homebrew upgrade failed with exit code: {}",
@@ -1631,7 +1667,10 @@ async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
         || exe_path_str.contains("target/release")
         || exe_path_str.contains("target/debug")
     {
-        eprintln!("Detected Cargo installation");
+        println!("   Installation method: {}", "Cargo".cyan());
+        println!("   Running: cargo install --locked --force streamstore-cli");
+        println!();
+
         let status = Command::new("cargo")
             .args(["install", "--locked", "--force", "streamstore-cli"])
             .status()
@@ -1640,7 +1679,11 @@ async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
             })?;
 
         if status.success() {
-            eprintln!("{}", "Successfully updated via Cargo".green().bold());
+            println!(
+                "   {} {}",
+                "Success:".green().bold(),
+                "Updated via Cargo".green()
+            );
         } else {
             return Err(S2CliError::InvalidArgs(miette::miette!(
                 "Cargo install failed with exit code: {}",
@@ -1648,7 +1691,7 @@ async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
             )));
         }
     } else {
-        eprintln!("Detected binary installation");
+        println!("   Installation method: {}", "Binary".cyan());
 
         let (_os, arch) = if cfg!(target_os = "macos") {
             if cfg!(target_arch = "aarch64") {
@@ -1670,15 +1713,14 @@ async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
         };
 
         let download_url = format!(
-            "https://github.com/s2-streamstore/s2-cli/releases/download/{}/s2-{}",
-            latest_version, arch
+            "https://github.com/s2-streamstore/s2-cli/releases/download/{latest_version}/s2-{arch}"
         );
 
-        eprintln!("Downloading from: {}", download_url.cyan());
+        println!("   Downloading: {}", download_url.dimmed());
 
         let temp_dir = std::env::temp_dir();
-        let extract_dir = temp_dir.join(format!("s2-update-{}", latest_version));
-        let zip_file = temp_dir.join(format!("s2-{}.zip", latest_version));
+        let extract_dir = temp_dir.join(format!("s2-update-{latest_version}"));
+        let zip_file = temp_dir.join(format!("s2-{latest_version}.zip"));
 
         tokio::fs::create_dir_all(&extract_dir).await.map_err(|e| {
             S2CliError::InvalidArgs(miette::miette!("Failed to create temp directory: {}", e))
@@ -1704,6 +1746,8 @@ async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
                 download_status
             )));
         }
+
+        println!("   Extracting binary...");
 
         let unzip_status = Command::new("unzip")
             .args([
@@ -1747,6 +1791,8 @@ async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
                 })?;
         }
 
+        println!("   Replacing binary...");
+
         let status = Command::new("mv")
             .args([
                 extracted_binary.to_str().unwrap(),
@@ -1756,7 +1802,11 @@ async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
 
         if let Ok(status) = status {
             if status.success() {
-                eprintln!("{}", "✓ Successfully updated binary".green().bold());
+                println!(
+                    "   {} {}",
+                    "Success:".green().bold(),
+                    "Binary updated".green()
+                );
 
                 let _ = tokio::fs::remove_file(zip_file).await;
                 let _ = tokio::fs::remove_dir_all(extract_dir).await;
@@ -1767,7 +1817,7 @@ async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
                 )));
             }
         } else {
-            eprintln!("Trying alternative update method...");
+            println!("   Trying alternative update method...");
             let cp_status = Command::new("cp")
                 .args([
                     extracted_binary.to_str().unwrap(),
@@ -1779,11 +1829,10 @@ async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
                 })?;
 
             if cp_status.success() {
-                eprintln!(
-                    "{}",
-                    "✓ Successfully updated binary (using copy method)"
-                        .green()
-                        .bold()
+                println!(
+                    "   {} {}",
+                    "Success:".green().bold(),
+                    "Binary updated (using copy method)".green()
                 );
 
                 let _ = tokio::fs::remove_file(zip_file).await;
@@ -1797,7 +1846,12 @@ async fn update_s2_cli(force: bool) -> Result<(), S2CliError> {
         }
     }
 
-    eprintln!("{}", "✓ Update completed successfully!".green().bold());
+    println!();
+    println!(
+        "   {} Update completed successfully!",
+        "Success:".green().bold()
+    );
+    println!();
     Ok(())
 }
 
