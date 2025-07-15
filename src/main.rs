@@ -499,7 +499,9 @@ enum Commands {
         num_batches: Option<usize>,
     },
 
+    /// Update the s2 CLI to the latest version.
     Update {
+        /// Force update even if already on the latest version.
         #[arg(short = 'f', long)]
         force: bool,
     },

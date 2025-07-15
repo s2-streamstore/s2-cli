@@ -1915,7 +1915,7 @@ dependencies = [
 
 [[package]]
 name = "streamstore-cli"
-version = "0.19.1"
+version = "0.19.2"
 dependencies = [
  "async-stream",
  "base64ct",
