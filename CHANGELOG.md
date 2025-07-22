@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.20.0] - 2025-07-22
+
+### Features
+
+- Clamp ([#161](https://github.com/s2-streamstore/s2-cli/issues/161))
+
+### Release
+
+- 0.19.2 ([#159](https://github.com/s2-streamstore/s2-cli/issues/159))
+
 ## [0.19.2] - 2025-07-15
 
 ### Bug Fixes
