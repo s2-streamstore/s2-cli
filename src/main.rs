@@ -442,6 +442,10 @@ enum Commands {
         #[arg(short = 'b', long)]
         bytes: Option<u64>,
 
+        /// Clamp the start position at the tail position.
+        #[arg(long, default_value_t = false)]
+        clamp: bool,
+
         /// Output records to a file or stdout.
         /// Use "-" to write to stdout.
         #[arg(short = 'o', long, value_parser = parse_records_output_source, default_value = "-")]
@@ -1251,7 +1255,7 @@ async fn run() -> Result<(), S2CliError> {
             let client_config = client_config(cfg.access_token)?;
             let stream_client = StreamClient::new(client_config, basin, stream);
             let mut read_outputs = StreamService::new(stream_client)
-                .read_session(read_start, read_limit, None)
+                .read_session(read_start, read_limit, None, false)
                 .await?;
             let mut writer = output.into_writer().await.unwrap();
             while handle_read_outputs(&mut read_outputs, &mut writer, format).await? {}
@@ -1265,6 +1269,7 @@ async fn run() -> Result<(), S2CliError> {
             output,
             count,
             bytes,
+            clamp,
             format,
             until,
         } => {
@@ -1289,7 +1294,7 @@ async fn run() -> Result<(), S2CliError> {
             };
             let read_limit = ReadLimit { count, bytes };
             let mut read_outputs = StreamService::new(stream_client)
-                .read_session(read_start, read_limit, until.map(|end| ..end))
+                .read_session(read_start, read_limit, until.map(|end| ..end), clamp)
                 .await?;
             let mut writer = output.into_writer().await.unwrap();
             while handle_read_outputs(&mut read_outputs, &mut writer, format).await? {}

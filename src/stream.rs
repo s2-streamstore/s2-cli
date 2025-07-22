@@ -112,12 +112,14 @@ impl StreamService {
         start: ReadStart,
         limit: ReadLimit,
         until: Option<RangeTo<u64>>,
+        clamp: bool,
     ) -> Result<Streaming<ReadOutput>, ServiceError> {
         self.client
             .read_session(ReadSessionRequest {
                 start,
                 limit,
                 until,
+                clamp,
             })
             .await
             .map_err(|e| ServiceError::new(ServiceErrorContext::ReadSession, e))
