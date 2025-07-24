@@ -699,28 +699,28 @@ fn build_basin_reconfig(
 }
 
 fn build_stream_reconfig(
-    storage_class: Option<&StorageClass>,
-    retention_policy: Option<&RetentionPolicy>,
-    timestamping_mode: Option<&TimestampingMode>,
-    timestamping_uncapped: Option<&bool>,
-    delete_on_empty: Option<&DeleteOnEmpty>,
+    storage_class: Option<StorageClass>,
+    retention_policy: Option<RetentionPolicy>,
+    timestamping_mode: Option<TimestampingMode>,
+    timestamping_uncapped: Option<bool>,
+    delete_on_empty: Option<DeleteOnEmpty>,
 ) -> (StreamConfig, Vec<String>) {
     let mut mask = Vec::new();
 
     let timestamping = if timestamping_mode.is_some() || timestamping_uncapped.is_some() {
         Some(TimestampingConfig {
-            timestamping_mode: timestamping_mode.cloned(),
-            timestamping_uncapped: timestamping_uncapped.copied(),
+            timestamping_mode: timestamping_mode.clone(),
+            timestamping_uncapped: timestamping_uncapped.clone(),
         })
     } else {
         None
     };
 
     let stream_config = StreamConfig {
-        storage_class: storage_class.cloned(),
-        retention_policy: retention_policy.cloned(),
+        storage_class: storage_class.clone(),
+        retention_policy: retention_policy.clone(),
         timestamping,
-        delete_on_empty: delete_on_empty.cloned(),
+        delete_on_empty: delete_on_empty.clone(),
     };
 
     if storage_class.is_some() {
@@ -1097,11 +1097,11 @@ async fn run() -> Result<(), S2CliError> {
             let basin_client = BasinClient::new(client_config, basin);
 
             let (stream_config, mask) = build_stream_reconfig(
-                storage_class.as_ref(),
-                retention_policy.as_ref(),
-                timestamping_mode.as_ref(),
-                timestamping_uncapped.as_ref(),
-                delete_on_empty.as_ref(),
+                storage_class,
+                retention_policy,
+                timestamping_mode,
+                timestamping_uncapped,
+                delete_on_empty,
             );
 
             let config: StreamConfig = BasinService::new(basin_client)
