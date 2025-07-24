@@ -125,7 +125,7 @@ pub struct BasinConfig {
     pub create_stream_on_read: Option<bool>,
 }
 
-#[derive(Parser, Debug, Clone, Serialize)]
+#[derive(Parser, Debug, Default, Clone, Serialize)]
 pub struct StreamConfig {
     #[arg(long)]
     /// Storage class for a stream.
@@ -138,7 +138,11 @@ pub struct StreamConfig {
     pub timestamping: Option<TimestampingConfig>,
     #[arg(long, help("Example: 1d, 1w, 1y"))]
     /// Delete-on-empty configuration.
-    pub delete_on_empty_min_age: Option<DeleteOnEmpty>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_humantime_duration"
+    )]
+    pub delete_on_empty_min_age: Option<humantime::Duration>,
 }
 
 #[derive(ValueEnum, Debug, Clone, Serialize)]
@@ -238,7 +242,7 @@ impl From<StreamConfig> for s2::types::StreamConfig {
 
         let delete_on_empty = config
             .delete_on_empty_min_age
-            .map(s2::types::DeleteOnEmpty::from);
+            .map(|age| s2::types::DeleteOnEmpty { min_age: *age });
 
         let mut stream_config = s2::types::StreamConfig::new();
         if let Some(storage_class) = storage_class {
@@ -345,7 +349,9 @@ impl From<s2::types::StreamConfig> for StreamConfig {
             storage_class: config.storage_class.map(Into::into),
             retention_policy: config.retention_policy.map(Into::into),
             timestamping: config.timestamping.map(Into::into),
-            delete_on_empty_min_age: config.delete_on_empty.map(Into::into),
+            delete_on_empty_min_age: config
+                .delete_on_empty
+                .map(|age| humantime::Duration::from(age.min_age)),
         }
     }
 }
@@ -713,6 +719,19 @@ impl FromStr for Operation {
             "fence" => Ok(Self::Fence),
             _ => Err(OperationParseError::InvalidOperation(s.to_owned())),
         }
+    }
+}
+
+fn serialize_humantime_duration<S>(
+    duration: &Option<humantime::Duration>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match duration {
+        Some(d) => serializer.serialize_str(&format!("{d}")),
+        None => serializer.serialize_none(),
     }
 }
 

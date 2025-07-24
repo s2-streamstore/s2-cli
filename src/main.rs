@@ -38,7 +38,7 @@ use tokio_stream::{
 use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{
-    AccessTokenInfo, BasinConfig, DeleteOnEmpty, Operation, PermittedOperationGroups, ResourceSet,
+    AccessTokenInfo, BasinConfig, Operation, PermittedOperationGroups, ResourceSet,
     RetentionPolicy, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass,
     StreamConfig, TimestampingConfig, TimestampingMode,
 };
@@ -187,7 +187,7 @@ enum Commands {
 
         /// Delete-on-empty configuration for the default stream config.
         #[arg(long)]
-        delete_on_empty_min_age: Option<DeleteOnEmpty>,
+        delete_on_empty_min_age: Option<humantime::Duration>,
     },
 
     /// Issue an access token.
@@ -329,7 +329,7 @@ enum Commands {
 
         /// Delete-on-empty configuration for the stream.
         #[arg(long)]
-        delete_on_empty_min_age: Option<DeleteOnEmpty>,
+        delete_on_empty_min_age: Option<humantime::Duration>,
     },
 
     /// Get the next sequence number that will be assigned by a stream.
@@ -653,7 +653,7 @@ fn build_basin_reconfig(
     timestamping_uncapped: Option<&bool>,
     create_stream_on_append: Option<&bool>,
     create_stream_on_read: Option<&bool>,
-    delete_on_empty_min_age: Option<&DeleteOnEmpty>,
+    delete_on_empty_min_age: Option<&humantime::Duration>,
 ) -> (Option<StreamConfig>, Vec<String>) {
     let mut mask = Vec::new();
     let has_stream_args = storage_class.is_some()
@@ -712,7 +712,7 @@ fn build_stream_reconfig(
     retention_policy: Option<&RetentionPolicy>,
     timestamping_mode: Option<&TimestampingMode>,
     timestamping_uncapped: Option<&bool>,
-    delete_on_empty_min_age: Option<&DeleteOnEmpty>,
+    delete_on_empty_min_age: Option<&humantime::Duration>,
 ) -> (StreamConfig, Vec<String>) {
     let mut mask = Vec::new();
 
@@ -965,19 +965,11 @@ async fn run() -> Result<(), S2CliError> {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.access_token)?;
             let account_service = AccountService::new(Client::new(client_config));
-            let (storage_class, retention_policy) = match &config.default_stream_config {
-                Some(config) => {
-                    let storage_class = config.storage_class.clone();
-                    let retention_policy = config.retention_policy.clone();
-                    (storage_class, retention_policy)
-                }
-                None => (None, None),
-            };
+
             let BasinInfo { state, .. } = account_service
                 .create_basin(
                     basin.into(),
-                    storage_class,
-                    retention_policy,
+                    config.default_stream_config.unwrap_or_default(),
                     config.create_stream_on_append.unwrap_or_default(),
                     config.create_stream_on_read.unwrap_or_default(),
                 )

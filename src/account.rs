@@ -5,9 +5,9 @@ use s2::{
     client::Client,
     types::{
         AccessTokenId, AccessTokenInfo, BasinConfig, BasinInfo, BasinName, CreateBasinRequest,
-        DeleteBasinRequest, ListAccessTokensRequest, ListAccessTokensResponse, ListBasinsRequest,
-        ListBasinsResponse, Operation, PermittedOperationGroups, ReconfigureBasinRequest,
-        ResourceSet, StreamConfig,
+        DeleteBasinRequest, DeleteOnEmpty, ListAccessTokensRequest, ListAccessTokensResponse,
+        ListBasinsRequest, ListBasinsResponse, Operation, PermittedOperationGroups,
+        ReconfigureBasinRequest, ResourceSet, StreamConfig,
     },
 };
 
@@ -77,19 +77,28 @@ impl AccountService {
     pub async fn create_basin(
         &self,
         basin: BasinName,
-        storage_class: Option<crate::types::StorageClass>,
-        retention_policy: Option<crate::types::RetentionPolicy>,
+        configured_stream_config: crate::types::StreamConfig,
         create_stream_on_append: bool,
         create_stream_on_read: bool,
     ) -> Result<BasinInfo, ServiceError> {
         let mut stream_config = StreamConfig::new();
 
-        if let Some(storage_class) = storage_class {
+        if let Some(storage_class) = configured_stream_config.storage_class {
             stream_config = stream_config.with_storage_class(storage_class.into());
         }
 
-        if let Some(retention_policy) = retention_policy {
+        if let Some(retention_policy) = configured_stream_config.retention_policy {
             stream_config = stream_config.with_retention_policy(retention_policy.into());
+        }
+
+        if let Some(timestamping) = configured_stream_config.timestamping {
+            stream_config = stream_config.with_timestamping(timestamping.into());
+        }
+
+        if let Some(delete_on_empty_min_age) = configured_stream_config.delete_on_empty_min_age {
+            stream_config = stream_config.with_delete_on_empty(DeleteOnEmpty {
+                min_age: *delete_on_empty_min_age,
+            });
         }
 
         let basin_config = BasinConfig {
