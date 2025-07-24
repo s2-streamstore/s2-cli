@@ -38,9 +38,10 @@ use tokio_stream::{
 use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{
-    AccessTokenInfo, BasinConfig, DeleteOnEmpty, Operation, PermittedOperationGroups, ResourceSet,
-    RetentionPolicy, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass,
-    StreamConfig, TimestampingConfig, TimestampingMode,
+    AccessTokenInfo, BasinConfig, DeleteOnEmpty, DeleteOnEmptyConfig, Operation,
+    PermittedOperationGroups, ResourceSet, RetentionPolicy, S2BasinAndMaybeStreamUri,
+    S2BasinAndStreamUri, S2BasinUri, StorageClass, StreamConfig, TimestampingConfig,
+    TimestampingMode,
 };
 
 mod account;
@@ -187,7 +188,7 @@ enum Commands {
 
         /// Delete-on-empty configuration for the default stream config.
         #[arg(long)]
-        delete_on_empty: Option<DeleteOnEmpty>,
+        delete_on_empty_min_age: Option<DeleteOnEmpty>,
     },
 
     /// Issue an access token.
@@ -329,7 +330,7 @@ enum Commands {
 
         /// Delete-on-empty configuration for the stream.
         #[arg(long)]
-        delete_on_empty: Option<DeleteOnEmpty>,
+        delete_on_empty_min_age: Option<DeleteOnEmpty>,
     },
 
     /// Get the next sequence number that will be assigned by a stream.
@@ -672,11 +673,15 @@ fn build_basin_reconfig(
             None
         };
 
+        let delete_on_empty_config = delete_on_empty.map(|doe| DeleteOnEmptyConfig {
+            min_age: Some(doe.clone()),
+        });
+
         Some(StreamConfig {
             storage_class: storage_class.cloned(),
             retention_policy: retention_policy.cloned(),
             timestamping,
-            delete_on_empty: delete_on_empty.cloned(),
+            delete_on_empty_config,
         })
     } else {
         None
@@ -725,11 +730,15 @@ fn build_stream_reconfig(
         None
     };
 
+    let delete_on_empty_config = delete_on_empty.map(|doe| DeleteOnEmptyConfig {
+        min_age: Some(doe.clone()),
+    });
+
     let stream_config = StreamConfig {
         storage_class: storage_class.cloned(),
         retention_policy: retention_policy.cloned(),
         timestamping,
-        delete_on_empty: delete_on_empty.cloned(),
+        delete_on_empty_config,
     };
 
     if storage_class.is_some() {
@@ -1015,7 +1024,7 @@ async fn run() -> Result<(), S2CliError> {
             timestamping_uncapped,
             create_stream_on_append,
             create_stream_on_read,
-            delete_on_empty,
+            delete_on_empty_min_age,
         } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.access_token)?;
@@ -1028,7 +1037,7 @@ async fn run() -> Result<(), S2CliError> {
                 timestamping_uncapped.as_ref(),
                 create_stream_on_append.as_ref(),
                 create_stream_on_read.as_ref(),
-                delete_on_empty.as_ref(),
+                delete_on_empty_min_age.as_ref(),
             );
 
             let basin_config = BasinConfig {
@@ -1100,7 +1109,7 @@ async fn run() -> Result<(), S2CliError> {
             retention_policy,
             timestamping_mode,
             timestamping_uncapped,
-            delete_on_empty,
+            delete_on_empty_min_age,
         } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
@@ -1112,7 +1121,7 @@ async fn run() -> Result<(), S2CliError> {
                 retention_policy.as_ref(),
                 timestamping_mode.as_ref(),
                 timestamping_uncapped.as_ref(),
-                delete_on_empty.as_ref(),
+                delete_on_empty_min_age.as_ref(),
             );
 
             let config: StreamConfig = BasinService::new(basin_client)
