@@ -730,7 +730,10 @@ where
     S: serde::Serializer,
 {
     match duration {
-        Some(d) => serializer.serialize_str(&format!("{d}")),
+        Some(d) => {
+            let std_duration: std::time::Duration = (*d).into();
+            std_duration.serialize(serializer)
+        }
         None => serializer.serialize_none(),
     }
 }
