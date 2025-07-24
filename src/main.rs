@@ -184,6 +184,10 @@ enum Commands {
         /// Create stream on read with basin defaults if it doesn't exist.
         #[arg(long)]
         create_stream_on_read: Option<bool>,
+
+        /// Delete-on-empty configuration for the default stream config.
+        #[arg(long)]
+        delete_on_empty: Option<DeleteOnEmpty>,
     },
 
     /// Issue an access token.
@@ -649,12 +653,14 @@ fn build_basin_reconfig(
     timestamping_uncapped: Option<&bool>,
     create_stream_on_append: Option<&bool>,
     create_stream_on_read: Option<&bool>,
+    delete_on_empty: Option<&DeleteOnEmpty>,
 ) -> (Option<StreamConfig>, Vec<String>) {
     let mut mask = Vec::new();
     let has_stream_args = storage_class.is_some()
         || retention_policy.is_some()
         || timestamping_mode.is_some()
-        || timestamping_uncapped.is_some();
+        || timestamping_uncapped.is_some()
+        || delete_on_empty.is_some();
 
     let default_stream_config = if has_stream_args {
         let timestamping = if timestamping_mode.is_some() || timestamping_uncapped.is_some() {
@@ -670,7 +676,7 @@ fn build_basin_reconfig(
             storage_class: storage_class.cloned(),
             retention_policy: retention_policy.cloned(),
             timestamping,
-            delete_on_empty: None,
+            delete_on_empty: delete_on_empty.cloned(),
         })
     } else {
         None
@@ -687,6 +693,9 @@ fn build_basin_reconfig(
     }
     if timestamping_uncapped.is_some() {
         mask.push("default_stream_config.timestamping.uncapped".to_owned());
+    }
+    if delete_on_empty.is_some() {
+        mask.push("default_stream_config.delete_on_empty".to_owned());
     }
     if create_stream_on_append.is_some() {
         mask.push("create_stream_on_append".to_owned());
@@ -1006,6 +1015,7 @@ async fn run() -> Result<(), S2CliError> {
             timestamping_uncapped,
             create_stream_on_append,
             create_stream_on_read,
+            delete_on_empty,
         } => {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.access_token)?;
@@ -1018,6 +1028,7 @@ async fn run() -> Result<(), S2CliError> {
                 timestamping_uncapped.as_ref(),
                 create_stream_on_append.as_ref(),
                 create_stream_on_read.as_ref(),
+                delete_on_empty.as_ref(),
             );
 
             let basin_config = BasinConfig {

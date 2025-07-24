@@ -136,9 +136,8 @@ pub struct StreamConfig {
     #[clap(flatten)]
     /// Timestamping configuration.
     pub timestamping: Option<TimestampingConfig>,
-
-    /// Delete-on-empty configuration.
     #[arg(long)]
+    /// Delete-on-empty configuration.    
     pub delete_on_empty: Option<DeleteOnEmpty>,
 }
 
