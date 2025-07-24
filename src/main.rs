@@ -38,7 +38,7 @@ use tokio_stream::{
 use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{
-    AccessTokenInfo, BasinConfig, Operation, PermittedOperationGroups, ResourceSet,
+    AccessTokenInfo, BasinConfig, DeleteOnEmpty, Operation, PermittedOperationGroups, ResourceSet,
     RetentionPolicy, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass,
     StreamConfig, TimestampingConfig, TimestampingMode,
 };
@@ -322,6 +322,10 @@ enum Commands {
         /// Uncapped timestamps for the stream.
         #[arg(long)]
         timestamping_uncapped: Option<bool>,
+
+        /// Delete-on-empty configuration for the stream.
+        #[arg(long)]
+        delete_on_empty: Option<DeleteOnEmpty>,
     },
 
     /// Get the next sequence number that will be assigned by a stream.
@@ -666,6 +670,7 @@ fn build_basin_reconfig(
             storage_class: storage_class.cloned(),
             retention_policy: retention_policy.cloned(),
             timestamping,
+            delete_on_empty: None,
         })
     } else {
         None
@@ -698,6 +703,7 @@ fn build_stream_reconfig(
     retention_policy: Option<&RetentionPolicy>,
     timestamping_mode: Option<&TimestampingMode>,
     timestamping_uncapped: Option<&bool>,
+    delete_on_empty: Option<&DeleteOnEmpty>,
 ) -> (StreamConfig, Vec<String>) {
     let mut mask = Vec::new();
 
@@ -714,6 +720,7 @@ fn build_stream_reconfig(
         storage_class: storage_class.cloned(),
         retention_policy: retention_policy.cloned(),
         timestamping,
+        delete_on_empty: delete_on_empty.cloned(),
     };
 
     if storage_class.is_some() {
@@ -727,6 +734,9 @@ fn build_stream_reconfig(
     }
     if timestamping_uncapped.is_some() {
         mask.push("timestamping.uncapped".to_string());
+    }
+    if delete_on_empty.is_some() {
+        mask.push("delete_on_empty".to_string());
     }
 
     (stream_config, mask)
@@ -1079,6 +1089,7 @@ async fn run() -> Result<(), S2CliError> {
             retention_policy,
             timestamping_mode,
             timestamping_uncapped,
+            delete_on_empty,
         } => {
             let S2BasinAndStreamUri { basin, stream } = uri.uri;
             let cfg = config::load_config(&config_path)?;
@@ -1090,6 +1101,7 @@ async fn run() -> Result<(), S2CliError> {
                 retention_policy.as_ref(),
                 timestamping_mode.as_ref(),
                 timestamping_uncapped.as_ref(),
+                delete_on_empty.as_ref(),
             );
 
             let config: StreamConfig = BasinService::new(basin_client)
