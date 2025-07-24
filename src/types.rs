@@ -136,7 +136,7 @@ pub struct StreamConfig {
     #[clap(flatten)]
     /// Timestamping configuration.
     pub timestamping: Option<TimestampingConfig>,
-    #[arg(help("Example: 1d, 1w, 1y"))]
+    #[arg(long, help("Example: 1d, 1w, 1y"))]
     /// Delete-on-empty configuration.
     pub delete_on_empty_min_age: Option<DeleteOnEmpty>,
 }
@@ -236,7 +236,9 @@ impl From<StreamConfig> for s2::types::StreamConfig {
 
         let timestamping_config = config.timestamping.map(s2::types::TimestampingConfig::from);
 
-        let delete_on_empty = config.delete_on_empty_min_age.map(s2::types::DeleteOnEmpty::from);
+        let delete_on_empty = config
+            .delete_on_empty_min_age
+            .map(s2::types::DeleteOnEmpty::from);
 
         let mut stream_config = s2::types::StreamConfig::new();
         if let Some(storage_class) = storage_class {
