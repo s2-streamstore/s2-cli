@@ -38,10 +38,9 @@ use tokio_stream::{
 use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{
-    AccessTokenInfo, BasinConfig, DeleteOnEmpty, DeleteOnEmptyConfig, Operation,
-    PermittedOperationGroups, ResourceSet, RetentionPolicy, S2BasinAndMaybeStreamUri,
-    S2BasinAndStreamUri, S2BasinUri, StorageClass, StreamConfig, TimestampingConfig,
-    TimestampingMode,
+    AccessTokenInfo, BasinConfig, DeleteOnEmpty, Operation, PermittedOperationGroups, ResourceSet,
+    RetentionPolicy, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass,
+    StreamConfig, TimestampingConfig, TimestampingMode,
 };
 
 mod account;
@@ -654,14 +653,14 @@ fn build_basin_reconfig(
     timestamping_uncapped: Option<&bool>,
     create_stream_on_append: Option<&bool>,
     create_stream_on_read: Option<&bool>,
-    delete_on_empty: Option<&DeleteOnEmpty>,
+    delete_on_empty_min_age: Option<&DeleteOnEmpty>,
 ) -> (Option<StreamConfig>, Vec<String>) {
     let mut mask = Vec::new();
     let has_stream_args = storage_class.is_some()
         || retention_policy.is_some()
         || timestamping_mode.is_some()
         || timestamping_uncapped.is_some()
-        || delete_on_empty.is_some();
+        || delete_on_empty_min_age.is_some();
 
     let default_stream_config = if has_stream_args {
         let timestamping = if timestamping_mode.is_some() || timestamping_uncapped.is_some() {
@@ -673,15 +672,11 @@ fn build_basin_reconfig(
             None
         };
 
-        let delete_on_empty_config = delete_on_empty.map(|doe| DeleteOnEmptyConfig {
-            min_age: Some(doe.clone()),
-        });
-
         Some(StreamConfig {
             storage_class: storage_class.cloned(),
             retention_policy: retention_policy.cloned(),
             timestamping,
-            delete_on_empty_config,
+            delete_on_empty: delete_on_empty_min_age.cloned(),
         })
     } else {
         None
@@ -699,7 +694,7 @@ fn build_basin_reconfig(
     if timestamping_uncapped.is_some() {
         mask.push("default_stream_config.timestamping.uncapped".to_owned());
     }
-    if delete_on_empty.is_some() {
+    if delete_on_empty_min_age.is_some() {
         mask.push("default_stream_config.delete_on_empty".to_owned());
     }
     if create_stream_on_append.is_some() {
@@ -717,7 +712,7 @@ fn build_stream_reconfig(
     retention_policy: Option<&RetentionPolicy>,
     timestamping_mode: Option<&TimestampingMode>,
     timestamping_uncapped: Option<&bool>,
-    delete_on_empty: Option<&DeleteOnEmpty>,
+    delete_on_empty_min_age: Option<&DeleteOnEmpty>,
 ) -> (StreamConfig, Vec<String>) {
     let mut mask = Vec::new();
 
@@ -730,15 +725,11 @@ fn build_stream_reconfig(
         None
     };
 
-    let delete_on_empty_config = delete_on_empty.map(|doe| DeleteOnEmptyConfig {
-        min_age: Some(doe.clone()),
-    });
-
     let stream_config = StreamConfig {
         storage_class: storage_class.cloned(),
         retention_policy: retention_policy.cloned(),
         timestamping,
-        delete_on_empty_config,
+        delete_on_empty: delete_on_empty_min_age.cloned(),
     };
 
     if storage_class.is_some() {
@@ -753,7 +744,7 @@ fn build_stream_reconfig(
     if timestamping_uncapped.is_some() {
         mask.push("timestamping.uncapped".to_string());
     }
-    if delete_on_empty.is_some() {
+    if delete_on_empty_min_age.is_some() {
         mask.push("delete_on_empty".to_string());
     }
 
