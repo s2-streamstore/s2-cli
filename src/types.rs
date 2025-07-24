@@ -136,8 +136,8 @@ pub struct StreamConfig {
     #[clap(flatten)]
     /// Timestamping configuration.
     pub timestamping: Option<TimestampingConfig>,
-    #[arg(long = "delete-on-empty-min-age")]
-    /// Delete-on-empty configuration.    
+    #[arg(long = "delete-on-empty-min-age", help("Example: 1d, 1w, 1y"))]
+    /// Delete-on-empty configuration.
     pub delete_on_empty: Option<DeleteOnEmpty>,
 }
 
@@ -184,13 +184,6 @@ impl From<&str> for RetentionPolicy {
 #[derive(Clone, Debug, Serialize)]
 pub struct DeleteOnEmpty {
     pub min_age: Duration,
-}
-
-#[derive(Parser, Debug, Clone, Serialize)]
-pub struct DeleteOnEmptyConfig {
-    #[arg(long = "delete-on-empty-min-age")]
-    /// Minimum age before deleting empty streams.
-    pub min_age: Option<DeleteOnEmpty>,
 }
 
 impl FromStr for DeleteOnEmpty {
