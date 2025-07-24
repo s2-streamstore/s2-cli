@@ -676,7 +676,7 @@ fn build_basin_reconfig(
             storage_class: storage_class.cloned(),
             retention_policy: retention_policy.cloned(),
             timestamping,
-            delete_on_empty: delete_on_empty_min_age.cloned(),
+            delete_on_empty_min_age: delete_on_empty_min_age.cloned(),
         })
     } else {
         None
@@ -729,7 +729,7 @@ fn build_stream_reconfig(
         storage_class: storage_class.cloned(),
         retention_policy: retention_policy.cloned(),
         timestamping,
-        delete_on_empty: delete_on_empty_min_age.cloned(),
+        delete_on_empty_min_age: delete_on_empty_min_age.cloned(),
     };
 
     if storage_class.is_some() {
