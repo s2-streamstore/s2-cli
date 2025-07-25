@@ -137,12 +137,8 @@ pub struct StreamConfig {
     /// Timestamping configuration.
     pub timestamping: Option<TimestampingConfig>,
     #[arg(long, help("Example: 1d, 1w, 1y"))]
-    /// Delete-on-empty configuration.
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "serialize_humantime_duration"
-    )]
-    pub delete_on_empty_min_age: Option<humantime::Duration>,
+    /// Delete-on-empty configuration.    
+    pub delete_on_empty_min_age: Option<DeleteOnEmptyConfig>,
 }
 
 #[derive(ValueEnum, Debug, Clone, Serialize)]
@@ -186,11 +182,11 @@ impl From<&str> for RetentionPolicy {
     }
 }
 #[derive(Clone, Debug, Serialize)]
-pub struct DeleteOnEmpty {
+pub struct DeleteOnEmptyConfig {
     pub min_age: Duration,
 }
 
-impl FromStr for DeleteOnEmpty {
+impl FromStr for DeleteOnEmptyConfig {
     type Err = humantime::DurationError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -199,15 +195,15 @@ impl FromStr for DeleteOnEmpty {
     }
 }
 
-impl From<DeleteOnEmpty> for s2::types::DeleteOnEmpty {
-    fn from(value: DeleteOnEmpty) -> Self {
+impl From<DeleteOnEmptyConfig> for s2::types::DeleteOnEmpty {
+    fn from(value: DeleteOnEmptyConfig) -> Self {
         s2::types::DeleteOnEmpty {
             min_age: value.min_age,
         }
     }
 }
 
-impl From<s2::types::DeleteOnEmpty> for DeleteOnEmpty {
+impl From<s2::types::DeleteOnEmpty> for DeleteOnEmptyConfig {
     fn from(value: s2::types::DeleteOnEmpty) -> Self {
         Self {
             min_age: value.min_age,
@@ -242,7 +238,9 @@ impl From<StreamConfig> for s2::types::StreamConfig {
 
         let delete_on_empty = config
             .delete_on_empty_min_age
-            .map(|age| s2::types::DeleteOnEmpty { min_age: *age });
+            .map(|age| s2::types::DeleteOnEmpty {
+                min_age: age.min_age,
+            });
 
         let mut stream_config = s2::types::StreamConfig::new();
         if let Some(storage_class) = storage_class {
@@ -349,9 +347,7 @@ impl From<s2::types::StreamConfig> for StreamConfig {
             storage_class: config.storage_class.map(Into::into),
             retention_policy: config.retention_policy.map(Into::into),
             timestamping: config.timestamping.map(Into::into),
-            delete_on_empty_min_age: config
-                .delete_on_empty
-                .map(|age| humantime::Duration::from(age.min_age)),
+            delete_on_empty_min_age: config.delete_on_empty.map(Into::into),
         }
     }
 }
@@ -719,22 +715,6 @@ impl FromStr for Operation {
             "fence" => Ok(Self::Fence),
             _ => Err(OperationParseError::InvalidOperation(s.to_owned())),
         }
-    }
-}
-
-fn serialize_humantime_duration<S>(
-    duration: &Option<humantime::Duration>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    match duration {
-        Some(d) => {
-            let std_duration: std::time::Duration = (*d).into();
-            std_duration.serialize(serializer)
-        }
-        None => serializer.serialize_none(),
     }
 }
 
