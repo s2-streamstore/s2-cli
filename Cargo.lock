@@ -1885,9 +1885,9 @@ dependencies = [
 
 [[package]]
 name = "streamstore"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83cf7ecba0eb1270e6f13efe8ca20ac3ae408a8cbabed60e0225cfad7b4895b2"
+checksum = "b84645ce8ed6d15cba5c883c63c6112bcf903a3b48203e355dfdc3570a70fffc"
 dependencies = [
  "async-stream",
  "backon",
