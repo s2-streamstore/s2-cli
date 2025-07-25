@@ -38,9 +38,9 @@ use tokio_stream::{
 use tracing::trace;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{
-    AccessTokenInfo, BasinConfig, Operation, PermittedOperationGroups, ResourceSet,
-    RetentionPolicy, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass,
-    StreamConfig, TimestampingConfig, TimestampingMode,
+    AccessTokenInfo, BasinConfig, DeleteOnEmptyConfig, Operation, PermittedOperationGroups,
+    ResourceSet, RetentionPolicy, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri,
+    StorageClass, StreamConfig, TimestampingConfig, TimestampingMode,
 };
 
 mod account;
@@ -676,7 +676,9 @@ fn build_basin_reconfig(
             storage_class: storage_class.cloned(),
             retention_policy: retention_policy.cloned(),
             timestamping,
-            delete_on_empty_min_age: delete_on_empty_min_age.cloned(),
+            delete_on_empty_min_age: delete_on_empty_min_age.map(|d| DeleteOnEmptyConfig {
+                min_age: (*d).into(),
+            }),
         })
     } else {
         None
@@ -729,7 +731,9 @@ fn build_stream_reconfig(
         storage_class: storage_class.cloned(),
         retention_policy: retention_policy.cloned(),
         timestamping,
-        delete_on_empty_min_age: delete_on_empty_min_age.cloned(),
+        delete_on_empty_min_age: delete_on_empty_min_age.map(|d| DeleteOnEmptyConfig {
+            min_age: (*d).into(),
+        }),
     };
 
     if storage_class.is_some() {
