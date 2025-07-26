@@ -238,9 +238,7 @@ impl From<StreamConfig> for s2::types::StreamConfig {
 
         let delete_on_empty = config
             .delete_on_empty_min_age
-            .map(|age| s2::types::DeleteOnEmpty {
-                min_age: age.min_age,
-            });
+            .map(s2::types::DeleteOnEmpty::from);
 
         let mut stream_config = s2::types::StreamConfig::new();
         if let Some(storage_class) = storage_class {
