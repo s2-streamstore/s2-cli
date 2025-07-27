@@ -686,6 +686,12 @@ fn build_basin_reconfig(
         None
     };
 
+    if create_stream_on_append.is_some() {
+        mask.push("create_stream_on_append".to_owned());
+    }
+    if create_stream_on_read.is_some() {
+        mask.push("create_stream_on_read".to_owned());
+    }
     if storage_class.is_some() {
         mask.push("default_stream_config.storage_class".to_owned());
     }
@@ -700,12 +706,6 @@ fn build_basin_reconfig(
     }
     if delete_on_empty_min_age.is_some() {
         mask.push("default_stream_config.delete_on_empty.min_age_secs".to_owned());
-    }
-    if create_stream_on_append.is_some() {
-        mask.push("create_stream_on_append".to_owned());
-    }
-    if create_stream_on_read.is_some() {
-        mask.push("create_stream_on_read".to_owned());
     }
 
     (default_stream_config, mask)
