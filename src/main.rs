@@ -697,7 +697,7 @@ fn build_basin_reconfig(
         mask.push("default_stream_config.timestamping.uncapped".to_owned());
     }
     if delete_on_empty_min_age.is_some() {
-        mask.push("default_stream_config.delete_on_empty.min_age".to_owned());
+        mask.push("default_stream_config.delete_on_empty.min_age_secs".to_owned());
     }
     if create_stream_on_append.is_some() {
         mask.push("create_stream_on_append".to_owned());
@@ -749,7 +749,7 @@ fn build_stream_reconfig(
         mask.push("timestamping.uncapped".to_string());
     }
     if delete_on_empty_min_age.is_some() {
-        mask.push("delete_on_empty.min_age".to_string());
+        mask.push("delete_on_empty.min_age_secs".to_string());
     }
 
     (stream_config, mask)
