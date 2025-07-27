@@ -749,7 +749,7 @@ fn build_stream_reconfig(
         mask.push("timestamping.uncapped".to_string());
     }
     if delete_on_empty_min_age.is_some() {
-        mask.push("delete_on_empty".to_string());
+        mask.push("delete_on_empty.min_age".to_string());
     }
 
     (stream_config, mask)
