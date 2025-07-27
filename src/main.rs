@@ -729,13 +729,15 @@ fn build_stream_reconfig(
         None
     };
 
+    let delete_on_empty = delete_on_empty_min_age.map(|d| DeleteOnEmptyConfig {
+        delete_on_empty_min_age: (*d).into(),
+    });
+
     let stream_config = StreamConfig {
         storage_class: storage_class.cloned(),
         retention_policy: retention_policy.cloned(),
         timestamping,
-        delete_on_empty: delete_on_empty_min_age.map(|d| DeleteOnEmptyConfig {
-            delete_on_empty_min_age: (*d).into(),
-        }),
+        delete_on_empty,
     };
 
     if storage_class.is_some() {
