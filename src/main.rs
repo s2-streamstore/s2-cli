@@ -327,7 +327,7 @@ enum Commands {
         #[arg(long)]
         timestamping_uncapped: Option<bool>,
 
-        /// Delete-on-empty configuration for the stream.
+        /// Delete-on-empty minimum age threshold for the stream.
         #[arg(long)]
         delete_on_empty_min_age: Option<humantime::Duration>,
     },
