@@ -676,8 +676,8 @@ fn build_basin_reconfig(
             storage_class: storage_class.cloned(),
             retention_policy: retention_policy.cloned(),
             timestamping,
-            delete_on_empty_min_age: delete_on_empty_min_age.map(|d| DeleteOnEmptyConfig {
-                min_age: (*d).into(),
+            delete_on_empty: delete_on_empty_min_age.map(|d| DeleteOnEmptyConfig {
+                delete_on_empty_min_age: (*d).into(),
             }),
         })
     } else {
@@ -731,8 +731,8 @@ fn build_stream_reconfig(
         storage_class: storage_class.cloned(),
         retention_policy: retention_policy.cloned(),
         timestamping,
-        delete_on_empty_min_age: delete_on_empty_min_age.map(|d| DeleteOnEmptyConfig {
-            min_age: (*d).into(),
+        delete_on_empty: delete_on_empty_min_age.map(|d| DeleteOnEmptyConfig {
+            delete_on_empty_min_age: (*d).into(),
         }),
     };
 

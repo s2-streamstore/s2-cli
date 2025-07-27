@@ -95,9 +95,9 @@ impl AccountService {
             stream_config = stream_config.with_timestamping(timestamping.into());
         }
 
-        if let Some(delete_on_empty_min_age) = configured_stream_config.delete_on_empty_min_age {
+        if let Some(delete_on_empty_min_age) = configured_stream_config.delete_on_empty {
             stream_config = stream_config.with_delete_on_empty(DeleteOnEmpty {
-                min_age: delete_on_empty_min_age.min_age,
+                min_age: delete_on_empty_min_age.delete_on_empty_min_age,
             });
         }
 
