@@ -5,9 +5,9 @@ use s2::{
     client::Client,
     types::{
         AccessTokenId, AccessTokenInfo, BasinConfig, BasinInfo, BasinName, CreateBasinRequest,
-        DeleteBasinRequest, DeleteOnEmpty, ListAccessTokensRequest, ListAccessTokensResponse,
-        ListBasinsRequest, ListBasinsResponse, Operation, PermittedOperationGroups,
-        ReconfigureBasinRequest, ResourceSet, StreamConfig,
+        DeleteBasinRequest, ListAccessTokensRequest, ListAccessTokensResponse, ListBasinsRequest,
+        ListBasinsResponse, Operation, PermittedOperationGroups, ReconfigureBasinRequest,
+        ResourceSet, StreamConfig,
     },
 };
 
@@ -95,10 +95,8 @@ impl AccountService {
             stream_config = stream_config.with_timestamping(timestamping.into());
         }
 
-        if let Some(delete_on_empty_min_age) = configured_stream_config.delete_on_empty {
-            stream_config = stream_config.with_delete_on_empty(DeleteOnEmpty {
-                min_age: delete_on_empty_min_age.delete_on_empty_min_age,
-            });
+        if let Some(delete_on_empty) = configured_stream_config.delete_on_empty {
+            stream_config = stream_config.with_delete_on_empty(delete_on_empty.into());
         }
 
         let basin_config = BasinConfig {
