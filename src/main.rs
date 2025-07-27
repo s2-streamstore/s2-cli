@@ -161,6 +161,14 @@ enum Commands {
         /// Name of the basin to reconfigure.
         basin: S2BasinUri,
 
+        /// Create stream on append with basin defaults if it doesn't exist.
+        #[arg(long)]
+        create_stream_on_append: Option<bool>,
+
+        /// Create stream on read with basin defaults if it doesn't exist.
+        #[arg(long)]
+        create_stream_on_read: Option<bool>,
+
         /// Storage class for the default stream config.
         #[arg(long)]
         storage_class: Option<StorageClass>,
@@ -177,15 +185,7 @@ enum Commands {
         #[arg(long)]
         timestamping_uncapped: Option<bool>,
 
-        /// Create stream on append with basin defaults if it doesn't exist.
-        #[arg(long)]
-        create_stream_on_append: Option<bool>,
-
-        /// Create stream on read with basin defaults if it doesn't exist.
-        #[arg(long)]
-        create_stream_on_read: Option<bool>,
-
-        /// Delete-on-empty configuration for the default stream config.
+        /// Delete-on-empty minimum age threshold for the default stream config.
         #[arg(long)]
         delete_on_empty_min_age: Option<humantime::Duration>,
     },
