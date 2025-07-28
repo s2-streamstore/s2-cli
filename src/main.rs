@@ -654,7 +654,7 @@ fn build_basin_reconfig(
     create_stream_on_append: Option<&bool>,
     create_stream_on_read: Option<&bool>,
     delete_on_empty_min_age: Option<&humantime::Duration>,
-) -> (Option<StreamConfig>, Vec<String>) {
+) -> (StreamConfig, Vec<String>) {
     let mut mask = Vec::new();
     let has_stream_args = storage_class.is_some()
         || retention_policy.is_some()
@@ -676,14 +676,14 @@ fn build_basin_reconfig(
             delete_on_empty_min_age: (*d).into(),
         });
 
-        Some(StreamConfig {
+        StreamConfig {
             storage_class: storage_class.cloned(),
             retention_policy: retention_policy.cloned(),
             timestamping,
             delete_on_empty,
-        })
+        }
     } else {
-        None
+        Default::default()
     };
 
     if create_stream_on_append.is_some() {
@@ -973,11 +973,10 @@ async fn run() -> Result<(), S2CliError> {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.access_token)?;
             let account_service = AccountService::new(Client::new(client_config));
-
             let BasinInfo { state, .. } = account_service
                 .create_basin(
                     basin.into(),
-                    config.default_stream_config.unwrap_or_default(),
+                    config.default_stream_config.into(),
                     config.create_stream_on_append.unwrap_or_default(),
                     config.create_stream_on_read.unwrap_or_default(),
                 )

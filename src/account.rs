@@ -77,26 +77,26 @@ impl AccountService {
     pub async fn create_basin(
         &self,
         basin: BasinName,
-        configured_stream_config: crate::types::StreamConfig,
+        configured_stream_config: StreamConfig,
         create_stream_on_append: bool,
         create_stream_on_read: bool,
     ) -> Result<BasinInfo, ServiceError> {
         let mut stream_config = StreamConfig::new();
 
         if let Some(storage_class) = configured_stream_config.storage_class {
-            stream_config = stream_config.with_storage_class(storage_class.into());
+            stream_config = stream_config.with_storage_class(storage_class);
         }
 
         if let Some(retention_policy) = configured_stream_config.retention_policy {
-            stream_config = stream_config.with_retention_policy(retention_policy.into());
+            stream_config = stream_config.with_retention_policy(retention_policy);
         }
 
         if let Some(timestamping) = configured_stream_config.timestamping {
-            stream_config = stream_config.with_timestamping(timestamping.into());
+            stream_config = stream_config.with_timestamping(timestamping);
         }
 
         if let Some(delete_on_empty) = configured_stream_config.delete_on_empty {
-            stream_config = stream_config.with_delete_on_empty(delete_on_empty.into());
+            stream_config = stream_config.with_delete_on_empty(delete_on_empty);
         }
 
         let basin_config = BasinConfig {

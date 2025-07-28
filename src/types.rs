@@ -116,7 +116,7 @@ impl FromStr for S2BasinAndStreamUri {
 #[derive(Parser, Debug, Clone, Serialize)]
 pub struct BasinConfig {
     #[clap(flatten)]
-    pub default_stream_config: Option<StreamConfig>,
+    pub default_stream_config: StreamConfig,
     /// Create stream on append with basin defaults if it doesn't exist.
     #[arg(long)]
     pub create_stream_on_append: Option<bool>,
@@ -125,7 +125,7 @@ pub struct BasinConfig {
     pub create_stream_on_read: Option<bool>,
 }
 
-#[derive(Parser, Debug, Default, Clone, Serialize)]
+#[derive(Parser, Debug, Clone, Serialize, Default)]
 pub struct StreamConfig {
     #[arg(long)]
     /// Storage class for a stream.
@@ -221,7 +221,7 @@ impl From<BasinConfig> for s2::types::BasinConfig {
             create_stream_on_read,
         } = config;
         s2::types::BasinConfig {
-            default_stream_config: default_stream_config.map(Into::into),
+            default_stream_config: Some(default_stream_config.into()),
             create_stream_on_append: create_stream_on_append.unwrap_or_default(),
             create_stream_on_read: create_stream_on_read.unwrap_or_default(),
         }
@@ -332,7 +332,10 @@ impl From<s2::types::RetentionPolicy> for RetentionPolicy {
 impl From<s2::types::BasinConfig> for BasinConfig {
     fn from(config: s2::types::BasinConfig) -> Self {
         BasinConfig {
-            default_stream_config: config.default_stream_config.map(Into::into),
+            default_stream_config: config
+                .default_stream_config
+                .map(Into::into)
+                .unwrap_or_default(),
             create_stream_on_append: Some(config.create_stream_on_append),
             create_stream_on_read: Some(config.create_stream_on_read),
         }
