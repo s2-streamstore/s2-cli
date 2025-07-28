@@ -118,11 +118,11 @@ pub struct BasinConfig {
     #[clap(flatten)]
     pub default_stream_config: StreamConfig,
     /// Create stream on append with basin defaults if it doesn't exist.
-    #[arg(long)]
-    pub create_stream_on_append: Option<bool>,
+    #[arg(long, default_value_t = false)]
+    pub create_stream_on_append: bool,
     /// Create stream on read with basin defaults if it doesn't exist.
-    #[arg(long)]
-    pub create_stream_on_read: Option<bool>,
+    #[arg(long, default_value_t = false)]
+    pub create_stream_on_read: bool,
 }
 
 #[derive(Parser, Debug, Clone, Serialize, Default)]
@@ -214,8 +214,8 @@ impl From<BasinConfig> for s2::types::BasinConfig {
         } = config;
         s2::types::BasinConfig {
             default_stream_config: Some(default_stream_config.into()),
-            create_stream_on_append: create_stream_on_append.unwrap_or_default(),
-            create_stream_on_read: create_stream_on_read.unwrap_or_default(),
+            create_stream_on_append,
+            create_stream_on_read,
         }
     }
 }
@@ -330,8 +330,8 @@ impl From<s2::types::BasinConfig> for BasinConfig {
                 .default_stream_config
                 .map(Into::into)
                 .unwrap_or_default(),
-            create_stream_on_append: Some(config.create_stream_on_append),
-            create_stream_on_read: Some(config.create_stream_on_read),
+            create_stream_on_append: config.create_stream_on_append,
+            create_stream_on_read: config.create_stream_on_read,
         }
     }
 }

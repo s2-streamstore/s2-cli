@@ -977,8 +977,8 @@ async fn run() -> Result<(), S2CliError> {
                 .create_basin(
                     basin.into(),
                     config.default_stream_config.into(),
-                    config.create_stream_on_append.unwrap_or_default(),
-                    config.create_stream_on_read.unwrap_or_default(),
+                    config.create_stream_on_append,
+                    config.create_stream_on_read,
                 )
                 .await?;
 
@@ -1032,8 +1032,8 @@ async fn run() -> Result<(), S2CliError> {
 
             let basin_config = BasinConfig {
                 default_stream_config,
-                create_stream_on_append,
-                create_stream_on_read,
+                create_stream_on_append: create_stream_on_append.unwrap_or_default(),
+                create_stream_on_read: create_stream_on_read.unwrap_or_default(),
             };
 
             let config: BasinConfig = account_service
