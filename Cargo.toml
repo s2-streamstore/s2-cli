@@ -30,7 +30,7 @@ miette = { version = "7.6.0", features = ["fancy"] }
 rand = "0.9.1"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
-streamstore = { version = "0.18.0", features = ["connector"] }
+streamstore = { version = "0.19.1", features = ["connector"] }
 thiserror = "2.0.12"
 tokio = { version = "1.45.1", features = ["full"] }
 tokio-stream = { version = "0.1.17", features = ["io-util"] }

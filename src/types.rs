@@ -1,6 +1,6 @@
 //! Types for Basin configuration that directly map to s2::types.
 
-use clap::{Parser, ValueEnum};
+use clap::{Args, Parser, ValueEnum};
 use s2::types::BasinName;
 use serde::Serialize;
 use std::{str::FromStr, time::Duration};
@@ -136,6 +136,9 @@ pub struct StreamConfig {
     #[clap(flatten)]
     /// Timestamping configuration.
     pub timestamping: Option<TimestampingConfig>,
+    #[clap(flatten)]
+    /// Delete-on-empty configuration.
+    pub delete_on_empty: Option<DeleteOnEmptyConfig>,
 }
 
 #[derive(ValueEnum, Debug, Clone, Serialize)]
@@ -178,6 +181,29 @@ impl From<&str> for RetentionPolicy {
         }
     }
 }
+#[derive(Args, Clone, Debug, Serialize)]
+pub struct DeleteOnEmptyConfig {
+    #[arg(long, value_parser = humantime::parse_duration, required = false)]
+    /// Minimum age before an empty stream can be deleted.
+    /// Example: 1d, 1w, 1y
+    pub delete_on_empty_min_age: Duration,
+}
+
+impl From<DeleteOnEmptyConfig> for s2::types::DeleteOnEmptyConfig {
+    fn from(value: DeleteOnEmptyConfig) -> Self {
+        s2::types::DeleteOnEmptyConfig {
+            min_age: value.delete_on_empty_min_age,
+        }
+    }
+}
+
+impl From<s2::types::DeleteOnEmptyConfig> for DeleteOnEmptyConfig {
+    fn from(value: s2::types::DeleteOnEmptyConfig) -> Self {
+        Self {
+            delete_on_empty_min_age: value.min_age,
+        }
+    }
+}
 
 impl From<BasinConfig> for s2::types::BasinConfig {
     fn from(config: BasinConfig) -> Self {
@@ -204,6 +230,10 @@ impl From<StreamConfig> for s2::types::StreamConfig {
 
         let timestamping_config = config.timestamping.map(s2::types::TimestampingConfig::from);
 
+        let delete_on_empty = config
+            .delete_on_empty
+            .map(s2::types::DeleteOnEmptyConfig::from);
+
         let mut stream_config = s2::types::StreamConfig::new();
         if let Some(storage_class) = storage_class {
             stream_config = stream_config.with_storage_class(storage_class);
@@ -213,6 +243,9 @@ impl From<StreamConfig> for s2::types::StreamConfig {
         }
         if let Some(timestamping) = timestamping_config {
             stream_config = stream_config.with_timestamping(timestamping);
+        }
+        if let Some(delete_on_empty) = delete_on_empty {
+            stream_config = stream_config.with_delete_on_empty(delete_on_empty);
         }
         stream_config
     }
@@ -309,6 +342,7 @@ impl From<s2::types::StreamConfig> for StreamConfig {
             storage_class: config.storage_class.map(Into::into),
             retention_policy: config.retention_policy.map(Into::into),
             timestamping: config.timestamping.map(Into::into),
+            delete_on_empty: config.delete_on_empty.map(Into::into),
         }
     }
 }

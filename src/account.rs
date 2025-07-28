@@ -95,6 +95,10 @@ impl AccountService {
             stream_config = stream_config.with_timestamping(timestamping);
         }
 
+        if let Some(delete_on_empty) = configured_stream_config.delete_on_empty {
+            stream_config = stream_config.with_delete_on_empty(delete_on_empty);
+        }
+
         let basin_config = BasinConfig {
             default_stream_config: Some(stream_config),
             create_stream_on_append,
