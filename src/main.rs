@@ -645,7 +645,7 @@ fn build_basin_reconfig(
     timestamping_uncapped: Option<&bool>,
     create_stream_on_append: Option<&bool>,
     create_stream_on_read: Option<&bool>,
-) -> (Option<StreamConfig>, Vec<String>) {
+) -> (StreamConfig, Vec<String>) {
     let mut mask = Vec::new();
     let has_stream_args = storage_class.is_some()
         || retention_policy.is_some()
@@ -662,13 +662,13 @@ fn build_basin_reconfig(
             None
         };
 
-        Some(StreamConfig {
+        StreamConfig {
             storage_class: storage_class.cloned(),
             retention_policy: retention_policy.cloned(),
             timestamping,
-        })
+        }
     } else {
-        None
+        Default::default()
     };
 
     if storage_class.is_some() {
@@ -946,19 +946,10 @@ async fn run() -> Result<(), S2CliError> {
             let cfg = config::load_config(&config_path)?;
             let client_config = client_config(cfg.access_token)?;
             let account_service = AccountService::new(Client::new(client_config));
-            let (storage_class, retention_policy) = match &config.default_stream_config {
-                Some(config) => {
-                    let storage_class = config.storage_class.clone();
-                    let retention_policy = config.retention_policy.clone();
-                    (storage_class, retention_policy)
-                }
-                None => (None, None),
-            };
             let BasinInfo { state, .. } = account_service
                 .create_basin(
                     basin.into(),
-                    storage_class,
-                    retention_policy,
+                    config.default_stream_config.into(),
                     config.create_stream_on_append.unwrap_or_default(),
                     config.create_stream_on_read.unwrap_or_default(),
                 )
