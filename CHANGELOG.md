@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.21.1] - 2025-07-28
+
+### Bug Fixes
+
+- Make csoa/csor flags ([#167](https://github.com/s2-streamstore/s2-cli/issues/167))
+
 ## [0.21.0] - 2025-07-28
 
 ### Features
