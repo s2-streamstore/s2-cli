@@ -1,6 +1,6 @@
 //! Types for Basin configuration that directly map to s2::types.
 
-use clap::{Parser, ValueEnum};
+use clap::{Args, Parser, ValueEnum};
 use s2::types::BasinName;
 use serde::Serialize;
 use std::{str::FromStr, time::Duration};
@@ -136,7 +136,7 @@ pub struct StreamConfig {
     #[clap(flatten)]
     /// Timestamping configuration.
     pub timestamping: Option<TimestampingConfig>,
-    #[arg(long, help("Example: 1d, 1w, 1y"))]
+    #[clap(flatten)]
     /// Delete-on-empty configuration.
     pub delete_on_empty: Option<DeleteOnEmptyConfig>,
 }
@@ -181,20 +181,12 @@ impl From<&str> for RetentionPolicy {
         }
     }
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Args, Clone, Debug, Serialize)]
 pub struct DeleteOnEmptyConfig {
+    #[arg(long, value_parser = humantime::parse_duration)]
+    /// Minimum age before an empty stream can be deleted.
+    /// Example: 1d, 1w, 1y
     pub delete_on_empty_min_age: Duration,
-}
-
-impl FromStr for DeleteOnEmptyConfig {
-    type Err = humantime::DurationError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let duration = humantime::parse_duration(s)?;
-        Ok(Self {
-            delete_on_empty_min_age: duration,
-        })
-    }
 }
 
 impl From<DeleteOnEmptyConfig> for s2::types::DeleteOnEmpty {
