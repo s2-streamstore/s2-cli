@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.21.0] - 2025-07-28
+
+### Features
+
+- Delete-on-empty ([#163](https://github.com/s2-streamstore/s2-cli/issues/163))
+
+### Bug Fixes
+
+- Specifying stream config args does not work ([#165](https://github.com/s2-streamstore/s2-cli/issues/165))
+
 ## [0.20.0] - 2025-07-22
 
 ### Features
