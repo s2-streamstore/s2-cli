@@ -183,7 +183,7 @@ impl From<&str> for RetentionPolicy {
 }
 #[derive(Args, Clone, Debug, Serialize)]
 pub struct DeleteOnEmptyConfig {
-    #[arg(long, value_parser = humantime::parse_duration)]
+    #[arg(long, value_parser = humantime::parse_duration, required = false)]
     /// Minimum age before an empty stream can be deleted.
     /// Example: 1d, 1w, 1y
     pub delete_on_empty_min_age: Duration,
