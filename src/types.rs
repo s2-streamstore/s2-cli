@@ -230,7 +230,9 @@ impl From<StreamConfig> for s2::types::StreamConfig {
 
         let timestamping_config = config.timestamping.map(s2::types::TimestampingConfig::from);
 
-        let delete_on_empty = config.delete_on_empty.map(s2::types::DeleteOnEmptyConfig::from);
+        let delete_on_empty = config
+            .delete_on_empty
+            .map(s2::types::DeleteOnEmptyConfig::from);
 
         let mut stream_config = s2::types::StreamConfig::new();
         if let Some(storage_class) = storage_class {
