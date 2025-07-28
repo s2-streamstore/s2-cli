@@ -162,12 +162,12 @@ enum Commands {
         basin: S2BasinUri,
 
         /// Create stream on append with basin defaults if it doesn't exist.
-        #[arg(long)]
-        create_stream_on_append: Option<bool>,
+        #[arg(long, default_value_t = false)]
+        create_stream_on_append: bool,
 
         /// Create stream on read with basin defaults if it doesn't exist.
-        #[arg(long)]
-        create_stream_on_read: Option<bool>,
+        #[arg(long, default_value_t = false)]
+        create_stream_on_read: bool,
 
         /// Storage class for the default stream config.
         #[arg(long)]
@@ -651,8 +651,8 @@ fn build_basin_reconfig(
     retention_policy: Option<&RetentionPolicy>,
     timestamping_mode: Option<&TimestampingMode>,
     timestamping_uncapped: Option<&bool>,
-    create_stream_on_append: Option<&bool>,
-    create_stream_on_read: Option<&bool>,
+    create_stream_on_append: &bool,
+    create_stream_on_read: &bool,
     delete_on_empty_min_age: Option<&humantime::Duration>,
 ) -> (StreamConfig, Vec<String>) {
     let mut mask = Vec::new();
@@ -686,10 +686,10 @@ fn build_basin_reconfig(
         Default::default()
     };
 
-    if create_stream_on_append.is_some() {
+    if *create_stream_on_append {
         mask.push("create_stream_on_append".to_owned());
     }
-    if create_stream_on_read.is_some() {
+    if *create_stream_on_read {
         mask.push("create_stream_on_read".to_owned());
     }
     if storage_class.is_some() {
@@ -977,8 +977,8 @@ async fn run() -> Result<(), S2CliError> {
                 .create_basin(
                     basin.into(),
                     config.default_stream_config.into(),
-                    config.create_stream_on_append.unwrap_or_default(),
-                    config.create_stream_on_read.unwrap_or_default(),
+                    config.create_stream_on_append,
+                    config.create_stream_on_read,
                 )
                 .await?;
 
@@ -1025,8 +1025,8 @@ async fn run() -> Result<(), S2CliError> {
                 retention_policy.as_ref(),
                 timestamping_mode.as_ref(),
                 timestamping_uncapped.as_ref(),
-                create_stream_on_append.as_ref(),
-                create_stream_on_read.as_ref(),
+                &create_stream_on_append,
+                &create_stream_on_read,
                 delete_on_empty_min_age.as_ref(),
             );
 
