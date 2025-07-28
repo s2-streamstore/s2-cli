@@ -189,16 +189,16 @@ pub struct DeleteOnEmptyConfig {
     pub delete_on_empty_min_age: Duration,
 }
 
-impl From<DeleteOnEmptyConfig> for s2::types::DeleteOnEmpty {
+impl From<DeleteOnEmptyConfig> for s2::types::DeleteOnEmptyConfig {
     fn from(value: DeleteOnEmptyConfig) -> Self {
-        s2::types::DeleteOnEmpty {
+        s2::types::DeleteOnEmptyConfig {
             min_age: value.delete_on_empty_min_age,
         }
     }
 }
 
-impl From<s2::types::DeleteOnEmpty> for DeleteOnEmptyConfig {
-    fn from(value: s2::types::DeleteOnEmpty) -> Self {
+impl From<s2::types::DeleteOnEmptyConfig> for DeleteOnEmptyConfig {
+    fn from(value: s2::types::DeleteOnEmptyConfig) -> Self {
         Self {
             delete_on_empty_min_age: value.min_age,
         }
@@ -230,7 +230,7 @@ impl From<StreamConfig> for s2::types::StreamConfig {
 
         let timestamping_config = config.timestamping.map(s2::types::TimestampingConfig::from);
 
-        let delete_on_empty = config.delete_on_empty.map(s2::types::DeleteOnEmpty::from);
+        let delete_on_empty = config.delete_on_empty.map(s2::types::DeleteOnEmptyConfig::from);
 
         let mut stream_config = s2::types::StreamConfig::new();
         if let Some(storage_class) = storage_class {
