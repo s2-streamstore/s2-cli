@@ -173,7 +173,7 @@ enum Commands {
         #[arg(long)]
         storage_class: Option<StorageClass>,
 
-        /// Retention policy for the default stream config (e.g., "1d", "1w", "1y").
+        /// Retention policy for the default stream config (e.g., "1d", "1w", "1y", "infinite").
         #[arg(long)]
         retention_policy: Option<RetentionPolicy>,
 
