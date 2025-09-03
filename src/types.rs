@@ -171,16 +171,30 @@ pub struct TimestampingConfig {
 pub enum RetentionPolicy {
     #[allow(dead_code)]
     Age(Duration),
+    Infinite(()),
 }
 
-impl From<&str> for RetentionPolicy {
-    fn from(s: &str) -> Self {
-        match humantime::parse_duration(s) {
-            Ok(d) => RetentionPolicy::Age(d),
-            Err(_) => RetentionPolicy::Age(Duration::from_secs(0)),
+impl TryFrom<&str> for RetentionPolicy {
+    type Error = &'static str;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        if value == "infinite" {
+            return Ok(RetentionPolicy::Infinite(()));
+        } else if let Ok(d) = humantime::parse_duration(value) {
+            return Ok(RetentionPolicy::Age(d));
         }
+        Err("invalid retention policy: expected a duration, or 'infinite'")
     }
 }
+
+impl FromStr for RetentionPolicy {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        RetentionPolicy::try_from(s)
+    }
+}
+
 #[derive(Args, Clone, Debug, Serialize)]
 pub struct DeleteOnEmptyConfig {
     #[arg(long, value_parser = humantime::parse_duration, required = false)]
@@ -311,6 +325,7 @@ impl From<RetentionPolicy> for s2::types::RetentionPolicy {
     fn from(policy: RetentionPolicy) -> Self {
         match policy {
             RetentionPolicy::Age(d) => s2::types::RetentionPolicy::Age(d),
+            RetentionPolicy::Infinite(()) => s2::types::RetentionPolicy::Infinite(()),
         }
     }
 }
@@ -319,6 +334,7 @@ impl From<s2::types::RetentionPolicy> for RetentionPolicy {
     fn from(policy: s2::types::RetentionPolicy) -> Self {
         match policy {
             s2::types::RetentionPolicy::Age(d) => RetentionPolicy::Age(d),
+            s2::types::RetentionPolicy::Infinite(_) => RetentionPolicy::Infinite(()),
         }
     }
 }
