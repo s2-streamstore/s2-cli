@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.0] - 2025-09-03
+
+### Features
+
+- Support `Infinite` retention ([#170](https://github.com/s2-streamstore/s2-cli/issues/170))
+
 ## [0.21.1] - 2025-07-28
 
 ### Bug Fixes
