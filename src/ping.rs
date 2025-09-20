@@ -209,7 +209,7 @@ impl LatencyStats {
             };
         }
 
-        let median = if n % 2 == 0 {
+        let median = if n.is_multiple_of(2) {
             (data[n / 2 - 1] + data[n / 2]) / 2
         } else {
             data[n / 2]
