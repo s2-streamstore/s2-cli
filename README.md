@@ -24,17 +24,17 @@
   </p>
 </div>
 
-Command Line Tool to interact with the
+Command Line Interface to interact with the
 [S2 API](https://s2.dev/docs/rest/protocol).
 
 ## Getting started
 
 1. [Install](#installation) the S2 CLI using your preferred method.
 
-1. Generate an authentication token by logging onto the web console at
+1. Generate an access token by logging into the web console at
    [s2.dev](https://s2.dev/dashboard) and set the token in CLI config:
    ```bash
-   s2 config set --access-token <YOUR ACCESS TOKEN>
+   s2 config set access_token <YOUR_ACCESS_TOKEN>
    ```
 
 1. You're ready to run S2 commands!
@@ -71,7 +71,7 @@ This method works on any system with [Rust](https://www.rust-lang.org/)
 and [Cargo](https://doc.rust-lang.org/cargo/) installed.
 
 ```bash
-cargo install streamstore-cli
+cargo install --locked s2-cli
 ```
 
 ### From Release Binaries
