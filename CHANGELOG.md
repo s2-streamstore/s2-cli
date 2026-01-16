@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.2] - 2026-01-16
+
+### Bug Fixes
+
+- Use  ~/.config/s2/config.toml for config path ([#188](https://github.com/s2-streamstore/s2-cli/issues/188))
+
+### Miscellaneous Tasks
+
+- Reduce append noise ([#187](https://github.com/s2-streamstore/s2-cli/issues/187))
+
 ## [0.23.1] - 2026-01-16
 
 ### Documentation
