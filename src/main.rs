@@ -346,24 +346,28 @@ async fn run() -> Result<(), CliError> {
                 *args.linger,
             );
             let mut acks = std::pin::pin!(acks);
+            let mut last_printed_batch_end: Option<u64> = None;
 
             loop {
                 select! {
                     ack = acks.next() => {
                         match ack {
                             Some(Ok(ack)) => {
-                                eprintln!(
-                                    "{}",
-                                    format!(
-                                        "✓ [APPENDED] {}..{} // tail: {} @ {}",
-                                        ack.batch.start.seq_num,
-                                        ack.batch.end.seq_num,
-                                        ack.batch.tail.seq_num,
-                                        ack.batch.tail.timestamp
-                                    )
-                                    .green()
-                                    .bold()
-                                );
+                                if last_printed_batch_end.is_none_or(|end| end != ack.batch.end.seq_num) {
+                                    last_printed_batch_end = Some(ack.batch.end.seq_num);
+                                    eprintln!(
+                                        "{}",
+                                        format!(
+                                            "✓ [APPENDED] {}..{} // tail: {} @ {}",
+                                            ack.batch.start.seq_num,
+                                            ack.batch.end.seq_num,
+                                            ack.batch.tail.seq_num,
+                                            ack.batch.tail.timestamp
+                                        )
+                                        .green()
+                                        .bold()
+                                    );
+                                }
                             }
                             Some(Err(e)) => {
                                 return Err(e);
