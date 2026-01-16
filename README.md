@@ -14,7 +14,7 @@
 
   <p>
     <!-- Crates.io -->
-    <a href="https://crates.io/crates/s2-cli"><img src="https://img.shields.io/crates/v/streamstore-cli.svg" /></a>
+    <a href="https://crates.io/crates/s2-cli"><img src="https://img.shields.io/crates/v/s2-cli.svg" /></a>
     <!-- Github Actions (CI) -->
     <a href="https://github.com/s2-streamstore/s2-cli/actions?query=branch%3Amain++"><img src="https://github.com/s2-streamstore/s2-cli/actions/workflows/ci.yml/badge.svg" /></a>
     <!-- Discord (chat) -->
