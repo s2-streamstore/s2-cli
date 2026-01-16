@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.1] - 2026-01-16
+
+### Documentation
+
+- Explicitly avoid trailing periods for verbatim doc comments ([#185](https://github.com/s2-streamstore/s2-cli/issues/185))
+
 ## [0.23.0] - 2026-01-16
 
 ### Bug Fixes
