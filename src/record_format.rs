@@ -1,15 +1,115 @@
-use s2::types::{AppendRecord, ConvertError, SequencedRecord};
 use std::io;
-use tokio::io::AsyncWrite;
+use std::io::BufRead;
+use std::path::PathBuf;
+use std::pin::Pin;
 
+use clap::ValueEnum;
 use futures::Stream;
+use s2_sdk::types::{AppendRecord, SequencedRecord};
+use tokio::fs::{File, OpenOptions};
+use tokio::io::{AsyncBufReadExt, AsyncWrite, BufWriter};
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::{LinesStream, ReceiverStream};
+use tracing::trace;
 
-#[derive(Debug, thiserror::Error)]
-pub enum RecordParseError {
-    #[error("Error reading: {0}")]
-    Io(#[from] io::Error),
-    #[error("Error parsing: {0}")]
-    Convert(#[from] ConvertError),
+use crate::error::RecordParseError;
+
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub enum Format {
+    /// Plaintext record body as UTF-8.
+    /// If the body is not valid UTF-8, this will be a lossy decoding.
+    /// Headers cannot be represented, so command records are sent to stderr when reading.
+    #[default]
+    #[clap(name = "")]
+    BodyRaw,
+    /// JSON format with UTF-8 headers and body.
+    /// If the data is not valid UTF-8, this will be a lossy decoding.
+    #[clap(name = "raw", alias = "json")]
+    JsonRaw,
+    /// JSON format with headers and body encoded as Base64.
+    #[clap(name = "base64", alias = "json-binsafe")]
+    JsonBase64,
+}
+
+#[derive(Debug, Clone)]
+pub enum RecordsIn {
+    File(PathBuf),
+    Stdin,
+}
+
+/// Sink for records in a read session.
+#[derive(Debug, Clone)]
+pub enum RecordsOut {
+    File(PathBuf),
+    Stdout,
+}
+
+impl RecordsIn {
+    pub async fn reader(
+        &self,
+    ) -> io::Result<Pin<Box<dyn Stream<Item = io::Result<String>> + Send>>> {
+        match self {
+            RecordsIn::File(path) => {
+                let file = File::open(path).await?;
+                let stream: Pin<Box<dyn Stream<Item = io::Result<String>> + Send>> =
+                    Box::pin(LinesStream::new(tokio::io::BufReader::new(file).lines()));
+                Ok(stream)
+            }
+            RecordsIn::Stdin => Ok(Box::pin(stdio_lines_stream(std::io::stdin()))),
+        }
+    }
+}
+
+impl RecordsOut {
+    pub async fn writer(&self) -> io::Result<Box<dyn AsyncWrite + Send + Unpin>> {
+        match self {
+            RecordsOut::File(path) => {
+                trace!(?path, "opening file writer");
+                let file = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .await?;
+
+                Ok(Box::new(BufWriter::new(file)))
+            }
+            RecordsOut::Stdout => {
+                trace!("stdout writer");
+                Ok(Box::new(BufWriter::new(tokio::io::stdout())))
+            }
+        }
+    }
+}
+
+fn stdio_lines_stream<F>(f: F) -> ReceiverStream<io::Result<String>>
+where
+    F: std::io::Read + Send + 'static,
+{
+    let lines = std::io::BufReader::new(f).lines();
+    let (tx, rx) = mpsc::channel(s2_sdk::types::RECORD_BATCH_MAX.count);
+    let _handle = std::thread::spawn(move || {
+        for line in lines {
+            if tx.blocking_send(line).is_err() {
+                return;
+            }
+        }
+    });
+    ReceiverStream::new(rx)
+}
+
+pub fn parse_records_input_source(s: &str) -> Result<RecordsIn, io::Error> {
+    match s {
+        "" | "-" => Ok(RecordsIn::Stdin),
+        _ => Ok(RecordsIn::File(PathBuf::from(s))),
+    }
+}
+
+pub fn parse_records_output_source(s: &str) -> Result<RecordsOut, io::Error> {
+    match s {
+        "" | "-" => Ok(RecordsOut::Stdout),
+        _ => Ok(RecordsOut::File(PathBuf::from(s))),
+    }
 }
 
 pub trait RecordParser<I>
@@ -40,7 +140,7 @@ mod body {
     };
 
     use futures::{Stream, StreamExt};
-    use s2::types::{AppendRecord, SequencedRecord};
+    use s2_sdk::types::{AppendRecord, SequencedRecord};
     use tokio::io::{AsyncWrite, AsyncWriteExt};
 
     use super::{RecordParseError, RecordParser, RecordWriter};
@@ -81,7 +181,9 @@ mod body {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(None) => Poll::Ready(None),
                 Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e.into()))),
-                Poll::Ready(Some(Ok(s))) => Poll::Ready(Some(Ok(AppendRecord::new(s)?))),
+                Poll::Ready(Some(Ok(s))) => Poll::Ready(Some(
+                    AppendRecord::new(s).map_err(|e| RecordParseError::Parse(e.to_string())),
+                )),
             }
         }
     }
@@ -98,7 +200,7 @@ mod json {
     use base64ct::{Base64, Encoding};
     use bytes::Bytes;
     use futures::{Stream, StreamExt};
-    use s2::types::{AppendRecord, AppendRecordParts, ConvertError, Header, SequencedRecord};
+    use s2_sdk::types::{AppendRecord, Header, SequencedRecord};
     use serde::{Deserialize, Serialize};
     use tokio::io::{AsyncWrite, AsyncWriteExt};
 
@@ -126,7 +228,7 @@ mod json {
     }
 
     impl<const BIN_SAFE: bool> TryFrom<OwnedCowStr<BIN_SAFE>> for Bytes {
-        type Error = ConvertError;
+        type Error = String;
 
         fn try_from(value: OwnedCowStr<BIN_SAFE>) -> Result<Self, Self::Error> {
             let CowStr(s) = value;
@@ -179,11 +281,12 @@ mod json {
                 seq_num,
                 headers,
                 body,
+                ..
             } = value;
 
             let headers: Vec<(CowStr<BIN_SAFE>, CowStr<BIN_SAFE>)> = headers
                 .iter()
-                .map(|Header { name, value }| (name.as_ref().into(), value.as_ref().into()))
+                .map(|h| (h.name.as_ref().into(), h.value.as_ref().into()))
                 .collect();
 
             let body: CowStr<BIN_SAFE> = body.as_ref().into();
@@ -229,7 +332,7 @@ mod json {
     }
 
     impl<const BIN_SAFE: bool> TryFrom<DeserializableAppendRecord<BIN_SAFE>> for AppendRecord {
-        type Error = ConvertError;
+        type Error = String;
 
         fn try_from(value: DeserializableAppendRecord<BIN_SAFE>) -> Result<Self, Self::Error> {
             let DeserializableAppendRecord {
@@ -238,21 +341,28 @@ mod json {
                 body,
             } = value;
 
-            let parts = AppendRecordParts {
-                timestamp,
-                headers: headers
+            let body_bytes: Bytes = body.try_into()?;
+            let mut record = AppendRecord::new(body_bytes).map_err(|e| e.to_string())?;
+
+            if !headers.is_empty() {
+                let parsed_headers: Vec<Header> = headers
                     .into_iter()
                     .map(|(name, value)| {
-                        Ok(Header {
-                            name: name.try_into()?,
-                            value: value.try_into()?,
-                        })
+                        let name_bytes: Bytes = name.try_into()?;
+                        let value_bytes: Bytes = value.try_into()?;
+                        Ok(Header::new(name_bytes, value_bytes))
                     })
-                    .collect::<Result<Vec<_>, ConvertError>>()?,
-                body: body.try_into()?,
-            };
+                    .collect::<Result<Vec<_>, String>>()?;
+                record = record
+                    .with_headers(parsed_headers)
+                    .map_err(|e| e.to_string())?;
+            }
 
-            parts.try_into()
+            if let Some(ts) = timestamp {
+                record = record.with_timestamp(ts);
+            }
+
+            Ok(record)
         }
     }
 
@@ -268,8 +378,8 @@ mod json {
             fn parse_record<const BIN_SAFE: bool>(
                 s: String,
             ) -> Result<AppendRecord, RecordParseError> {
-                let append_record: DeserializableAppendRecord<BIN_SAFE> = serde_json::from_str(&s)
-                    .map_err(|e| RecordParseError::Convert(e.to_string().into()))?;
+                let append_record: DeserializableAppendRecord<BIN_SAFE> =
+                    serde_json::from_str(&s).map_err(|e| RecordParseError::Parse(e.to_string()))?;
 
                 Ok(append_record.try_into()?)
             }

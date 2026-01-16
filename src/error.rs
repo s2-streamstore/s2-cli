@@ -1,8 +1,6 @@
 use miette::Diagnostic;
-use s2::{client::ClientError, types::ConvertError};
+use s2_sdk::types::S2Error;
 use thiserror::Error;
-
-use crate::config::S2ConfigError;
 
 const HELP: &str = color_print::cstr!(
     "\n<cyan><bold>Notice something wrong?</bold></cyan>\n\n\
@@ -15,26 +13,30 @@ const HELP: &str = color_print::cstr!(
 const BUG_HELP: &str = color_print::cstr!(
     "\n<cyan><bold>Looks like you may have encountered a bug!</bold></cyan>\n\n\
      <green> > Report this issue here: </green>\n\
-     <bold>https://github.com/s2-cli/issues</bold>
+     <bold>https://github.com/s2-streamstore/s2-cli/issues</bold>
 "
 );
 
 #[derive(Error, Debug, Diagnostic)]
-pub enum S2CliError {
+pub enum CliError {
     #[error(transparent)]
     #[diagnostic(transparent)]
-    Config(#[from] S2ConfigError),
+    Config(#[from] CliConfigError),
 
     #[error("Invalid CLI arguments: {0}")]
     #[diagnostic(transparent)]
     InvalidArgs(miette::Report),
 
-    #[error("Unable to load S2 endpoints from environment")]
+    #[error("Unable to load S2 endpoints from environment: {0}")]
     #[diagnostic(help(
-        "Are you overriding `S2_CLOUD`, `S2_ACCOUNT_ENDPOINT` or `S2_BASIN_ENDPOINT`?
+        "Are you overriding `S2_ACCOUNT_ENDPOINT` or `S2_BASIN_ENDPOINT`?
             Make sure the values are in the expected format."
     ))]
     EndpointsFromEnv(String),
+
+    #[error("Failed to initialize S2 SDK")]
+    #[diagnostic(help("{}", HELP))]
+    SdkInit(#[source] S2Error),
 
     #[error(transparent)]
     #[diagnostic(help("{}", BUG_HELP))]
@@ -49,96 +51,59 @@ pub enum S2CliError {
     #[error("Failed to write records: {0}")]
     RecordWrite(String),
 
-    #[error(transparent)]
+    #[error("{}: {}", .0, .1)]
     #[diagnostic(help("{}", HELP))]
-    Service(#[from] ServiceError),
+    Operation(OpKind, #[source] S2Error),
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum ServiceErrorContext {
+impl CliError {
+    pub fn op(kind: OpKind, source: S2Error) -> Self {
+        Self::Operation(kind, source)
+    }
+}
+
+impl From<S2UriParseError> for CliError {
+    fn from(err: S2UriParseError) -> Self {
+        Self::InvalidArgs(miette::miette!("{}", err))
+    }
+}
+
+#[derive(Debug, Clone, Copy, strum::AsRefStr)]
+#[strum(serialize_all = "title_case")]
+pub enum OpKind {
     ListBasins,
     CreateBasin,
     DeleteBasin,
     GetBasinConfig,
     ReconfigureBasin,
+    ListAccessTokens,
     IssueAccessToken,
     RevokeAccessToken,
-    ListAccessTokens,
+    GetAccountMetrics,
+    GetBasinMetrics,
+    GetStreamMetrics,
     ListStreams,
     CreateStream,
     DeleteStream,
     GetStreamConfig,
+    ReconfigureStream,
     CheckTail,
     Trim,
+    #[strum(serialize = "set fencing token")]
     Fence,
-    AppendSession,
-    ReadSession,
-    ReconfigureStream,
+    Append,
+    Read,
+    Tail,
+    Ping,
 }
 
-impl std::fmt::Display for ServiceErrorContext {
+impl std::fmt::Display for OpKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ListBasins => write!(f, "Failed to list basins"),
-            Self::CreateBasin => write!(f, "Failed to create basin"),
-            Self::DeleteBasin => write!(f, "Failed to delete basin"),
-            Self::GetBasinConfig => write!(f, "Failed to get basin config"),
-            Self::ReconfigureBasin => write!(f, "Failed to reconfigure basin"),
-            Self::IssueAccessToken => write!(f, "Failed to issue access token"),
-            Self::RevokeAccessToken => write!(f, "Failed to revoke access token"),
-            Self::ListAccessTokens => write!(f, "Failed to list access tokens"),
-            Self::ListStreams => write!(f, "Failed to list streams"),
-            Self::CreateStream => write!(f, "Failed to create stream"),
-            Self::DeleteStream => write!(f, "Failed to delete stream"),
-            Self::GetStreamConfig => write!(f, "Failed to get stream config"),
-            Self::CheckTail => write!(f, "Failed to check tail"),
-            Self::Trim => write!(f, "Failed to trim"),
-            Self::Fence => write!(f, "Failed to set fencing token"),
-            Self::AppendSession => write!(f, "Failed to append session"),
-            Self::ReadSession => write!(f, "Failed to read session"),
-            Self::ReconfigureStream => write!(f, "Failed to reconfigure stream"),
-        }
+        write!(f, "Failed to {}", self.as_ref().to_lowercase())
     }
 }
 
-/// Error for holding relevant info from `tonic::Status`
-#[derive(thiserror::Error, Debug, Default)]
-#[error("{status}:\n {message}")]
-pub struct ServiceStatus {
-    pub message: String,
-    pub status: String,
-}
-
-impl From<ClientError> for ServiceStatus {
-    fn from(error: ClientError) -> Self {
-        match error {
-            ClientError::Service(status) => Self {
-                message: status.message().to_string(),
-                status: status.code().to_string(),
-            },
-            ClientError::Conversion(conv) => Self {
-                message: conv.to_string(),
-                status: "Failed to convert SDK type".to_string(),
-            },
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("{context}:\n {status}")]
-pub struct ServiceError {
-    context: ServiceErrorContext,
-    status: ServiceStatus,
-}
-
-impl ServiceError {
-    pub fn new(context: ServiceErrorContext, status: impl Into<ServiceStatus>) -> Self {
-        Self {
-            context,
-            status: status.into(),
-        }
-    }
-}
+impl std::error::Error for OpKind {}
 
 #[derive(Debug, Error)]
 pub enum S2UriParseError {
@@ -147,7 +112,9 @@ pub enum S2UriParseError {
     #[error("Invalid S2 URI scheme `{0}://`. Must be `s2://`")]
     InvalidUriScheme(String),
     #[error("{0}")]
-    InvalidBasinName(ConvertError),
+    InvalidBasinName(String),
+    #[error("{0}")]
+    InvalidStreamName(String),
     #[error("Only basin name expected but found both basin and stream names")]
     UnexpectedStreamName,
     #[error("Missing stream name in S2 URI")]
@@ -161,9 +128,66 @@ impl PartialEq for S2UriParseError {
             (Self::MissingUriScheme, Self::MissingUriScheme) => true,
             (Self::InvalidUriScheme(s), Self::InvalidUriScheme(o)) if s.eq(o) => true,
             (Self::InvalidBasinName(_), Self::InvalidBasinName(_)) => true,
+            (Self::InvalidStreamName(_), Self::InvalidStreamName(_)) => true,
             (Self::MissingStreamName, Self::MissingStreamName) => true,
             (Self::UnexpectedStreamName, Self::UnexpectedStreamName) => true,
             _ => false,
         }
     }
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum OpGroupsParseError {
+    #[error("Invalid op_group format: '{value}'. Expected 'key=value'")]
+    InvalidFormat { value: String },
+
+    #[error("Invalid op_group key: '{key}'. Expected 'account', 'basin', or 'stream'")]
+    InvalidKey { key: String },
+
+    #[error("At least one permission ('r' or 'w') must be specified")]
+    MissingPermission,
+
+    #[error("Invalid permission character: {0}")]
+    InvalidPermissionChar(char),
+}
+
+#[derive(Debug, Error)]
+pub enum RecordParseError {
+    #[error("Error reading: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Error parsing: {0}")]
+    Parse(String),
+}
+
+impl From<String> for RecordParseError {
+    fn from(s: String) -> Self {
+        RecordParseError::Parse(s)
+    }
+}
+
+#[derive(Error, Debug, Diagnostic)]
+pub enum CliConfigError {
+    #[error("Failed to find a home for config directory")]
+    DirNotFound,
+
+    #[error("Failed to load config file")]
+    #[diagnostic(help(
+        "Did you run `s2 config set access_token <token>`? or use `S2_ACCESS_TOKEN` environment variable."
+    ))]
+    Load(#[from] config::ConfigError),
+
+    #[error("Failed to write config file")]
+    Write(#[source] std::io::Error),
+
+    #[error("Failed to serialize config")]
+    Serialize(#[source] toml::ser::Error),
+
+    #[error("Invalid value '{1}' for config key '{0}'")]
+    InvalidValue(String, String),
+
+    #[error("Missing access token")]
+    #[diagnostic(help(
+        "Run `s2 config set access_token <token>` or set the `S2_ACCESS_TOKEN` environment variable."
+    ))]
+    MissingAccessToken,
 }
