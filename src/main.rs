@@ -762,6 +762,18 @@ fn build_stream_reconfig(
 #[tokio::main]
 async fn main() -> miette::Result<()> {
     miette::set_panic_hook();
+    eprintln!(
+        "{}",
+        "WARNING: The `streamstore-cli` crate has been renamed to `s2-cli`. Please update your installation."
+            .yellow()
+            .bold()
+    );
+    eprintln!(
+        "{}",
+        "Run `cargo install --locked --force s2-cli` to install the new version."
+            .yellow()
+    );
+    eprintln!();
     run().await?;
     Ok(())
 }
