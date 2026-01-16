@@ -34,7 +34,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Manage CLI configuration.
+    /// Manage CLI configuration
     ///
     /// Examples:
     ///   s2 config list                          # show all values
@@ -85,7 +85,7 @@ pub enum Command {
         id: AccessTokenId,
     },
 
-    /// Get account metrics.
+    /// Get account metrics
     ///
     /// Examples:
     ///   s2 get-account-metrics active-basins --start-ago 1d --end-ago 0s
@@ -93,7 +93,7 @@ pub enum Command {
     #[command(verbatim_doc_comment)]
     GetAccountMetrics(GetAccountMetricsArgs),
 
-    /// Get basin metrics.
+    /// Get basin metrics
     ///
     /// Examples:
     ///   s2 get-basin-metrics my-basin storage --start-ago 1d --end-ago 0s
@@ -101,7 +101,7 @@ pub enum Command {
     #[command(verbatim_doc_comment)]
     GetBasinMetrics(GetBasinMetricsArgs),
 
-    /// Get stream metrics.
+    /// Get stream metrics
     ///
     /// Examples:
     ///   s2 get-stream-metrics s2://my-basin/my-stream storage --start-ago 1d --end-ago 0s
