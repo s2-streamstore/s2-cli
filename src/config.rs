@@ -45,7 +45,8 @@ fn config_path() -> Result<PathBuf, CliConfigError> {
 
 #[cfg(not(target_os = "windows"))]
 fn config_path() -> Result<PathBuf, CliConfigError> {
-    let mut path = dirs::config_dir().ok_or(CliConfigError::DirNotFound)?;
+    let mut path = dirs::home_dir().ok_or(CliConfigError::DirNotFound)?;
+    path.push(".config");
     path.push("s2");
     path.push("config.toml");
     Ok(path)
