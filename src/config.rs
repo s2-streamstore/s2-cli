@@ -1,62 +1,72 @@
-use std::path::{Path, PathBuf};
+use std::{path::PathBuf, time::Duration};
 
 use config::{Config, FileFormat};
-use miette::Diagnostic;
+use s2_sdk::{
+    self as sdk,
+    types::{S2Config, S2Endpoints},
+};
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
-use crate::error::S2CliError;
+use crate::error::{CliConfigError, CliError};
 
-use serde::de;
-
-#[derive(Debug, Serialize)]
-pub struct S2Config {
-    pub access_token: String,
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, strum::Display, strum::EnumString)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+pub enum Compression {
+    Gzip,
+    Zstd,
 }
 
-/// Note: Custom deserialization to support both old and new token formats.
-impl<'de> Deserialize<'de> for S2Config {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: de::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum TokenField {
-            New { access_token: String },
-            Old { auth_token: String },
+impl From<Compression> for sdk::types::Compression {
+    fn from(value: Compression) -> Self {
+        match value {
+            Compression::Gzip => sdk::types::Compression::Gzip,
+            Compression::Zstd => sdk::types::Compression::Zstd,
         }
-
-        let token = TokenField::deserialize(deserializer)
-            .map_err(|_| de::Error::custom("Missing required field: 'access_token'"))?;
-
-        Ok(S2Config {
-            access_token: match token {
-                TokenField::New { access_token } => access_token,
-                TokenField::Old { auth_token } => auth_token,
-            },
-        })
     }
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CliConfig {
+    pub access_token: Option<String>,
+    pub account_endpoint: Option<String>,
+    pub basin_endpoint: Option<String>,
+    pub compression: Option<Compression>,
+}
+
 #[cfg(target_os = "windows")]
-pub fn config_path() -> Result<PathBuf, S2CliError> {
-    let mut path = dirs::config_dir().ok_or(S2ConfigError::DirNotFound)?;
+fn config_path() -> Result<PathBuf, CliConfigError> {
+    let mut path = dirs::config_dir().ok_or(CliConfigError::DirNotFound)?;
     path.push("s2");
     path.push("config.toml");
     Ok(path)
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn config_path() -> Result<PathBuf, S2CliError> {
-    let mut path = dirs::home_dir().ok_or(S2ConfigError::DirNotFound)?;
-    path.push(".config");
+fn config_path() -> Result<PathBuf, CliConfigError> {
+    let mut path = dirs::config_dir().ok_or(CliConfigError::DirNotFound)?;
     path.push("s2");
     path.push("config.toml");
     Ok(path)
 }
 
-pub fn load_config(path: &Path) -> Result<S2Config, S2ConfigError> {
+/// Load config from file only (for config get/set/list/unset commands).
+pub fn load_config_file() -> Result<CliConfig, CliConfigError> {
+    let path = config_path()?;
+    if !path.exists() {
+        return Ok(CliConfig::default());
+    }
+    let builder = Config::builder().add_source(config::File::new(
+        path.to_str().expect("config path is valid utf8"),
+        FileFormat::Toml,
+    ));
+    Ok(builder.build()?.try_deserialize::<CliConfig>()?)
+}
+
+/// Load config from file with environment variable overrides (for SDK init).
+pub fn load_cli_config() -> Result<CliConfig, CliConfigError> {
+    let path = config_path()?;
     let mut builder = Config::builder();
     if path.exists() {
         builder = builder.add_source(config::File::new(
@@ -65,33 +75,119 @@ pub fn load_config(path: &Path) -> Result<S2Config, S2ConfigError> {
         ));
     }
     builder = builder.add_source(config::Environment::with_prefix("S2"));
-    Ok(builder.build()?.try_deserialize::<S2Config>()?)
+    Ok(builder.build()?.try_deserialize::<CliConfig>()?)
 }
 
-pub fn create_config(config_path: &PathBuf, access_token: String) -> Result<(), S2ConfigError> {
-    let cfg = S2Config { access_token };
+#[derive(
+    Debug, Clone, Copy, clap::ValueEnum, strum::Display, strum::EnumString, strum::VariantNames,
+)]
+#[clap(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum ConfigKey {
+    AccessToken,
+    AccountEndpoint,
+    BasinEndpoint,
+    Compression,
+}
 
-    if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent).map_err(S2ConfigError::Write)?;
+impl CliConfig {
+    pub fn get(&self, key: ConfigKey) -> Option<String> {
+        match key {
+            ConfigKey::AccessToken => self.access_token.clone(),
+            ConfigKey::AccountEndpoint => self.account_endpoint.clone(),
+            ConfigKey::BasinEndpoint => self.basin_endpoint.clone(),
+            ConfigKey::Compression => self.compression.map(|c| c.to_string()),
+        }
     }
 
-    let toml = toml::to_string(&cfg).unwrap();
-    std::fs::write(config_path, toml).map_err(S2ConfigError::Write)?;
+    pub fn set(&mut self, key: ConfigKey, value: String) -> Result<(), CliConfigError> {
+        match key {
+            ConfigKey::AccessToken => self.access_token = Some(value),
+            ConfigKey::AccountEndpoint => self.account_endpoint = Some(value),
+            ConfigKey::BasinEndpoint => self.basin_endpoint = Some(value),
+            ConfigKey::Compression => {
+                self.compression = Some(
+                    value
+                        .parse()
+                        .map_err(|_| CliConfigError::InvalidValue(key.to_string(), value))?,
+                );
+            }
+        }
+        Ok(())
+    }
 
-    Ok(())
+    pub fn unset(&mut self, key: ConfigKey) {
+        match key {
+            ConfigKey::AccessToken => self.access_token = None,
+            ConfigKey::AccountEndpoint => self.account_endpoint = None,
+            ConfigKey::BasinEndpoint => self.basin_endpoint = None,
+            ConfigKey::Compression => self.compression = None,
+        }
+    }
 }
 
-#[derive(Error, Debug, Diagnostic)]
-pub enum S2ConfigError {
-    #[error("Failed to find a home for config directory")]
-    DirNotFound,
+pub fn save_cli_config(config: &CliConfig) -> Result<PathBuf, CliConfigError> {
+    let path = config_path()?;
 
-    #[error("Failed to load config file")]
-    #[diagnostic(help(
-        "Did you run `s2 config set`? or use `S2_ACCESS_TOKEN` environment variable."
-    ))]
-    Load(#[from] config::ConfigError),
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(CliConfigError::Write)?;
+    }
 
-    #[error("Failed to write config file")]
-    Write(#[source] std::io::Error),
+    let toml = toml::to_string(config).map_err(CliConfigError::Serialize)?;
+    std::fs::write(&path, toml).map_err(CliConfigError::Write)?;
+
+    Ok(path)
+}
+
+pub fn set_config_value(key: ConfigKey, value: String) -> Result<PathBuf, CliConfigError> {
+    let mut config = load_config_file().unwrap_or_default();
+    config.set(key, value)?;
+    save_cli_config(&config)
+}
+
+pub fn unset_config_value(key: ConfigKey) -> Result<PathBuf, CliConfigError> {
+    let mut config = load_config_file().unwrap_or_default();
+    config.unset(key);
+    save_cli_config(&config)
+}
+
+pub fn sdk_config(config: &CliConfig) -> Result<S2Config, CliError> {
+    let access_token = config
+        .access_token
+        .as_ref()
+        .ok_or(CliConfigError::MissingAccessToken)?;
+
+    let compression: sdk::types::Compression = config
+        .compression
+        .map(Into::into)
+        .unwrap_or(sdk::types::Compression::None);
+
+    let mut sdk_config = S2Config::new(access_token)
+        .with_user_agent("s2-cli")
+        .map_err(|e| CliError::EndpointsFromEnv(e.to_string()))?
+        .with_request_timeout(Duration::from_secs(30))
+        .with_compression(compression);
+
+    match (&config.account_endpoint, &config.basin_endpoint) {
+        (Some(account), Some(basin)) => {
+            let endpoints = S2Endpoints::parse_from(account, basin)
+                .map_err(|e| CliError::EndpointsFromEnv(e.to_string()))?;
+            sdk_config = sdk_config.with_endpoints(endpoints);
+        }
+        (Some(_), None) => {
+            eprintln!(
+                "Warning: account endpoint is set but basin endpoint is not. \
+                 Both must be set to use custom endpoints. Using default endpoints"
+            );
+        }
+        (None, Some(_)) => {
+            eprintln!(
+                "Warning: basin endpoint is set but account endpoint is not. \
+                 Both must be set to use custom endpoints. Using default endpoints"
+            );
+        }
+        (None, None) => {}
+    }
+
+    Ok(sdk_config)
 }

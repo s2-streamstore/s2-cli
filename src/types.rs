@@ -1,12 +1,16 @@
-//! Types for Basin configuration that directly map to s2::types.
+use std::{str::FromStr, time::Duration};
 
 use clap::{Args, Parser, ValueEnum};
-use s2::types::BasinName;
+use s2_sdk::{
+    self as sdk,
+    types::{
+        AccessTokenId, AccessTokenIdPrefix, BasinName, BasinNamePrefix, StreamName,
+        StreamNamePrefix, TimeseriesInterval,
+    },
+};
 use serde::Serialize;
-use std::{str::FromStr, time::Duration};
-use thiserror::Error;
 
-use crate::error::S2UriParseError;
+use crate::error::{OpGroupsParseError, S2UriParseError};
 
 #[derive(Debug, Clone, PartialEq)]
 struct S2Uri {
@@ -25,19 +29,15 @@ impl FromStr for S2Uri {
             return Err(S2UriParseError::InvalidUriScheme(scheme.to_owned()));
         }
 
-        let (basin, stream) = if let Some((basin, stream)) = s.split_once("/") {
-            let stream = if stream.is_empty() {
-                None
-            } else {
-                Some(stream.to_owned())
-            };
-            (basin, stream)
-        } else {
-            (s, None)
+        let (basin, stream) = match s.split_once("/") {
+            Some((basin, stream)) => (basin, (!stream.is_empty()).then(|| stream.to_owned())),
+            None => (s, None),
         };
 
         Ok(S2Uri {
-            basin: basin.parse().map_err(S2UriParseError::InvalidBasinName)?,
+            basin: basin
+                .parse()
+                .map_err(|e| S2UriParseError::InvalidBasinName(format!("{e}")))?,
             stream,
         })
     }
@@ -60,15 +60,15 @@ impl FromStr for S2BasinUri {
             Ok(S2Uri {
                 basin,
                 stream: None,
-            }) => Ok(Self(
-                basin.parse().map_err(S2UriParseError::InvalidBasinName)?,
-            )),
+            }) => Ok(Self(basin)),
             Ok(S2Uri {
                 basin: _,
                 stream: Some(_),
             }) => Err(S2UriParseError::UnexpectedStreamName),
             Err(S2UriParseError::MissingUriScheme) => {
-                Ok(Self(s.parse().map_err(S2UriParseError::InvalidBasinName)?))
+                Ok(Self(s.parse().map_err(|e| {
+                    S2UriParseError::InvalidBasinName(format!("{e}"))
+                })?))
             }
             Err(other) => Err(other),
         }
@@ -78,7 +78,7 @@ impl FromStr for S2BasinUri {
 #[derive(Debug, Clone, PartialEq)]
 pub struct S2BasinAndMaybeStreamUri {
     pub basin: BasinName,
-    pub stream: Option<String>,
+    pub stream: Option<StreamNamePrefix>,
 }
 
 impl FromStr for S2BasinAndMaybeStreamUri {
@@ -86,9 +86,19 @@ impl FromStr for S2BasinAndMaybeStreamUri {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match S2Uri::from_str(s) {
-            Ok(S2Uri { basin, stream }) => Ok(Self { basin, stream }),
+            Ok(S2Uri { basin, stream }) => {
+                let stream = stream
+                    .map(|s| {
+                        s.parse()
+                            .map_err(|e| S2UriParseError::InvalidStreamName(format!("{e}")))
+                    })
+                    .transpose()?;
+                Ok(Self { basin, stream })
+            }
             Err(S2UriParseError::MissingUriScheme) => Ok(Self {
-                basin: s.parse().map_err(S2UriParseError::InvalidBasinName)?,
+                basin: s
+                    .parse()
+                    .map_err(|e| S2UriParseError::InvalidBasinName(format!("{e}")))?,
                 stream: None,
             }),
             Err(other) => Err(other),
@@ -100,7 +110,7 @@ impl FromStr for S2BasinAndMaybeStreamUri {
 #[derive(Debug, Clone, PartialEq)]
 pub struct S2BasinAndStreamUri {
     pub basin: BasinName,
-    pub stream: String,
+    pub stream: StreamName,
 }
 
 impl FromStr for S2BasinAndStreamUri {
@@ -109,6 +119,9 @@ impl FromStr for S2BasinAndStreamUri {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let S2Uri { basin, stream } = s.parse()?;
         let stream = stream.ok_or(S2UriParseError::MissingStreamName)?;
+        let stream: StreamName = stream
+            .parse()
+            .map_err(|e| S2UriParseError::InvalidStreamName(format!("{e}")))?;
         Ok(Self { basin, stream })
     }
 }
@@ -171,7 +184,7 @@ pub struct TimestampingConfig {
 pub enum RetentionPolicy {
     #[allow(dead_code)]
     Age(Duration),
-    Infinite(()),
+    Infinite,
 }
 
 impl TryFrom<&str> for RetentionPolicy {
@@ -179,7 +192,7 @@ impl TryFrom<&str> for RetentionPolicy {
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         if value == "infinite" {
-            return Ok(RetentionPolicy::Infinite(()));
+            return Ok(RetentionPolicy::Infinite);
         } else if let Ok(d) = humantime::parse_duration(value) {
             return Ok(RetentionPolicy::Age(d));
         }
@@ -203,144 +216,136 @@ pub struct DeleteOnEmptyConfig {
     pub delete_on_empty_min_age: Duration,
 }
 
-impl From<DeleteOnEmptyConfig> for s2::types::DeleteOnEmptyConfig {
+impl From<DeleteOnEmptyConfig> for sdk::types::DeleteOnEmptyConfig {
     fn from(value: DeleteOnEmptyConfig) -> Self {
-        s2::types::DeleteOnEmptyConfig {
-            min_age: value.delete_on_empty_min_age,
-        }
+        sdk::types::DeleteOnEmptyConfig::new().with_min_age(value.delete_on_empty_min_age)
     }
 }
 
-impl From<s2::types::DeleteOnEmptyConfig> for DeleteOnEmptyConfig {
-    fn from(value: s2::types::DeleteOnEmptyConfig) -> Self {
+impl From<DeleteOnEmptyConfig> for sdk::types::DeleteOnEmptyReconfiguration {
+    fn from(value: DeleteOnEmptyConfig) -> Self {
+        sdk::types::DeleteOnEmptyReconfiguration::new().with_min_age(value.delete_on_empty_min_age)
+    }
+}
+
+impl From<sdk::types::DeleteOnEmptyConfig> for DeleteOnEmptyConfig {
+    fn from(value: sdk::types::DeleteOnEmptyConfig) -> Self {
         Self {
-            delete_on_empty_min_age: value.min_age,
+            delete_on_empty_min_age: Duration::from_secs(value.min_age_secs),
         }
     }
 }
 
-impl From<BasinConfig> for s2::types::BasinConfig {
+impl From<BasinConfig> for sdk::types::BasinConfig {
     fn from(config: BasinConfig) -> Self {
-        let BasinConfig {
-            default_stream_config,
-            create_stream_on_append,
-            create_stream_on_read,
-        } = config;
-        s2::types::BasinConfig {
-            default_stream_config: Some(default_stream_config.into()),
-            create_stream_on_append,
-            create_stream_on_read,
-        }
+        sdk::types::BasinConfig::new()
+            .with_default_stream_config(config.default_stream_config.into())
+            .with_create_stream_on_append(config.create_stream_on_append)
+            .with_create_stream_on_read(config.create_stream_on_read)
     }
 }
 
-impl From<StreamConfig> for s2::types::StreamConfig {
+impl From<StreamConfig> for sdk::types::StreamConfig {
     fn from(config: StreamConfig) -> Self {
-        let storage_class = config.storage_class.map(s2::types::StorageClass::from);
-
-        let retention_policy = config
-            .retention_policy
-            .map(s2::types::RetentionPolicy::from);
-
-        let timestamping_config = config.timestamping.map(s2::types::TimestampingConfig::from);
-
-        let delete_on_empty = config
-            .delete_on_empty
-            .map(s2::types::DeleteOnEmptyConfig::from);
-
-        let mut stream_config = s2::types::StreamConfig::new();
-        if let Some(storage_class) = storage_class {
-            stream_config = stream_config.with_storage_class(storage_class);
+        let mut stream_config = sdk::types::StreamConfig::new();
+        if let Some(storage_class) = config.storage_class {
+            stream_config = stream_config.with_storage_class(storage_class.into());
         }
-        if let Some(retention_policy) = retention_policy {
-            stream_config = stream_config.with_retention_policy(retention_policy);
+        if let Some(retention_policy) = config.retention_policy {
+            stream_config = stream_config.with_retention_policy(retention_policy.into());
         }
-        if let Some(timestamping) = timestamping_config {
-            stream_config = stream_config.with_timestamping(timestamping);
+        if let Some(timestamping) = config.timestamping {
+            stream_config = stream_config.with_timestamping(timestamping.into());
         }
-        if let Some(delete_on_empty) = delete_on_empty {
-            stream_config = stream_config.with_delete_on_empty(delete_on_empty);
+        if let Some(delete_on_empty) = config.delete_on_empty {
+            stream_config = stream_config.with_delete_on_empty(delete_on_empty.into());
         }
         stream_config
     }
 }
 
-impl From<StorageClass> for s2::types::StorageClass {
+impl From<StorageClass> for sdk::types::StorageClass {
     fn from(class: StorageClass) -> Self {
         match class {
-            StorageClass::Standard => s2::types::StorageClass::Standard,
-            StorageClass::Express => s2::types::StorageClass::Express,
+            StorageClass::Standard => sdk::types::StorageClass::Standard,
+            StorageClass::Express => sdk::types::StorageClass::Express,
         }
     }
 }
 
-impl From<s2::types::StorageClass> for StorageClass {
-    fn from(class: s2::types::StorageClass) -> Self {
+impl From<sdk::types::StorageClass> for StorageClass {
+    fn from(class: sdk::types::StorageClass) -> Self {
         match class {
-            s2::types::StorageClass::Standard => StorageClass::Standard,
-            s2::types::StorageClass::Express => StorageClass::Express,
+            sdk::types::StorageClass::Standard => StorageClass::Standard,
+            sdk::types::StorageClass::Express => StorageClass::Express,
         }
     }
 }
 
-impl From<TimestampingMode> for s2::types::TimestampingMode {
+impl From<TimestampingMode> for sdk::types::TimestampingMode {
     fn from(mode: TimestampingMode) -> Self {
         match mode {
-            TimestampingMode::ClientPrefer => s2::types::TimestampingMode::ClientPrefer,
-            TimestampingMode::ClientRequire => s2::types::TimestampingMode::ClientRequire,
-            TimestampingMode::Arrival => s2::types::TimestampingMode::Arrival,
+            TimestampingMode::ClientPrefer => sdk::types::TimestampingMode::ClientPrefer,
+            TimestampingMode::ClientRequire => sdk::types::TimestampingMode::ClientRequire,
+            TimestampingMode::Arrival => sdk::types::TimestampingMode::Arrival,
         }
     }
 }
 
-impl From<s2::types::TimestampingMode> for TimestampingMode {
-    fn from(mode: s2::types::TimestampingMode) -> Self {
+impl From<sdk::types::TimestampingMode> for TimestampingMode {
+    fn from(mode: sdk::types::TimestampingMode) -> Self {
         match mode {
-            s2::types::TimestampingMode::ClientPrefer => TimestampingMode::ClientPrefer,
-            s2::types::TimestampingMode::ClientRequire => TimestampingMode::ClientRequire,
-            s2::types::TimestampingMode::Arrival => TimestampingMode::Arrival,
+            sdk::types::TimestampingMode::ClientPrefer => TimestampingMode::ClientPrefer,
+            sdk::types::TimestampingMode::ClientRequire => TimestampingMode::ClientRequire,
+            sdk::types::TimestampingMode::Arrival => TimestampingMode::Arrival,
         }
     }
 }
 
-impl From<TimestampingConfig> for s2::types::TimestampingConfig {
+impl From<TimestampingConfig> for sdk::types::TimestampingConfig {
     fn from(config: TimestampingConfig) -> Self {
-        s2::types::TimestampingConfig {
-            mode: config.timestamping_mode.map(Into::into),
-            uncapped: config.timestamping_uncapped,
+        let mut result = sdk::types::TimestampingConfig::new();
+        if let Some(mode) = config.timestamping_mode {
+            result = result.with_mode(mode.into());
         }
+        if let Some(uncapped) = config.timestamping_uncapped {
+            result = result.with_uncapped(uncapped);
+        }
+        result
     }
 }
 
-impl From<s2::types::TimestampingConfig> for TimestampingConfig {
-    fn from(config: s2::types::TimestampingConfig) -> Self {
+impl From<sdk::types::TimestampingConfig> for TimestampingConfig {
+    fn from(config: sdk::types::TimestampingConfig) -> Self {
         TimestampingConfig {
             timestamping_mode: config.mode.map(Into::into),
-            timestamping_uncapped: config.uncapped,
+            timestamping_uncapped: Some(config.uncapped),
         }
     }
 }
 
-impl From<RetentionPolicy> for s2::types::RetentionPolicy {
+impl From<RetentionPolicy> for sdk::types::RetentionPolicy {
     fn from(policy: RetentionPolicy) -> Self {
         match policy {
-            RetentionPolicy::Age(d) => s2::types::RetentionPolicy::Age(d),
-            RetentionPolicy::Infinite(()) => s2::types::RetentionPolicy::Infinite(()),
+            RetentionPolicy::Age(d) => sdk::types::RetentionPolicy::Age(d.as_secs()),
+            RetentionPolicy::Infinite => sdk::types::RetentionPolicy::Infinite,
         }
     }
 }
 
-impl From<s2::types::RetentionPolicy> for RetentionPolicy {
-    fn from(policy: s2::types::RetentionPolicy) -> Self {
+impl From<sdk::types::RetentionPolicy> for RetentionPolicy {
+    fn from(policy: sdk::types::RetentionPolicy) -> Self {
         match policy {
-            s2::types::RetentionPolicy::Age(d) => RetentionPolicy::Age(d),
-            s2::types::RetentionPolicy::Infinite(_) => RetentionPolicy::Infinite(()),
+            sdk::types::RetentionPolicy::Age(secs) => {
+                RetentionPolicy::Age(Duration::from_secs(secs))
+            }
+            sdk::types::RetentionPolicy::Infinite => RetentionPolicy::Infinite,
         }
     }
 }
 
-impl From<s2::types::BasinConfig> for BasinConfig {
-    fn from(config: s2::types::BasinConfig) -> Self {
+impl From<sdk::types::BasinConfig> for BasinConfig {
+    fn from(config: sdk::types::BasinConfig) -> Self {
         BasinConfig {
             default_stream_config: config
                 .default_stream_config
@@ -352,8 +357,8 @@ impl From<s2::types::BasinConfig> for BasinConfig {
     }
 }
 
-impl From<s2::types::StreamConfig> for StreamConfig {
-    fn from(config: s2::types::StreamConfig) -> Self {
+impl From<sdk::types::StreamConfig> for StreamConfig {
+    fn from(config: sdk::types::StreamConfig) -> Self {
         StreamConfig {
             storage_class: config.storage_class.map(Into::into),
             retention_policy: config.retention_policy.map(Into::into),
@@ -363,80 +368,163 @@ impl From<s2::types::StreamConfig> for StreamConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub enum ResourceSet<const MIN: usize, const MAX: usize> {
-    Exact(String),
-    Prefix(String),
-}
-
-impl<const MIN: usize, const MAX: usize> From<ResourceSet<MIN, MAX>> for s2::types::ResourceSet {
-    fn from(value: ResourceSet<MIN, MAX>) -> Self {
-        match value {
-            ResourceSet::Exact(s) => s2::types::ResourceSet::Exact(s),
-            ResourceSet::Prefix(s) => s2::types::ResourceSet::Prefix(s),
+impl From<StreamConfig> for sdk::types::StreamReconfiguration {
+    fn from(config: StreamConfig) -> Self {
+        let mut reconfig = sdk::types::StreamReconfiguration::new();
+        if let Some(storage_class) = config.storage_class {
+            reconfig = reconfig.with_storage_class(storage_class.into());
         }
+        if let Some(retention_policy) = config.retention_policy {
+            reconfig = reconfig.with_retention_policy(retention_policy.into());
+        }
+        if let Some(timestamping) = config.timestamping {
+            let ts_reconfig = sdk::types::TimestampingReconfiguration::from(timestamping);
+            reconfig = reconfig.with_timestamping(ts_reconfig);
+        }
+        if let Some(delete_on_empty) = config.delete_on_empty {
+            reconfig = reconfig.with_delete_on_empty(delete_on_empty.into());
+        }
+        reconfig
     }
 }
 
-impl<const MIN: usize, const MAX: usize> From<s2::types::ResourceSet> for ResourceSet<MIN, MAX> {
-    fn from(value: s2::types::ResourceSet) -> Self {
-        match value {
-            s2::types::ResourceSet::Exact(s) => ResourceSet::Exact(s),
-            s2::types::ResourceSet::Prefix(s) => ResourceSet::Prefix(s),
+impl From<TimestampingConfig> for sdk::types::TimestampingReconfiguration {
+    fn from(config: TimestampingConfig) -> Self {
+        let mut result = sdk::types::TimestampingReconfiguration::new();
+        if let Some(mode) = config.timestamping_mode {
+            result = result.with_mode(mode.into());
         }
+        if let Some(uncapped) = config.timestamping_uncapped {
+            result = result.with_uncapped(uncapped);
+        }
+        result
     }
 }
 
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum ResourceSetParseError {
-    #[error("Exact value '{value}' length {length} must be between {min} and {max}")]
-    ExactValueLengthInvalid {
-        value: String,
-        length: usize,
-        min: usize,
-        max: usize,
-    },
-
-    #[error("Prefix '{value}' length {length} exceeds maximum {max}")]
-    PrefixTooLong {
-        value: String,
-        length: usize,
-        max: usize,
-    },
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BasinMatcher {
+    #[serde(serialize_with = "serialize_display")]
+    Exact(BasinName),
+    #[serde(serialize_with = "serialize_display")]
+    Prefix(BasinNamePrefix),
 }
 
-impl<const MIN: usize, const MAX: usize> FromStr for ResourceSet<MIN, MAX> {
-    type Err = ResourceSetParseError;
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamMatcher {
+    #[serde(serialize_with = "serialize_display")]
+    Exact(StreamName),
+    #[serde(serialize_with = "serialize_display")]
+    Prefix(StreamNamePrefix),
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessTokenMatcher {
+    #[serde(serialize_with = "serialize_display")]
+    Exact(AccessTokenId),
+    #[serde(serialize_with = "serialize_display")]
+    Prefix(AccessTokenIdPrefix),
+}
+
+fn serialize_display<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+    T: std::fmt::Display,
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&value.to_string())
+}
+
+impl FromStr for BasinMatcher {
+    type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.is_empty() {
-            return Ok(ResourceSet::Prefix(String::new()));
-        }
-
         if let Some(value) = s.strip_prefix('=') {
-            if value.is_empty() {
-                return Ok(ResourceSet::Exact(String::new()));
-            }
-            let len = value.len();
-            if len > MAX || len < MIN {
-                return Err(ResourceSetParseError::ExactValueLengthInvalid {
-                    value: value.to_owned(),
-                    length: len,
-                    min: MIN,
-                    max: MAX,
-                });
-            }
-            Ok(ResourceSet::Exact(value.to_owned()))
+            Ok(Self::Exact(value.parse().map_err(|e| format!("{e}"))?))
         } else {
-            let len = s.len();
-            if len > MAX {
-                return Err(ResourceSetParseError::PrefixTooLong {
-                    value: s.to_owned(),
-                    length: len,
-                    max: MAX,
-                });
-            }
-            Ok(ResourceSet::Prefix(s.to_owned()))
+            Ok(Self::Prefix(s.parse().map_err(|e| format!("{e}"))?))
+        }
+    }
+}
+
+impl FromStr for StreamMatcher {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some(value) = s.strip_prefix('=') {
+            Ok(Self::Exact(value.parse().map_err(|e| format!("{e}"))?))
+        } else {
+            Ok(Self::Prefix(s.parse().map_err(|e| format!("{e}"))?))
+        }
+    }
+}
+
+impl FromStr for AccessTokenMatcher {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some(value) = s.strip_prefix('=') {
+            Ok(Self::Exact(value.parse().map_err(|e| format!("{e}"))?))
+        } else {
+            Ok(Self::Prefix(s.parse().map_err(|e| format!("{e}"))?))
+        }
+    }
+}
+
+impl From<BasinMatcher> for sdk::types::BasinMatcher {
+    fn from(matcher: BasinMatcher) -> Self {
+        match matcher {
+            BasinMatcher::Exact(v) => sdk::types::BasinMatcher::Exact(v),
+            BasinMatcher::Prefix(v) => sdk::types::BasinMatcher::Prefix(v),
+        }
+    }
+}
+
+impl From<StreamMatcher> for sdk::types::StreamMatcher {
+    fn from(matcher: StreamMatcher) -> Self {
+        match matcher {
+            StreamMatcher::Exact(v) => sdk::types::StreamMatcher::Exact(v),
+            StreamMatcher::Prefix(v) => sdk::types::StreamMatcher::Prefix(v),
+        }
+    }
+}
+
+impl From<AccessTokenMatcher> for sdk::types::AccessTokenMatcher {
+    fn from(matcher: AccessTokenMatcher) -> Self {
+        match matcher {
+            AccessTokenMatcher::Exact(v) => sdk::types::AccessTokenMatcher::Exact(v),
+            AccessTokenMatcher::Prefix(v) => sdk::types::AccessTokenMatcher::Prefix(v),
+        }
+    }
+}
+
+impl From<sdk::types::BasinMatcher> for BasinMatcher {
+    fn from(matcher: sdk::types::BasinMatcher) -> Self {
+        match matcher {
+            sdk::types::BasinMatcher::Exact(v) => BasinMatcher::Exact(v),
+            sdk::types::BasinMatcher::Prefix(v) => BasinMatcher::Prefix(v),
+            sdk::types::BasinMatcher::None => BasinMatcher::Prefix(Default::default()),
+        }
+    }
+}
+
+impl From<sdk::types::StreamMatcher> for StreamMatcher {
+    fn from(matcher: sdk::types::StreamMatcher) -> Self {
+        match matcher {
+            sdk::types::StreamMatcher::Exact(v) => StreamMatcher::Exact(v),
+            sdk::types::StreamMatcher::Prefix(v) => StreamMatcher::Prefix(v),
+            sdk::types::StreamMatcher::None => StreamMatcher::Prefix(Default::default()),
+        }
+    }
+}
+
+impl From<sdk::types::AccessTokenMatcher> for AccessTokenMatcher {
+    fn from(matcher: sdk::types::AccessTokenMatcher) -> Self {
+        match matcher {
+            sdk::types::AccessTokenMatcher::Exact(v) => AccessTokenMatcher::Exact(v),
+            sdk::types::AccessTokenMatcher::Prefix(v) => AccessTokenMatcher::Prefix(v),
+            sdk::types::AccessTokenMatcher::None => AccessTokenMatcher::Prefix(Default::default()),
         }
     }
 }
@@ -448,18 +536,24 @@ pub struct PermittedOperationGroups {
     pub stream: Option<ReadWritePermissions>,
 }
 
-impl From<PermittedOperationGroups> for s2::types::PermittedOperationGroups {
+impl From<PermittedOperationGroups> for sdk::types::OperationGroupPermissions {
     fn from(groups: PermittedOperationGroups) -> Self {
-        s2::types::PermittedOperationGroups {
-            account: groups.account.map(Into::into),
-            basin: groups.basin.map(Into::into),
-            stream: groups.stream.map(Into::into),
+        let mut result = sdk::types::OperationGroupPermissions::new();
+        if let Some(account) = groups.account {
+            result = result.with_account(account.into());
         }
+        if let Some(basin) = groups.basin {
+            result = result.with_basin(basin.into());
+        }
+        if let Some(stream) = groups.stream {
+            result = result.with_stream(stream.into());
+        }
+        result
     }
 }
 
-impl From<s2::types::PermittedOperationGroups> for PermittedOperationGroups {
-    fn from(groups: s2::types::PermittedOperationGroups) -> Self {
+impl From<sdk::types::OperationGroupPermissions> for PermittedOperationGroups {
+    fn from(groups: sdk::types::OperationGroupPermissions) -> Self {
         PermittedOperationGroups {
             account: groups.account.map(Into::into),
             basin: groups.basin.map(Into::into),
@@ -541,17 +635,19 @@ impl FromStr for ReadWritePermissions {
     }
 }
 
-impl From<ReadWritePermissions> for s2::types::ReadWritePermissions {
+impl From<ReadWritePermissions> for sdk::types::ReadWritePermissions {
     fn from(permissions: ReadWritePermissions) -> Self {
-        s2::types::ReadWritePermissions {
-            read: permissions.read,
-            write: permissions.write,
+        match (permissions.read, permissions.write) {
+            (true, true) => sdk::types::ReadWritePermissions::read_write(),
+            (true, false) => sdk::types::ReadWritePermissions::read_only(),
+            (false, true) => sdk::types::ReadWritePermissions::write_only(),
+            (false, false) => sdk::types::ReadWritePermissions::new(),
         }
     }
 }
 
-impl From<s2::types::ReadWritePermissions> for ReadWritePermissions {
-    fn from(permissions: s2::types::ReadWritePermissions) -> Self {
+impl From<sdk::types::ReadWritePermissions> for ReadWritePermissions {
+    fn from(permissions: sdk::types::ReadWritePermissions) -> Self {
         ReadWritePermissions {
             read: permissions.read,
             write: permissions.write,
@@ -559,62 +655,50 @@ impl From<s2::types::ReadWritePermissions> for ReadWritePermissions {
     }
 }
 
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum OpGroupsParseError {
-    #[error("Invalid op_group format: '{value}'. Expected 'key=value'")]
-    InvalidFormat { value: String },
-
-    #[error("Invalid op_group key: '{key}'. Expected 'account', 'basin', or 'stream'")]
-    InvalidKey { key: String },
-
-    #[error("At least one permission ('r' or 'w') must be specified")]
-    MissingPermission,
-
-    #[error("Invalid permission character: {0}")]
-    InvalidPermissionChar(char),
-}
-
 #[derive(Debug, Serialize)]
 pub struct AccessTokenInfo {
     pub id: String,
-    pub expires_at: Option<u32>,
+    pub expires_at: String,
     pub auto_prefix_streams: bool,
-    pub scope: Option<AccessTokenScope>,
+    pub scope: AccessTokenScope,
 }
 
-impl From<s2::types::AccessTokenInfo> for AccessTokenInfo {
-    fn from(info: s2::types::AccessTokenInfo) -> Self {
+impl From<sdk::types::AccessTokenInfo> for AccessTokenInfo {
+    fn from(info: sdk::types::AccessTokenInfo) -> Self {
         AccessTokenInfo {
             id: info.id.to_string(),
-            expires_at: info.expires_at,
+            expires_at: info.expires_at.to_string(),
             auto_prefix_streams: info.auto_prefix_streams,
-            scope: info.scope.map(Into::into),
+            scope: info.scope.into(),
         }
     }
 }
 
 #[derive(Debug, Serialize)]
 pub struct AccessTokenScope {
-    pub basins: Option<ResourceSet<8, 48>>,
-    pub streams: Option<ResourceSet<1, 512>>,
-    pub access_tokens: Option<ResourceSet<1, 96>>,
-    pub op_groups: Option<PermittedOperationGroups>,
+    pub basins: Option<BasinMatcher>,
+    pub streams: Option<StreamMatcher>,
+    pub access_tokens: Option<AccessTokenMatcher>,
+    pub op_group_perms: Option<PermittedOperationGroups>,
     pub ops: Vec<Operation>,
 }
 
-impl From<s2::types::AccessTokenScope> for AccessTokenScope {
-    fn from(scope: s2::types::AccessTokenScope) -> Self {
+impl From<sdk::types::AccessTokenScope> for AccessTokenScope {
+    fn from(scope: sdk::types::AccessTokenScope) -> Self {
         AccessTokenScope {
             basins: scope.basins.map(Into::into),
             streams: scope.streams.map(Into::into),
             access_tokens: scope.access_tokens.map(Into::into),
-            op_groups: scope.op_groups.map(Into::into),
+            op_group_perms: scope.op_group_perms.map(Into::into),
             ops: scope.ops.into_iter().map(Operation::from).collect(),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, clap::ValueEnum, strum::Display, strum::EnumString)]
+#[serde(rename_all = "snake_case")]
+#[clap(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum Operation {
     ListBasins,
     CreateBasin,
@@ -634,110 +718,154 @@ pub enum Operation {
     Read,
     Trim,
     Fence,
-    AccountMetrics,
-    BasinMetrics,
-    StreamMetrics,
+    GetAccountMetrics,
+    GetBasinMetrics,
+    GetStreamMetrics,
 }
 
-impl From<Operation> for s2::types::Operation {
+impl From<Operation> for sdk::types::Operation {
     fn from(op: Operation) -> Self {
         match op {
-            Operation::ListBasins => s2::types::Operation::ListBasins,
-            Operation::CreateBasin => s2::types::Operation::CreateBasin,
-            Operation::DeleteBasin => s2::types::Operation::DeleteBasin,
-            Operation::ReconfigureBasin => s2::types::Operation::ReconfigureBasin,
-            Operation::GetBasinConfig => s2::types::Operation::GetBasinConfig,
-            Operation::IssueAccessToken => s2::types::Operation::IssueAccessToken,
-            Operation::RevokeAccessToken => s2::types::Operation::RevokeAccessToken,
-            Operation::ListAccessTokens => s2::types::Operation::ListAccessTokens,
-            Operation::ListStreams => s2::types::Operation::ListStreams,
-            Operation::CreateStream => s2::types::Operation::CreateStream,
-            Operation::DeleteStream => s2::types::Operation::DeleteStream,
-            Operation::GetStreamConfig => s2::types::Operation::GetStreamConfig,
-            Operation::ReconfigureStream => s2::types::Operation::ReconfigureStream,
-            Operation::CheckTail => s2::types::Operation::CheckTail,
-            Operation::Append => s2::types::Operation::Append,
-            Operation::Read => s2::types::Operation::Read,
-            Operation::Trim => s2::types::Operation::Trim,
-            Operation::Fence => s2::types::Operation::Fence,
-            Operation::AccountMetrics => s2::types::Operation::AccountMetrics,
-            Operation::BasinMetrics => s2::types::Operation::BasinMetrics,
-            Operation::StreamMetrics => s2::types::Operation::StreamMetrics,
+            Operation::ListBasins => sdk::types::Operation::ListBasins,
+            Operation::CreateBasin => sdk::types::Operation::CreateBasin,
+            Operation::DeleteBasin => sdk::types::Operation::DeleteBasin,
+            Operation::ReconfigureBasin => sdk::types::Operation::ReconfigureBasin,
+            Operation::GetBasinConfig => sdk::types::Operation::GetBasinConfig,
+            Operation::IssueAccessToken => sdk::types::Operation::IssueAccessToken,
+            Operation::RevokeAccessToken => sdk::types::Operation::RevokeAccessToken,
+            Operation::ListAccessTokens => sdk::types::Operation::ListAccessTokens,
+            Operation::ListStreams => sdk::types::Operation::ListStreams,
+            Operation::CreateStream => sdk::types::Operation::CreateStream,
+            Operation::DeleteStream => sdk::types::Operation::DeleteStream,
+            Operation::GetStreamConfig => sdk::types::Operation::GetStreamConfig,
+            Operation::ReconfigureStream => sdk::types::Operation::ReconfigureStream,
+            Operation::CheckTail => sdk::types::Operation::CheckTail,
+            Operation::Append => sdk::types::Operation::Append,
+            Operation::Read => sdk::types::Operation::Read,
+            Operation::Trim => sdk::types::Operation::Trim,
+            Operation::Fence => sdk::types::Operation::Fence,
+            Operation::GetAccountMetrics => sdk::types::Operation::GetAccountMetrics,
+            Operation::GetBasinMetrics => sdk::types::Operation::GetBasinMetrics,
+            Operation::GetStreamMetrics => sdk::types::Operation::GetStreamMetrics,
         }
     }
 }
 
-impl From<s2::types::Operation> for Operation {
-    fn from(op: s2::types::Operation) -> Self {
+impl From<sdk::types::Operation> for Operation {
+    fn from(op: sdk::types::Operation) -> Self {
         match op {
-            s2::types::Operation::ListBasins => Operation::ListBasins,
-            s2::types::Operation::CreateBasin => Operation::CreateBasin,
-            s2::types::Operation::DeleteBasin => Operation::DeleteBasin,
-            s2::types::Operation::ReconfigureBasin => Operation::ReconfigureBasin,
-            s2::types::Operation::GetBasinConfig => Operation::GetBasinConfig,
-            s2::types::Operation::IssueAccessToken => Operation::IssueAccessToken,
-            s2::types::Operation::RevokeAccessToken => Operation::RevokeAccessToken,
-            s2::types::Operation::ListAccessTokens => Operation::ListAccessTokens,
-            s2::types::Operation::ListStreams => Operation::ListStreams,
-            s2::types::Operation::CreateStream => Operation::CreateStream,
-            s2::types::Operation::DeleteStream => Operation::DeleteStream,
-            s2::types::Operation::GetStreamConfig => Operation::GetStreamConfig,
-            s2::types::Operation::ReconfigureStream => Operation::ReconfigureStream,
-            s2::types::Operation::CheckTail => Operation::CheckTail,
-            s2::types::Operation::Append => Operation::Append,
-            s2::types::Operation::Read => Operation::Read,
-            s2::types::Operation::Trim => Operation::Trim,
-            s2::types::Operation::Fence => Operation::Fence,
-            s2::types::Operation::AccountMetrics => Operation::AccountMetrics,
-            s2::types::Operation::BasinMetrics => Operation::BasinMetrics,
-            s2::types::Operation::StreamMetrics => Operation::StreamMetrics,
+            sdk::types::Operation::ListBasins => Operation::ListBasins,
+            sdk::types::Operation::CreateBasin => Operation::CreateBasin,
+            sdk::types::Operation::DeleteBasin => Operation::DeleteBasin,
+            sdk::types::Operation::ReconfigureBasin => Operation::ReconfigureBasin,
+            sdk::types::Operation::GetBasinConfig => Operation::GetBasinConfig,
+            sdk::types::Operation::IssueAccessToken => Operation::IssueAccessToken,
+            sdk::types::Operation::RevokeAccessToken => Operation::RevokeAccessToken,
+            sdk::types::Operation::ListAccessTokens => Operation::ListAccessTokens,
+            sdk::types::Operation::ListStreams => Operation::ListStreams,
+            sdk::types::Operation::CreateStream => Operation::CreateStream,
+            sdk::types::Operation::DeleteStream => Operation::DeleteStream,
+            sdk::types::Operation::GetStreamConfig => Operation::GetStreamConfig,
+            sdk::types::Operation::ReconfigureStream => Operation::ReconfigureStream,
+            sdk::types::Operation::CheckTail => Operation::CheckTail,
+            sdk::types::Operation::Append => Operation::Append,
+            sdk::types::Operation::Read => Operation::Read,
+            sdk::types::Operation::Trim => Operation::Trim,
+            sdk::types::Operation::Fence => Operation::Fence,
+            sdk::types::Operation::GetAccountMetrics => Operation::GetAccountMetrics,
+            sdk::types::Operation::GetBasinMetrics => Operation::GetBasinMetrics,
+            sdk::types::Operation::GetStreamMetrics => Operation::GetStreamMetrics,
         }
     }
 }
 
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum OperationParseError {
-    #[error("Invalid operation: '{0}'")]
-    InvalidOperation(String),
+#[derive(ValueEnum, Debug, Clone, Copy)]
+pub enum Interval {
+    /// Per-minute intervals.
+    Minute,
+    /// Per-hour intervals.
+    Hour,
+    /// Per-day intervals.
+    Day,
 }
 
-impl FromStr for Operation {
-    type Err = OperationParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "list-basins" => Ok(Self::ListBasins),
-            "create-basin" => Ok(Self::CreateBasin),
-            "delete-basin" => Ok(Self::DeleteBasin),
-            "reconfigure-basin" => Ok(Self::ReconfigureBasin),
-            "get-basin-config" => Ok(Self::GetBasinConfig),
-            "issue-access-token" => Ok(Self::IssueAccessToken),
-            "revoke-access-token" => Ok(Self::RevokeAccessToken),
-            "list-access-tokens" => Ok(Self::ListAccessTokens),
-            "list-streams" => Ok(Self::ListStreams),
-            "create-stream" => Ok(Self::CreateStream),
-            "delete-stream" => Ok(Self::DeleteStream),
-            "get-stream-config" => Ok(Self::GetStreamConfig),
-            "reconfigure-stream" => Ok(Self::ReconfigureStream),
-            "check-tail" => Ok(Self::CheckTail),
-            "append" => Ok(Self::Append),
-            "read" => Ok(Self::Read),
-            "trim" => Ok(Self::Trim),
-            "fence" => Ok(Self::Fence),
-            _ => Err(OperationParseError::InvalidOperation(s.to_owned())),
+impl From<Interval> for TimeseriesInterval {
+    fn from(value: Interval) -> Self {
+        match value {
+            Interval::Minute => TimeseriesInterval::Minute,
+            Interval::Hour => TimeseriesInterval::Hour,
+            Interval::Day => TimeseriesInterval::Day,
         }
     }
+}
+
+pub struct LatencyStats {
+    pub min: std::time::Duration,
+    pub median: std::time::Duration,
+    pub p90: std::time::Duration,
+    pub p99: std::time::Duration,
+    pub max: std::time::Duration,
+}
+
+impl LatencyStats {
+    pub fn compute(mut data: Vec<std::time::Duration>) -> Self {
+        data.sort_unstable();
+
+        let n = data.len();
+
+        if n == 0 {
+            return Self {
+                min: std::time::Duration::ZERO,
+                median: std::time::Duration::ZERO,
+                p90: std::time::Duration::ZERO,
+                p99: std::time::Duration::ZERO,
+                max: std::time::Duration::ZERO,
+            };
+        }
+
+        let median = if n.is_multiple_of(2) {
+            (data[n / 2 - 1] + data[n / 2]) / 2
+        } else {
+            data[n / 2]
+        };
+
+        let p_idx = |p: f64| ((n as f64) * p).ceil() as usize - 1;
+
+        Self {
+            min: data[0],
+            median,
+            p90: data[p_idx(0.90)],
+            p99: data[p_idx(0.99)],
+            max: data[n - 1],
+        }
+    }
+
+    pub fn into_vec(self) -> Vec<(String, std::time::Duration)> {
+        vec![
+            ("min".to_owned(), self.min),
+            ("median".to_owned(), self.median),
+            ("p90".to_owned(), self.p90),
+            ("p99".to_owned(), self.p99),
+            ("max".to_owned(), self.max),
+        ]
+    }
+}
+
+pub struct Pong {
+    pub bytes: u64,
+    pub ack: Duration,
+    pub e2e: Duration,
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::S2UriParseError, types::S2BasinAndStreamUri};
-    use rstest::rstest;
+    use crate::error::S2UriParseError;
 
     use super::{
-        OpGroupsParseError, PermittedOperationGroups, ReadWritePermissions, ResourceSet,
-        ResourceSetParseError, S2BasinAndMaybeStreamUri, S2BasinUri, S2Uri,
+        OpGroupsParseError, PermittedOperationGroups, ReadWritePermissions,
+        S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, S2Uri,
     };
+    use rstest::rstest;
 
     #[rstest]
     #[case("", Ok(PermittedOperationGroups {
@@ -809,41 +937,6 @@ mod tests {
         );
     }
 
-    #[rstest]
-    // Valid empty string case
-    #[case("", Ok(ResourceSet::<8, 48>::Prefix(String::new())))]
-    // Valid exact values
-    #[case("=exact-value", Ok(ResourceSet::<8, 48>::Exact("exact-value".to_string())))]
-    #[case("=mybasintestingvalue", Ok(ResourceSet::<8, 48>::Exact("mybasintestingvalue".to_string())))]
-    // Valid prefix values
-    #[case("prefix", Ok(ResourceSet::<8, 48>::Prefix("prefix".to_string())))]
-    #[case("my-prefix", Ok(ResourceSet::<8, 48>::Prefix("my-prefix".to_string())))]
-    // Error cases for exact values - too short or too long
-    #[case("=short", Err(ResourceSetParseError::ExactValueLengthInvalid {
-        value: "short".to_owned(), length: 5, min: 8, max: 48
-    }))]
-    #[case("=waytoolongvaluethatshouldexceedthemaximumlengthallowed",
-           Err(ResourceSetParseError::ExactValueLengthInvalid {
-               value: "waytoolongvaluethatshouldexceedthemaximumlengthallowed".to_owned(),
-               length: 54, min: 8, max: 48
-           }))]
-    // Error case for prefix - too long
-    #[case("waytoolongvaluethatshouldexceedthemaximumlengthallowed",
-           Err(ResourceSetParseError::PrefixTooLong {
-               value: "waytoolongvaluethatshouldexceedthemaximumlengthallowed".to_owned(),
-               length: 54, max: 48
-           }))]
-    fn test_resource_set_parsing(
-        #[case] input: &str,
-        #[case] expected: Result<ResourceSet<8, 48>, ResourceSetParseError>,
-    ) {
-        assert_eq!(
-            input.parse::<ResourceSet<8, 48>>(),
-            expected,
-            "Testing input: {input}"
-        );
-    }
-
     #[test]
     fn test_s2_uri_parse() {
         let test_cases = vec![
@@ -892,19 +985,19 @@ mod tests {
                 Err(S2UriParseError::UnexpectedStreamName),
                 Ok(S2BasinAndStreamUri {
                     basin: "valid-basin".parse().unwrap(),
-                    stream: "stream/name".to_owned(),
+                    stream: "stream/name".parse().unwrap(),
                 }),
                 Ok(S2BasinAndMaybeStreamUri {
                     basin: "valid-basin".parse().unwrap(),
-                    stream: Some("stream/name".to_owned()),
+                    stream: Some("stream/name".parse().unwrap()),
                 }),
             ),
             (
                 "-invalid-basin",
                 Err(S2UriParseError::MissingUriScheme),
-                Err(S2UriParseError::InvalidBasinName("".into())),
+                Err(S2UriParseError::InvalidBasinName("".to_owned())),
                 Err(S2UriParseError::MissingUriScheme),
-                Err(S2UriParseError::InvalidBasinName("".into())),
+                Err(S2UriParseError::InvalidBasinName("".to_owned())),
             ),
             (
                 "http://valid-basin",
@@ -915,24 +1008,24 @@ mod tests {
             ),
             (
                 "s2://-invalid-basin",
-                Err(S2UriParseError::InvalidBasinName("".into())),
-                Err(S2UriParseError::InvalidBasinName("".into())),
-                Err(S2UriParseError::InvalidBasinName("".into())),
-                Err(S2UriParseError::InvalidBasinName("".into())),
+                Err(S2UriParseError::InvalidBasinName("".to_owned())),
+                Err(S2UriParseError::InvalidBasinName("".to_owned())),
+                Err(S2UriParseError::InvalidBasinName("".to_owned())),
+                Err(S2UriParseError::InvalidBasinName("".to_owned())),
             ),
             (
                 "s2:///stream/name",
-                Err(S2UriParseError::InvalidBasinName("".into())),
-                Err(S2UriParseError::InvalidBasinName("".into())),
-                Err(S2UriParseError::InvalidBasinName("".into())),
-                Err(S2UriParseError::InvalidBasinName("".into())),
+                Err(S2UriParseError::InvalidBasinName("".to_owned())),
+                Err(S2UriParseError::InvalidBasinName("".to_owned())),
+                Err(S2UriParseError::InvalidBasinName("".to_owned())),
+                Err(S2UriParseError::InvalidBasinName("".to_owned())),
             ),
             (
                 "random:::string",
                 Err(S2UriParseError::MissingUriScheme),
-                Err(S2UriParseError::InvalidBasinName("".into())),
+                Err(S2UriParseError::InvalidBasinName("".to_owned())),
                 Err(S2UriParseError::MissingUriScheme),
-                Err(S2UriParseError::InvalidBasinName("".into())),
+                Err(S2UriParseError::InvalidBasinName("".to_owned())),
             ),
         ];
 
