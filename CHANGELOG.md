@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.0] - 2026-01-16
+
+### Bug Fixes
+
+- Clippy new lint ([#173](https://github.com/s2-streamstore/s2-cli/issues/173))
+
+### Refactor
+
+- [**breaking**] Migrate from `streamstore` to `s2-sdk` ([#183](https://github.com/s2-streamstore/s2-cli/issues/183))
+
+### Documentation
+
+- Fix broken link
+
+### Miscellaneous Tasks
+
+- Change license to MIT ([#174](https://github.com/s2-streamstore/s2-cli/issues/174))
+
 ## [0.22.0] - 2025-09-03
 
 ### Features
