@@ -15,19 +15,19 @@ use tracing::trace;
 use crate::error::RecordParseError;
 
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
-pub enum Format {
+pub enum RecordFormat {
     /// Plaintext record body as UTF-8.
     /// If the body is not valid UTF-8, this will be a lossy decoding.
     /// Headers cannot be represented, so command records are sent to stderr when reading.
     #[default]
-    #[clap(name = "")]
-    BodyRaw,
+    #[clap(alias = "")]
+    Text,
     /// JSON format with UTF-8 headers and body.
     /// If the data is not valid UTF-8, this will be a lossy decoding.
-    #[clap(name = "raw", alias = "json")]
-    JsonRaw,
+    #[clap(alias = "raw")]
+    Json,
     /// JSON format with headers and body encoded as Base64.
-    #[clap(name = "base64", alias = "json-binsafe")]
+    #[clap(aliases = ["base64", "json-binsafe"])]
     JsonBase64,
 }
 
@@ -128,9 +128,9 @@ pub trait RecordWriter {
     ) -> io::Result<()>;
 }
 
-pub use body::RawFormatter as RawBodyFormatter;
-pub type RawJsonFormatter = json::Formatter<false>;
-pub type Base64JsonFormatter = json::Formatter<true>;
+pub use body::TextFormatter;
+pub type JsonFormatter = json::Formatter<false>;
+pub type JsonBase64Formatter = json::Formatter<true>;
 
 mod body {
     use std::{
@@ -145,9 +145,9 @@ mod body {
 
     use super::{RecordParseError, RecordParser, RecordWriter};
 
-    pub struct RawFormatter;
+    pub struct TextFormatter;
 
-    impl RecordWriter for RawFormatter {
+    impl RecordWriter for TextFormatter {
         async fn write_record(
             record: &SequencedRecord,
             writer: &mut (impl AsyncWrite + Unpin),
@@ -157,7 +157,7 @@ mod body {
         }
     }
 
-    impl<I> RecordParser<I> for RawFormatter
+    impl<I> RecordParser<I> for TextFormatter
     where
         I: Stream<Item = io::Result<String>> + Send + Unpin,
     {

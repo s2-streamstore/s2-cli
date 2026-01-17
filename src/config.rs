@@ -52,7 +52,6 @@ fn config_path() -> Result<PathBuf, CliConfigError> {
     Ok(path)
 }
 
-/// Load config from file only (for config get/set/list/unset commands).
 pub fn load_config_file() -> Result<CliConfig, CliConfigError> {
     let path = config_path()?;
     if !path.exists() {
@@ -65,7 +64,6 @@ pub fn load_config_file() -> Result<CliConfig, CliConfigError> {
     Ok(builder.build()?.try_deserialize::<CliConfig>()?)
 }
 
-/// Load config from file with environment variable overrides (for SDK init).
 pub fn load_cli_config() -> Result<CliConfig, CliConfigError> {
     let path = config_path()?;
     let mut builder = Config::builder();

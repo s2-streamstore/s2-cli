@@ -5,7 +5,7 @@ use s2_sdk::types::{
 };
 
 use crate::record_format::{
-    Format, RecordsIn, RecordsOut, parse_records_input_source, parse_records_output_source,
+    RecordFormat, RecordsIn, RecordsOut, parse_records_input_source, parse_records_output_source,
 };
 use crate::types::{
     AccessTokenMatcher, BasinConfig, BasinMatcher, Interval, Operation, PermittedOperationGroups,
@@ -20,7 +20,7 @@ const STYLES: styling::Styles = styling::Styles::styled()
 
 const GENERAL_USAGE: &str = color_print::cstr!(
     r#"
-    <dim>$</dim> <bold>s2 config set access_token ...</bold>
+    <dim>$</dim> <bold>s2 config set access_token YOUR_ACCESS_TOKEN</bold>
     <dim>$</dim> <bold>s2 list-basins --prefix "foo" --limit 100</bold>
     "#
 );
@@ -34,15 +34,9 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Manage CLI configuration
+    /// Manage CLI configuration.
     ///
-    /// Examples:
-    ///   s2 config list                          # show all values
-    ///   s2 config get access_token              # get value
-    ///   s2 config set access_token TOKEN        # set value
-    ///   s2 config set compression zstd          # set compression (gzip, zstd)
-    ///   s2 config unset compression             # unset compression
-    #[command(subcommand, verbatim_doc_comment)]
+    #[command(subcommand)]
     Config(ConfigCommand),
 
     /// List basins or streams in a basin.
@@ -85,27 +79,13 @@ pub enum Command {
         id: AccessTokenId,
     },
 
-    /// Get account metrics
-    ///
-    /// Examples:
-    ///   s2 get-account-metrics active-basins --start-ago 1d --end-ago 0s
-    ///   s2 get-account-metrics account-ops --start-ago 1w --end-ago 0s -i hour
-    #[command(verbatim_doc_comment)]
+    /// Get account metrics.
     GetAccountMetrics(GetAccountMetricsArgs),
 
-    /// Get basin metrics
-    ///
-    /// Examples:
-    ///   s2 get-basin-metrics my-basin storage --start-ago 1d --end-ago 0s
-    ///   s2 get-basin-metrics my-basin append-ops --start-ago 1w --end-ago 0s -i hour
-    #[command(verbatim_doc_comment)]
+    /// Get basin metrics.
     GetBasinMetrics(GetBasinMetricsArgs),
 
-    /// Get stream metrics
-    ///
-    /// Examples:
-    ///   s2 get-stream-metrics s2://my-basin/my-stream storage --start-ago 1d --end-ago 0s
-    #[command(verbatim_doc_comment)]
+    /// Get stream metrics.
     GetStreamMetrics(GetStreamMetricsArgs),
 
     /// List streams.
@@ -131,20 +111,23 @@ pub enum Command {
     /// Reconfigure a stream.
     ReconfigureStream(ReconfigureStreamArgs),
 
-    /// Get the next sequence number that will be assigned by a stream.
+    /// Check the tail position of a stream.
+    ///
+    /// Returns the sequence number that will be assigned to the next record,
+    /// and the timestamp of the last record.
     CheckTail {
         /// S2 URI of the format: s2://{basin}/{stream}
         #[arg(value_name = "S2_URI")]
         uri: S2BasinAndStreamUri,
     },
 
-    /// Set the trim point for the stream.
+    /// Set a trim point for a stream.
     ///
     /// Trimming is eventually consistent, and trimmed records may be visible
     /// for a brief period.
     Trim(TrimArgs),
 
-    /// Set a fencing token for the stream.
+    /// Set a fencing token for a stream.
     ///
     /// Fencing is strongly consistent, and subsequent appends that specify a
     /// token will be rejected if it does not match.
@@ -165,7 +148,7 @@ pub enum Command {
     /// Tail a stream, showing the last N records.
     Tail(TailArgs),
 
-    /// Ping the stream to get append acknowledgement and end-to-end latencies.
+    /// Ping a stream to measure append acknowledgement and end-to-end latencies.
     Ping(PingArgs),
 }
 
@@ -208,11 +191,11 @@ pub struct LsArgs {
     #[arg(short = 's', long)]
     pub start_after: Option<String>,
 
-    /// Maximum number of items. With --no-auto-paginate, this is page size (max 1000).
+    /// Limit the number of items to return. Acts as page size (max 1000) when using --no-auto-paginate.
     #[arg(short = 'n', long)]
     pub limit: Option<usize>,
 
-    /// Disable automatic following of pagination responses, which can make multiple requests.
+    /// Returns only a single page of items instead of auto-paginating.
     #[arg(long, default_value_t = false)]
     pub no_auto_paginate: bool,
 }
@@ -227,11 +210,11 @@ pub struct ListBasinsArgs {
     #[arg(short = 's', long)]
     pub start_after: Option<BasinNameStartAfter>,
 
-    /// Maximum number of basins. With --no-auto-paginate, this is page size (max 1000).
+    /// Limit the number of basins to return. Acts as page size (max 1000) when using --no-auto-paginate.
     #[arg(short = 'n', long)]
     pub limit: Option<usize>,
 
-    /// Disable automatic following of pagination responses, which can make multiple requests.
+    /// Returns only a single page of basins instead of auto-paginating.
     #[arg(long, default_value_t = false)]
     pub no_auto_paginate: bool,
 }
@@ -272,11 +255,11 @@ pub struct ListAccessTokensArgs {
     #[arg(short = 's', long)]
     pub start_after: Option<AccessTokenIdStartAfter>,
 
-    /// Maximum number of access tokens. With --no-auto-paginate, this is page size (max 1000).
+    /// Limit the number of access tokens to return. Acts as page size (max 1000) when using --no-auto-paginate.
     #[arg(short = 'n', long)]
     pub limit: Option<usize>,
 
-    /// Disable automatic following of pagination responses, which can make multiple requests.
+    /// Returns only a single page of access tokens instead of auto-paginating.
     #[arg(long, default_value_t = false)]
     pub no_auto_paginate: bool,
 }
@@ -344,11 +327,11 @@ pub struct ListStreamsArgs {
     #[arg(short = 's', long)]
     pub start_after: Option<StreamNameStartAfter>,
 
-    /// Maximum number of streams. With --no-auto-paginate, this is page size (max 1000).
+    /// Limit the number of streams to return. Acts as page size (max 1000) when using --no-auto-paginate.
     #[arg(short = 'n', long)]
     pub limit: Option<usize>,
 
-    /// Disable automatic following of pagination responses, which can make multiple requests.
+    /// Returns only a single page of streams instead of auto-paginating.
     #[arg(long, default_value_t = false)]
     pub no_auto_paginate: bool,
 }
@@ -428,15 +411,14 @@ pub struct AppendArgs {
 
     /// Input format.
     #[arg(long, value_enum, default_value_t)]
-    pub format: Format,
+    pub format: RecordFormat,
 
     /// Input newline delimited records to append from a file or stdin.
-    /// All records are treated as plain text.
     /// Use "-" to read from stdin.
     #[arg(short = 'i', long, value_parser = parse_records_input_source, default_value = "-")]
     pub input: RecordsIn,
 
-    /// How long to wait while accumulating records before emitting a batch.
+    /// How long to wait for more records before flushing a batch.
     #[arg(long, default_value = "5ms")]
     pub linger: humantime::Duration,
 }
@@ -484,7 +466,7 @@ pub struct ReadArgs {
 
     /// Output format.
     #[arg(long, value_enum, default_value_t)]
-    pub format: Format,
+    pub format: RecordFormat,
 
     /// Output records to a file or stdout.
     /// Use "-" to write to stdout.
@@ -508,7 +490,7 @@ pub struct TailArgs {
 
     /// Output format.
     #[arg(long, value_enum, default_value_t)]
-    pub format: Format,
+    pub format: RecordFormat,
 
     /// Output records to a file or stdout.
     /// Use "-" to write to stdout.
@@ -548,7 +530,7 @@ pub struct TimeRangeArgs {
     #[arg(long = "start-timestamp", group = "start_time")]
     pub start_timestamp: Option<u32>,
 
-    /// Start time as human-friendly delta from current time (e.g., "1h", "1d").
+    /// Start time as human-friendly delta from current time (e.g., "2h", "1d", "0s").
     #[arg(long, group = "start_time")]
     pub start_ago: Option<humantime::Duration>,
 
@@ -556,34 +538,19 @@ pub struct TimeRangeArgs {
     #[arg(long = "end-timestamp", group = "end_time")]
     pub end_timestamp: Option<u32>,
 
-    /// End time as human-friendly delta from current time (e.g., "1h", "1d").
+    /// End time as human-friendly delta from current time (e.g., "2h", "1d", "0s").
     #[arg(long, group = "end_time")]
     pub end_ago: Option<humantime::Duration>,
 }
 
 /// Time range args for accumulation metrics (with interval).
 #[derive(Args, Debug)]
-#[command(group(clap::ArgGroup::new("start_time").required(true)))]
-#[command(group(clap::ArgGroup::new("end_time").required(true)))]
 pub struct TimeRangeAndIntervalArgs {
-    /// Start time in seconds since Unix epoch.
-    #[arg(long = "start-timestamp", group = "start_time")]
-    pub start_timestamp: Option<u32>,
-
-    /// Start time as human-friendly delta from current time (e.g., "1h", "1d").
-    #[arg(long, group = "start_time")]
-    pub start_ago: Option<humantime::Duration>,
-
-    /// End time in seconds since Unix epoch.
-    #[arg(long = "end-timestamp", group = "end_time")]
-    pub end_timestamp: Option<u32>,
-
-    /// End time as human-friendly delta from current time (e.g., "1h", "1d").
-    #[arg(long, group = "end_time")]
-    pub end_ago: Option<humantime::Duration>,
+    #[command(flatten)]
+    pub time_range: TimeRangeArgs,
 
     /// Accumulation interval.
-    #[arg(short = 'i', long)]
+    #[arg(long)]
     pub interval: Option<Interval>,
 }
 
