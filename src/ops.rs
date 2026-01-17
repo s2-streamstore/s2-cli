@@ -24,7 +24,7 @@ use crate::cli::{
     CreateBasinArgs, CreateStreamArgs, FenceArgs, GetAccountMetricsArgs, GetBasinMetricsArgs,
     GetStreamMetricsArgs, IssueAccessTokenArgs, ListAccessTokensArgs, ListBasinsArgs,
     ListStreamsArgs, PingArgs, ReadArgs, ReconfigureBasinArgs, ReconfigureStreamArgs, TailArgs,
-    TrimArgs,
+    TimeRangeArgs, TrimArgs,
 };
 use crate::error::{CliError, OpKind};
 use crate::types::{BasinConfig, Interval, Pong, S2BasinAndStreamUri, StreamConfig};
@@ -221,13 +221,11 @@ pub async fn get_account_metrics(
 
     let set = match args.metric {
         AccountMetricCommand::ActiveBasins(t) => {
-            let (start, end) =
-                resolve_time_range(t.start_timestamp, t.start_ago, t.end_timestamp, t.end_ago);
+            let (start, end) = resolve_time_range(&t);
             AccountMetricSet::ActiveBasins(TimeRange::new(start, end))
         }
         AccountMetricCommand::AccountOps(t) => {
-            let (start, end) =
-                resolve_time_range(t.start_timestamp, t.start_ago, t.end_timestamp, t.end_ago);
+            let (start, end) = resolve_time_range(&t.time_range);
             AccountMetricSet::AccountOps(time_range_and_interval(start, end, t.interval))
         }
     };
@@ -246,33 +244,27 @@ pub async fn get_basin_metrics(
 
     let set = match args.metric {
         BasinMetricCommand::Storage(t) => {
-            let (start, end) =
-                resolve_time_range(t.start_timestamp, t.start_ago, t.end_timestamp, t.end_ago);
+            let (start, end) = resolve_time_range(&t);
             BasinMetricSet::Storage(TimeRange::new(start, end))
         }
         BasinMetricCommand::AppendOps(t) => {
-            let (start, end) =
-                resolve_time_range(t.start_timestamp, t.start_ago, t.end_timestamp, t.end_ago);
+            let (start, end) = resolve_time_range(&t.time_range);
             BasinMetricSet::AppendOps(time_range_and_interval(start, end, t.interval))
         }
         BasinMetricCommand::ReadOps(t) => {
-            let (start, end) =
-                resolve_time_range(t.start_timestamp, t.start_ago, t.end_timestamp, t.end_ago);
+            let (start, end) = resolve_time_range(&t.time_range);
             BasinMetricSet::ReadOps(time_range_and_interval(start, end, t.interval))
         }
         BasinMetricCommand::ReadThroughput(t) => {
-            let (start, end) =
-                resolve_time_range(t.start_timestamp, t.start_ago, t.end_timestamp, t.end_ago);
+            let (start, end) = resolve_time_range(&t.time_range);
             BasinMetricSet::ReadThroughput(time_range_and_interval(start, end, t.interval))
         }
         BasinMetricCommand::AppendThroughput(t) => {
-            let (start, end) =
-                resolve_time_range(t.start_timestamp, t.start_ago, t.end_timestamp, t.end_ago);
+            let (start, end) = resolve_time_range(&t.time_range);
             BasinMetricSet::AppendThroughput(time_range_and_interval(start, end, t.interval))
         }
         BasinMetricCommand::BasinOps(t) => {
-            let (start, end) =
-                resolve_time_range(t.start_timestamp, t.start_ago, t.end_timestamp, t.end_ago);
+            let (start, end) = resolve_time_range(&t.time_range);
             BasinMetricSet::BasinOps(time_range_and_interval(start, end, t.interval))
         }
     };
@@ -291,8 +283,7 @@ pub async fn get_stream_metrics(
 
     let set = match args.metric {
         StreamMetricCommand::Storage(t) => {
-            let (start, end) =
-                resolve_time_range(t.start_timestamp, t.start_ago, t.end_timestamp, t.end_ago);
+            let (start, end) = resolve_time_range(&t);
             StreamMetricSet::Storage(TimeRange::new(start, end))
         }
     };
@@ -680,15 +671,10 @@ fn resolve_time(timestamp: Option<u32>, ago: Option<humantime::Duration>) -> u32
     }
 }
 
-fn resolve_time_range(
-    start_timestamp: Option<u32>,
-    start_ago: Option<humantime::Duration>,
-    end_timestamp: Option<u32>,
-    end_ago: Option<humantime::Duration>,
-) -> (u32, u32) {
+fn resolve_time_range(args: &TimeRangeArgs) -> (u32, u32) {
     (
-        resolve_time(start_timestamp, start_ago),
-        resolve_time(end_timestamp, end_ago),
+        resolve_time(args.start_timestamp, args.start_ago),
+        resolve_time(args.end_timestamp, args.end_ago),
     )
 }
 

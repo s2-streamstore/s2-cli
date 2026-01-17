@@ -19,9 +19,8 @@ use error::{CliError, OpKind};
 use futures::{Stream, StreamExt, TryStreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use json_to_table::json_to_table;
-use record_format::Format;
 use record_format::{
-    Base64JsonFormatter, RawBodyFormatter, RawJsonFormatter, RecordParser, RecordWriter,
+    JsonBase64Formatter, JsonFormatter, RecordFormat, RecordParser, RecordWriter, TextFormatter,
 };
 use s2_sdk::{
     S2,
@@ -297,7 +296,7 @@ async fn run() -> Result<(), CliError> {
 
         Command::CheckTail { uri } => {
             let tail = ops::check_tail(&s2, uri).await?;
-            println!("{}\t{}", tail.seq_num, tail.timestamp);
+            println!("{}", format_position(tail.seq_num, tail.timestamp));
         }
 
         Command::Trim(args) => {
@@ -306,8 +305,9 @@ async fn run() -> Result<(), CliError> {
             eprintln!(
                 "{}",
                 format!(
-                    "✓ Trim request for trim point {} appended at: {:?}",
-                    trim_point, out.start
+                    "✓ [APPENDED] trim to {} // tail: {}",
+                    trim_point,
+                    format_position(out.start.seq_num, out.start.timestamp)
                 )
                 .green()
                 .bold()
@@ -315,12 +315,17 @@ async fn run() -> Result<(), CliError> {
         }
 
         Command::Fence(args) => {
+            let fencing_token = args.new_fencing_token.clone();
             let out = ops::fence(&s2, args).await?;
             eprintln!(
                 "{}",
-                format!("✓ Fencing token appended at seq_num: {:?}", out.start)
-                    .green()
-                    .bold()
+                format!(
+                    "✓ [APPENDED] new fencing token \"{}\" // tail: {}",
+                    fencing_token,
+                    format_position(out.start.seq_num, out.start.timestamp)
+                )
+                .green()
+                .bold()
             );
         }
 
@@ -332,9 +337,11 @@ async fn run() -> Result<(), CliError> {
                 .map_err(|e| CliError::RecordReaderInit(e.to_string()))?;
 
             let record_stream: Pin<Box<dyn Stream<Item = _> + Send + Unpin>> = match args.format {
-                Format::BodyRaw => Box::pin(RawBodyFormatter::parse_records(records_in)),
-                Format::JsonRaw => Box::pin(RawJsonFormatter::parse_records(records_in)),
-                Format::JsonBase64 => Box::pin(Base64JsonFormatter::parse_records(records_in)),
+                RecordFormat::Text => Box::pin(TextFormatter::parse_records(records_in)),
+                RecordFormat::Json => Box::pin(JsonFormatter::parse_records(records_in)),
+                RecordFormat::JsonBase64 => {
+                    Box::pin(JsonBase64Formatter::parse_records(records_in))
+                }
             };
 
             let acks = ops::append(
@@ -358,11 +365,10 @@ async fn run() -> Result<(), CliError> {
                                     eprintln!(
                                         "{}",
                                         format!(
-                                            "✓ [APPENDED] {}..{} // tail: {} @ {}",
+                                            "✓ [APPENDED] {}..{} // tail: {}",
                                             ack.batch.start.seq_num,
                                             ack.batch.end.seq_num,
-                                            ack.batch.tail.seq_num,
-                                            ack.batch.tail.timestamp
+                                            format_position(ack.batch.tail.seq_num, ack.batch.tail.timestamp)
                                         )
                                         .green()
                                         .bold()
@@ -397,30 +403,34 @@ async fn run() -> Result<(), CliError> {
                         match batch {
                             Some(Ok(batch)) => {
                                 let num_records = batch.records.len();
-                                let mut batch_len = 0;
+                                let batch_len: usize = batch.records.iter().map(|r| r.metered_bytes()).sum();
 
                                 let seq_range = match (batch.records.first(), batch.records.last()) {
                                     (Some(first), Some(last)) => first.seq_num..=last.seq_num,
                                     _ => continue,
                                 };
 
-                                for record in &batch.records {
-                                    batch_len += record.metered_bytes();
-                                    write_record(record, &mut writer, args.format).await?;
-                                    writer
-                                        .write_all(b"\n")
-                                        .await
-                                        .map_err(|e| CliError::RecordWrite(e.to_string()))?;
-                                }
-
                                 eprintln!(
                                     "{}",
                                     format!(
-                                        "⦿ {batch_len} bytes ({num_records} records in range {seq_range:?})"
+                                        "⦿ {batch_len} bytes ({num_records} {} in range {seq_range:?})",
+                                        if num_records == 1 { "record" } else { "records" }
                                     )
                                     .blue()
                                     .bold()
                                 );
+
+                                for record in &batch.records {
+                                    write_record(record, &mut writer, args.format).await?;
+                                    let skip_newline = matches!(args.format, RecordFormat::Text)
+                                        && record.is_command_record();
+                                    if !skip_newline {
+                                        writer
+                                            .write_all(b"\n")
+                                            .await
+                                            .map_err(|e| CliError::RecordWrite(e.to_string()))?;
+                                    }
+                                }
 
                                 writer
                                     .flush()
@@ -626,50 +636,52 @@ fn format_basin_state(state: BasinState) -> colored::ColoredString {
     }
 }
 
+fn format_position(seq_num: u64, timestamp: u64) -> String {
+    format!("{seq_num} @ {timestamp}")
+}
+
 async fn write_record(
     record: &s2_sdk::types::SequencedRecord,
     writer: &mut (impl tokio::io::AsyncWrite + Unpin),
-    format: Format,
+    format: RecordFormat,
 ) -> Result<(), CliError> {
     match format {
-        Format::BodyRaw => {
+        RecordFormat::Text => {
             if record.is_command_record() {
                 if let Some(header) = record.headers.first() {
                     let cmd_type = &header.value;
-                    let (cmd, description) = if cmd_type.as_ref() == b"fence" {
+                    let cmd_desc = if cmd_type.as_ref() == b"fence" {
                         let fencing_token = String::from_utf8_lossy(&record.body);
-                        ("fence", format!("FencingToken({fencing_token})"))
+                        format!("new fencing token \"{}\"", fencing_token)
                     } else if cmd_type.as_ref() == b"trim" {
                         let trim_point = if record.body.len() >= 8 {
                             u64::from_be_bytes(record.body[..8].try_into().unwrap_or_default())
                         } else {
                             0
                         };
-                        ("trim", format!("TrimPoint({trim_point})"))
+                        format!("trim to {}", trim_point)
                     } else {
-                        ("unknown", "UnknownCommand".to_string())
+                        "unknown command".to_string()
                     };
                     eprintln!(
-                        "{} with {} // {} @ {}",
-                        cmd.bold(),
-                        description.green().bold(),
-                        record.seq_num,
-                        record.timestamp
+                        "{} // {}",
+                        cmd_desc.bold(),
+                        format_position(record.seq_num, record.timestamp)
                     );
                 }
             } else {
-                RawBodyFormatter::write_record(record, writer)
+                TextFormatter::write_record(record, writer)
                     .await
                     .map_err(|e| CliError::RecordWrite(e.to_string()))?;
             }
         }
-        Format::JsonRaw => {
-            RawJsonFormatter::write_record(record, writer)
+        RecordFormat::Json => {
+            JsonFormatter::write_record(record, writer)
                 .await
                 .map_err(|e| CliError::RecordWrite(e.to_string()))?;
         }
-        Format::JsonBase64 => {
-            Base64JsonFormatter::write_record(record, writer)
+        RecordFormat::JsonBase64 => {
+            JsonBase64Formatter::write_record(record, writer)
                 .await
                 .map_err(|e| CliError::RecordWrite(e.to_string()))?;
         }
