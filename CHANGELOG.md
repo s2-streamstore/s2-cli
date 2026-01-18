@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.1] - 2026-01-18
+
+### Miscellaneous Tasks
+
+- Bump `s2-sdk` version ([#195](https://github.com/s2-streamstore/s2-cli/issues/195))
+
 ## [0.24.0] - 2026-01-18
 
 ### Refactor
