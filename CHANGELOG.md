@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.0] - 2026-01-18
+
+### Refactor
+
+- [**breaking**] Improve CLI output formatting and help text ([#190](https://github.com/s2-streamstore/s2-cli/issues/190))
+
+### Miscellaneous Tasks
+
+- Remove `protoc` installation step ([#191](https://github.com/s2-streamstore/s2-cli/issues/191))
+- Update dependencies ([#192](https://github.com/s2-streamstore/s2-cli/issues/192))
+- Bump `s2-sdk` version ([#193](https://github.com/s2-streamstore/s2-cli/issues/193))
+
 ## [0.23.2] - 2026-01-16
 
 ### Bug Fixes
