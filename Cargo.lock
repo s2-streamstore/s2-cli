@@ -2140,7 +2140,7 @@ dependencies = [
 
 [[package]]
 name = "s2-cli"
-version = "0.24.0"
+version = "0.24.1"
 dependencies = [
  "async-stream",
  "base64ct",
