@@ -28,7 +28,7 @@ indicatif = "0.18.3"
 json_to_table = "0.12.0"
 miette = { version = "7.6.0", features = ["fancy"] }
 rand = "0.9.1"
-s2-sdk = { version = "0.22.3", features = ["_hidden"] }
+s2-sdk = { version = "0.22.4", features = ["_hidden"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.140", features = ["preserve_order"] }
 strum = { version = "0.27", features = ["derive"] }
