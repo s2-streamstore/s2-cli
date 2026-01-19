@@ -7,6 +7,7 @@ use s2_sdk::types::{
 use crate::record_format::{
     RecordFormat, RecordsIn, RecordsOut, parse_records_input_source, parse_records_output_source,
 };
+use crate::tput::TPUT_MAX_RECORD_BYTES;
 use crate::types::{
     AccessTokenMatcher, BasinConfig, BasinMatcher, Interval, Operation, PermittedOperationGroups,
     S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass, StreamConfig,
@@ -538,8 +539,13 @@ pub struct TputArgs {
     pub storage_class: Option<StorageClass>,
 
     /// Record size in bytes.
-    #[arg(short = 'b', long, default_value_t = 1024)]
-    pub record_bytes: u64,
+    #[arg(
+        short = 'b',
+        long,
+        default_value_t = 1024,
+        value_parser = clap::value_parser!(u32).range(1..=TPUT_MAX_RECORD_BYTES as i64),
+    )]
+    pub record_bytes: u32,
 
     /// Run test for this duration.
     #[arg(short = 'd', long, default_value = "10s")]

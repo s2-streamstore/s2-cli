@@ -27,6 +27,7 @@ use crate::cli::{
     TimeRangeArgs, TrimArgs,
 };
 use crate::error::{CliError, OpKind};
+use crate::tput;
 use crate::types::{BasinConfig, Interval, Pong, S2BasinAndStreamUri, StreamConfig, TputSample};
 
 pub async fn list_basins<'a>(
@@ -746,9 +747,8 @@ async fn ping_inner(
 
 pub fn tput_write(
     stream: S2Stream,
-    record_bytes: u64,
+    record_bytes: u32,
 ) -> impl Stream<Item = Result<TputSample, CliError>> + Send {
-    use rand::Rng;
     use tokio::time::Instant;
 
     let producer_config = ProducerConfig::new()
@@ -756,13 +756,43 @@ pub fn tput_write(
     let producer = stream.producer(producer_config);
 
     async_stream::stream! {
-        let body: Vec<u8> = rand::rng()
-            .sample_iter(
-                rand::distr::Uniform::new_inclusive(0, u8::MAX)
-                    .expect("valid range"),
-            )
-            .take(record_bytes as usize)
-            .collect();
+        let payload_bytes = u64::from(record_bytes);
+        if record_bytes == 0 {
+            yield Err(CliError::InvalidArgs(miette::miette!(
+                "Record size must be greater than 0."
+            )));
+            return;
+        }
+
+        let record_len = record_bytes as usize;
+        let max_payload_bytes = tput::TPUT_MAX_RECORD_BYTES as usize;
+        if record_len > max_payload_bytes {
+            yield Err(CliError::InvalidArgs(miette::miette!(
+                "Record size must be <= {max_payload_bytes} bytes."
+            )));
+            return;
+        }
+
+        let body = tput::body(record_bytes);
+        let record_template = match tput::record(&body, 0) {
+            Ok(record) => record,
+            Err(e) => {
+                yield Err(CliError::InvalidArgs(miette::miette!(
+                    "Invalid tput record: {e}"
+                )));
+                return;
+            }
+        };
+
+        let record_metered_bytes = match u32::try_from(record_template.metered_bytes()) {
+            Ok(size) => size,
+            Err(_) => {
+                yield Err(CliError::InvalidArgs(miette::miette!(
+                    "Invalid tput record size: metered size exceeds u32."
+                )));
+                return;
+            }
+        };
 
         let mut total_bytes: u64 = 0;
         let mut total_records: u64 = 0;
@@ -770,6 +800,7 @@ pub fn tput_write(
         let mut last_yield = Instant::now();
 
         let mut pending_acks = FuturesUnordered::new();
+        let mut next_seq: u64 = 0;
 
         loop {
             tokio::select! {
@@ -778,7 +809,7 @@ pub fn tput_write(
                 Some(res) = pending_acks.next() => {
                     match res {
                         Ok(_ack) => {
-                            total_bytes += record_bytes;
+                            total_bytes += payload_bytes;
                             total_records += 1;
 
                             if last_yield.elapsed() >= Duration::from_millis(100) {
@@ -797,10 +828,19 @@ pub fn tput_write(
                     }
                 }
 
-                permit = producer.reserve(record_bytes as u32) => {
+                permit = producer.reserve(record_metered_bytes) => {
                     match permit {
                         Ok(permit) => {
-                            let record = AppendRecord::new(body.clone()).expect("valid record");
+                            let record = match tput::record(&body, next_seq) {
+                                Ok(record) => record,
+                                Err(e) => {
+                                    yield Err(CliError::InvalidArgs(miette::miette!(
+                                        "Invalid tput record: {e}"
+                                    )));
+                                    return;
+                                }
+                            };
+                            next_seq = next_seq.wrapping_add(1);
                             pending_acks.push(permit.submit(record));
                         }
                         Err(e) => {
@@ -816,16 +856,28 @@ pub fn tput_write(
 
 pub fn tput_read(
     stream: S2Stream,
+    record_bytes: u32,
 ) -> impl Stream<Item = Result<TputSample, CliError>> + Send {
     use tokio::time::Instant;
 
     async_stream::stream! {
+        if record_bytes == 0 || record_bytes > tput::TPUT_MAX_RECORD_BYTES {
+            yield Err(CliError::InvalidArgs(miette::miette!(
+                "Record size must be in the range 1..={}.",
+                tput::TPUT_MAX_RECORD_BYTES
+            )));
+            return;
+        }
+
         let read_input = ReadInput::new()
             .with_start(ReadStart::new().with_from(ReadFrom::SeqNum(0)));
         let mut read_session = stream
             .read_session(read_input)
             .await
             .map_err(|e| CliError::op(OpKind::Tput, e))?;
+
+        let expected_body = tput::body(record_bytes);
+        let mut expected_seq: u64 = 0;
 
         let mut total_bytes: u64 = 0;
         let mut total_records: u64 = 0;
@@ -836,7 +888,31 @@ pub fn tput_read(
             match batch_result {
                 Ok(batch) => {
                     let batch_records = batch.records.len() as u64;
-                    let batch_bytes: u64 = batch.records.iter().map(|r| r.body.len() as u64).sum();
+                    let mut batch_bytes: u64 = 0;
+                    for record in &batch.records {
+                        if record.body.as_ref() != expected_body.as_ref() {
+                            yield Err(CliError::TputVerification(
+                                "record body mismatch".to_string(),
+                            ));
+                            return;
+                        }
+                        let seq = match tput::record_seq(record) {
+                            Ok(seq) => seq,
+                            Err(msg) => {
+                                yield Err(CliError::TputVerification(msg));
+                                return;
+                            }
+                        };
+                        if seq == expected_seq {
+                            expected_seq = expected_seq.wrapping_add(1);
+                        } else if seq > expected_seq {
+                            yield Err(CliError::TputVerification(format!(
+                                "record order mismatch: expected {expected_seq}, got {seq}"
+                            )));
+                            return;
+                        }
+                        batch_bytes += record.body.len() as u64;
+                    }
                     total_bytes += batch_bytes;
                     total_records += batch_records;
 

@@ -1,8 +1,10 @@
 mod cli;
+mod common;
 mod config;
 mod error;
 mod ops;
 mod record_format;
+mod tput;
 mod types;
 
 use std::pin::Pin;
@@ -38,6 +40,8 @@ use types::{
     AccessTokenInfo, BasinConfig, LatencyStats, Pong, S2BasinAndMaybeStreamUri, StreamConfig,
     TputSample,
 };
+
+use common::epoch_millis;
 
 #[tokio::main]
 async fn main() -> miette::Result<()> {
@@ -507,15 +511,9 @@ async fn run() -> Result<(), CliError> {
             prepare_spinner.enable_steady_tick(Duration::from_millis(50));
 
             let basin = s2.basin(args.basin.0);
-            let stream_name: StreamName = format!(
-                "ping-{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis()
-            )
-            .parse()
-            .expect("valid stream name");
+            let stream_name: StreamName = format!("ping-{}", epoch_millis())
+                .parse()
+                .expect("valid stream name");
 
             let mut stream_config = SdkStreamConfig::new();
             if let Some(sc) = args.storage_class {
@@ -673,15 +671,9 @@ async fn run() -> Result<(), CliError> {
             let record_bytes = args.record_bytes;
 
             let basin = s2.basin(args.basin.0);
-            let stream_name: StreamName = format!(
-                "tput-{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis()
-            )
-            .parse()
-            .expect("valid stream name");
+            let stream_name: StreamName = format!("tput-{}", epoch_millis())
+                .parse()
+                .expect("valid stream name");
 
             let mut stream_config = SdkStreamConfig::new();
             if let Some(sc) = args.storage_class {
@@ -732,7 +724,7 @@ async fn run() -> Result<(), CliError> {
             let mut read_sample: Option<TputSample> = None;
 
             let write_stream = ops::tput_write(stream.clone(), record_bytes);
-            let read_stream = ops::tput_read(stream.clone());
+            let read_stream = ops::tput_read(stream.clone(), record_bytes);
             let mut write_stream = std::pin::pin!(write_stream);
             let mut read_stream = std::pin::pin!(read_stream);
 

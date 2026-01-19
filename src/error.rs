@@ -51,6 +51,12 @@ pub enum CliError {
     #[error("Failed to write records: {0}")]
     RecordWrite(String),
 
+    #[error("Throughput verification failed: {0}")]
+    #[diagnostic(help(
+        "Ensure no other writers are mutating the stream during tput and retry the test."
+    ))]
+    TputVerification(String),
+
     #[error("{}: {}", .0, .1)]
     #[diagnostic(help("{}", HELP))]
     Operation(OpKind, #[source] S2Error),
