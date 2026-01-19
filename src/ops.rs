@@ -23,8 +23,8 @@ use s2_sdk::{
 use crate::cli::{
     CreateBasinArgs, CreateStreamArgs, FenceArgs, GetAccountMetricsArgs, GetBasinMetricsArgs,
     GetStreamMetricsArgs, IssueAccessTokenArgs, ListAccessTokensArgs, ListBasinsArgs,
-    ListStreamsArgs, PingArgs, ReadArgs, ReconfigureBasinArgs, ReconfigureStreamArgs, TailArgs,
-    TimeRangeArgs, TrimArgs, TputArgs,
+    ListStreamsArgs, ReadArgs, ReconfigureBasinArgs, ReconfigureStreamArgs, TailArgs,
+    TimeRangeArgs, TrimArgs,
 };
 use crate::error::{CliError, OpKind};
 use crate::types::{BasinConfig, Interval, Pong, S2BasinAndStreamUri, StreamConfig, TputSample};
@@ -584,14 +584,11 @@ pub async fn tail(
     ))
 }
 
-pub fn ping<'a>(
-    s2: &'a S2,
-    args: PingArgs,
+pub fn ping(
+    stream: S2Stream,
     batch_bytes: u64,
-) -> impl Stream<Item = Result<Pong, CliError>> + Send + 'a {
+) -> impl Stream<Item = Result<Pong, CliError>> + Send {
     use tokio::time::Instant;
-
-    let stream = s2.basin(args.uri.basin).stream(args.uri.stream);
 
     async_stream::stream! {
         let tail = stream
@@ -747,17 +744,12 @@ async fn ping_inner(
     Ok((ping_bytes, ack_at, read_at))
 }
 
-pub fn tput_write<'a>(
-    s2: &'a S2,
-    args: &'a TputArgs,
-) -> impl Stream<Item = Result<TputSample, CliError>> + Send + 'a {
+pub fn tput_write(
+    stream: S2Stream,
+    record_bytes: u64,
+) -> impl Stream<Item = Result<TputSample, CliError>> + Send {
     use rand::Rng;
     use tokio::time::Instant;
-
-    let uri = args.uri.clone();
-    let stream = s2.basin(uri.basin).stream(uri.stream);
-
-    let record_bytes = args.record_bytes;
 
     let producer_config = ProducerConfig::new()
         .with_batching(BatchingConfig::new().with_linger(Duration::from_millis(5)));
@@ -775,6 +767,7 @@ pub fn tput_write<'a>(
         let mut total_bytes: u64 = 0;
         let mut total_records: u64 = 0;
         let start = Instant::now();
+        let mut last_yield = Instant::now();
 
         let mut pending_acks = FuturesUnordered::new();
 
@@ -788,11 +781,14 @@ pub fn tput_write<'a>(
                             total_bytes += record_bytes;
                             total_records += 1;
 
-                            yield Ok(TputSample {
-                                bytes: total_bytes,
-                                records: total_records,
-                                elapsed: start.elapsed(),
-                            });
+                            if last_yield.elapsed() >= Duration::from_millis(100) {
+                                last_yield = Instant::now();
+                                yield Ok(TputSample {
+                                    bytes: total_bytes,
+                                    records: total_records,
+                                    elapsed: start.elapsed(),
+                                });
+                            }
                         }
                         Err(e) => {
                             yield Err(CliError::op(OpKind::Tput, e));
@@ -818,14 +814,10 @@ pub fn tput_write<'a>(
     }
 }
 
-pub fn tput_read<'a>(
-    s2: &'a S2,
-    args: &'a TputArgs,
-) -> impl Stream<Item = Result<TputSample, CliError>> + Send + 'a {
+pub fn tput_read(
+    stream: S2Stream,
+) -> impl Stream<Item = Result<TputSample, CliError>> + Send {
     use tokio::time::Instant;
-
-    let uri = args.uri.clone();
-    let stream = s2.basin(uri.basin).stream(uri.stream);
 
     async_stream::stream! {
         let read_input = ReadInput::new()
@@ -838,6 +830,7 @@ pub fn tput_read<'a>(
         let mut total_bytes: u64 = 0;
         let mut total_records: u64 = 0;
         let start = Instant::now();
+        let mut last_yield = Instant::now();
 
         while let Some(batch_result) = read_session.next().await {
             match batch_result {
@@ -847,11 +840,14 @@ pub fn tput_read<'a>(
                     total_bytes += batch_bytes;
                     total_records += batch_records;
 
-                    yield Ok(TputSample {
-                        bytes: total_bytes,
-                        records: total_records,
-                        elapsed: start.elapsed(),
-                    });
+                    if last_yield.elapsed() >= Duration::from_millis(100) {
+                        last_yield = Instant::now();
+                        yield Ok(TputSample {
+                            bytes: total_bytes,
+                            records: total_records,
+                            elapsed: start.elapsed(),
+                        });
+                    }
                 }
                 Err(e) => {
                     yield Err(CliError::op(OpKind::Tput, e));

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use clap::Parser;
 use cli::ConfigCommand;
-use cli::{Cli, Command, ListBasinsArgs, ListStreamsArgs, TputMode};
+use cli::{Cli, Command, ListBasinsArgs, ListStreamsArgs};
 use colored::Colorize;
 use config::{
     ConfigKey, load_cli_config, load_config_file, sdk_config, set_config_value, unset_config_value,
@@ -24,7 +24,9 @@ use record_format::{
 };
 use s2_sdk::{
     S2,
-    types::{BasinState, MeteredBytes, Metric},
+    types::{
+        BasinState, CreateStreamInput, DeleteStreamInput, MeteredBytes, Metric, StreamConfig as SdkStreamConfig,
+    },
 };
 use strum::VariantNames;
 use tabled::{Table, Tabled};
@@ -492,7 +494,7 @@ async fn run() -> Result<(), CliError> {
         Command::Ping(args) => {
             let interval = std::cmp::max(*args.interval, Duration::from_millis(100));
             let batch_bytes = std::cmp::min(args.batch_bytes, 128 * 1024);
-            let num_batches = args.num_batches;
+            let duration = *args.duration;
 
             let prepare_spinner = ProgressBar::new_spinner()
                 .with_prefix("Preparing...")
@@ -503,7 +505,36 @@ async fn run() -> Result<(), CliError> {
                 );
             prepare_spinner.enable_steady_tick(Duration::from_millis(50));
 
-            let pong_stream = ops::ping(&s2, args, batch_bytes);
+            let basin = s2.basin(args.basin.0);
+            let stream_name: s2_sdk::types::StreamName = format!(
+                "ping-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis()
+            )
+            .parse()
+            .expect("valid stream name");
+
+            let mut stream_config = SdkStreamConfig::new();
+            if let Some(sc) = args.storage_class {
+                stream_config = stream_config.with_storage_class(sc.into());
+            }
+            stream_config = stream_config
+                .with_retention_policy(s2_sdk::types::RetentionPolicy::Age(3600))
+                .with_delete_on_empty(
+                    s2_sdk::types::DeleteOnEmptyConfig::new().with_min_age(Duration::from_secs(60)),
+                );
+
+            let create_input =
+                CreateStreamInput::new(stream_name.clone()).with_config(stream_config);
+            basin
+                .create_stream(create_input)
+                .await
+                .map_err(|e| CliError::op(OpKind::Ping, e))?;
+
+            let stream = basin.stream(stream_name.clone());
+            let pong_stream = ops::ping(stream, batch_bytes);
             let mut pong_stream = std::pin::pin!(pong_stream);
 
             let first_pong = pong_stream.next().await;
@@ -572,15 +603,21 @@ async fn run() -> Result<(), CliError> {
                     ack_bar.finish_and_clear();
                     e2e_bar.finish_and_clear();
                     empty_line_bar.finish_and_clear();
+                    let _ = basin
+                        .delete_stream(DeleteStreamInput::new(stream_name))
+                        .await;
                     return Err(e);
                 }
                 None => {}
             }
 
-            while num_batches.is_none_or(|max| pongs.len() < max) {
-                select! {
-                    _ = tokio::time::sleep(interval) => {
+            let deadline = tokio::time::Instant::now() + duration;
 
+            loop {
+                select! {
+                    _ = tokio::time::sleep_until(deadline) => break,
+                    _ = tokio::signal::ctrl_c() => break,
+                    _ = tokio::time::sleep(interval) => {
                         match pong_stream.next().await {
                             Some(Ok(pong)) => {
                                 update_bars(&pong);
@@ -591,13 +628,13 @@ async fn run() -> Result<(), CliError> {
                                 ack_bar.finish_and_clear();
                                 e2e_bar.finish_and_clear();
                                 empty_line_bar.finish_and_clear();
+                                let _ = basin
+                                    .delete_stream(DeleteStreamInput::new(stream_name))
+                                    .await;
                                 return Err(e);
                             }
                             None => break,
                         }
-                    }
-                    _ = tokio::signal::ctrl_c() => {
-                        break;
                     }
                 }
             }
@@ -623,11 +660,46 @@ async fn run() -> Result<(), CliError> {
                 eprintln!();
                 print_latency_stats(LatencyStats::compute(e2es), "End-to-End");
             }
+
+            basin
+                .delete_stream(DeleteStreamInput::new(stream_name))
+                .await
+                .map_err(|e| CliError::op(OpKind::Ping, e))?;
         }
 
         Command::Tput(args) => {
             let duration = *args.duration;
-            let mode = args.mode;
+            let record_bytes = args.record_bytes;
+
+            let basin = s2.basin(args.basin.0);
+            let stream_name: s2_sdk::types::StreamName = format!(
+                "tput-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis()
+            )
+            .parse()
+            .expect("valid stream name");
+
+            let mut stream_config = SdkStreamConfig::new();
+            if let Some(sc) = args.storage_class {
+                stream_config = stream_config.with_storage_class(sc.into());
+            }
+            stream_config = stream_config
+                .with_retention_policy(s2_sdk::types::RetentionPolicy::Age(3600))
+                .with_delete_on_empty(
+                    s2_sdk::types::DeleteOnEmptyConfig::new().with_min_age(Duration::from_secs(60)),
+                );
+
+            let create_input =
+                CreateStreamInput::new(stream_name.clone()).with_config(stream_config);
+            basin
+                .create_stream(create_input)
+                .await
+                .map_err(|e| CliError::op(OpKind::Tput, e))?;
+
+            let stream = basin.stream(stream_name.clone());
 
             let stat_bars = MultiProgress::new();
 
@@ -642,15 +714,8 @@ async fn run() -> Result<(), CliError> {
                     .expect("valid template"),
             );
 
-            let show_write = matches!(mode, TputMode::Write | TputMode::Both);
-            let show_read = matches!(mode, TputMode::Read | TputMode::Both);
-
-            if show_write {
-                stat_bars.add(write_bar.clone());
-            }
-            if show_read {
-                stat_bars.add(read_bar.clone());
-            }
+            stat_bars.add(write_bar.clone());
+            stat_bars.add(read_bar.clone());
 
             let update_bar = |bar: &ProgressBar, sample: &TputSample| {
                 bar.set_position(sample.mib_per_sec() as u64);
@@ -665,100 +730,54 @@ async fn run() -> Result<(), CliError> {
             let mut write_sample: Option<TputSample> = None;
             let mut read_sample: Option<TputSample> = None;
 
-            if show_write && !show_read {
-                let write_stream = ops::tput_write(&s2, &args);
-                let mut write_stream = std::pin::pin!(write_stream);
+            let write_stream = ops::tput_write(stream.clone(), record_bytes);
+            let read_stream = ops::tput_read(stream.clone());
+            let mut write_stream = std::pin::pin!(write_stream);
+            let mut read_stream = std::pin::pin!(read_stream);
 
-                let deadline = tokio::time::Instant::now() + duration;
+            let deadline = tokio::time::Instant::now() + duration;
+            let mut write_done = false;
+            let mut read_done = false;
 
-                loop {
-                    select! {
-                        _ = tokio::time::sleep_until(deadline) => break,
-                        _ = tokio::signal::ctrl_c() => break,
-                        result = write_stream.next() => {
-                            match result {
-                                Some(Ok(sample)) => {
-                                    update_bar(&write_bar, &sample);
-                                    write_sample = Some(sample);
-                                }
-                                Some(Err(e)) => {
-                                    write_bar.finish_and_clear();
-                                    return Err(e);
-                                }
-                                None => break,
-                            }
-                        }
-                    }
+            loop {
+                if write_done && read_done {
+                    break;
                 }
-            } else if show_read && !show_write {
-                let read_stream = ops::tput_read(&s2, &args);
-                let mut read_stream = std::pin::pin!(read_stream);
-
-                let deadline = tokio::time::Instant::now() + duration;
-
-                loop {
-                    select! {
-                        _ = tokio::time::sleep_until(deadline) => break,
-                        _ = tokio::signal::ctrl_c() => break,
-                        result = read_stream.next() => {
-                            match result {
-                                Some(Ok(sample)) => {
-                                    update_bar(&read_bar, &sample);
-                                    read_sample = Some(sample);
-                                }
-                                Some(Err(e)) => {
-                                    read_bar.finish_and_clear();
-                                    return Err(e);
-                                }
-                                None => break,
+                select! {
+                    _ = tokio::time::sleep_until(deadline) => break,
+                    _ = tokio::signal::ctrl_c() => break,
+                    result = write_stream.next(), if !write_done => {
+                        match result {
+                            Some(Ok(sample)) => {
+                                update_bar(&write_bar, &sample);
+                                write_sample = Some(sample);
                             }
+                            Some(Err(e)) => {
+                                write_bar.finish_and_clear();
+                                read_bar.finish_and_clear();
+                                let _ = basin
+                                    .delete_stream(DeleteStreamInput::new(stream_name))
+                                    .await;
+                                return Err(e);
+                            }
+                            None => write_done = true,
                         }
                     }
-                }
-            } else {
-                let write_stream = ops::tput_write(&s2, &args);
-                let read_stream = ops::tput_read(&s2, &args);
-                let mut write_stream = std::pin::pin!(write_stream);
-                let mut read_stream = std::pin::pin!(read_stream);
-
-                let deadline = tokio::time::Instant::now() + duration;
-                let mut write_done = false;
-                let mut read_done = false;
-
-                loop {
-                    if write_done && read_done {
-                        break;
-                    }
-                    select! {
-                        _ = tokio::time::sleep_until(deadline) => break,
-                        _ = tokio::signal::ctrl_c() => break,
-                        result = write_stream.next(), if !write_done => {
-                            match result {
-                                Some(Ok(sample)) => {
-                                    update_bar(&write_bar, &sample);
-                                    write_sample = Some(sample);
-                                }
-                                Some(Err(e)) => {
-                                    write_bar.finish_and_clear();
-                                    read_bar.finish_and_clear();
-                                    return Err(e);
-                                }
-                                None => write_done = true,
+                    result = read_stream.next(), if !read_done => {
+                        match result {
+                            Some(Ok(sample)) => {
+                                update_bar(&read_bar, &sample);
+                                read_sample = Some(sample);
                             }
-                        }
-                        result = read_stream.next(), if !read_done => {
-                            match result {
-                                Some(Ok(sample)) => {
-                                    update_bar(&read_bar, &sample);
-                                    read_sample = Some(sample);
-                                }
-                                Some(Err(e)) => {
-                                    write_bar.finish_and_clear();
-                                    read_bar.finish_and_clear();
-                                    return Err(e);
-                                }
-                                None => read_done = true,
+                            Some(Err(e)) => {
+                                write_bar.finish_and_clear();
+                                read_bar.finish_and_clear();
+                                let _ = basin
+                                    .delete_stream(DeleteStreamInput::new(stream_name.clone()))
+                                    .await;
+                                return Err(e);
                             }
+                            None => read_done = true,
                         }
                     }
                 }
@@ -790,6 +809,11 @@ async fn run() -> Result<(), CliError> {
                     sample.elapsed.as_secs_f64()
                 );
             }
+
+            basin
+                .delete_stream(DeleteStreamInput::new(stream_name))
+                .await
+                .map_err(|e| CliError::op(OpKind::Tput, e))?;
         }
     }
 

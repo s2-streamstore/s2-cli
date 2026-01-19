@@ -9,7 +9,8 @@ use crate::record_format::{
 };
 use crate::types::{
     AccessTokenMatcher, BasinConfig, BasinMatcher, Interval, Operation, PermittedOperationGroups,
-    S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StreamConfig, StreamMatcher,
+    S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass, StreamConfig,
+    StreamMatcher,
 };
 
 const STYLES: styling::Styles = styling::Styles::styled()
@@ -503,9 +504,12 @@ pub struct TailArgs {
 
 #[derive(Args, Debug)]
 pub struct PingArgs {
-    /// S2 URI of the format: s2://{basin}/{stream}
-    #[arg(value_name = "S2_URI")]
-    pub uri: S2BasinAndStreamUri,
+    /// Name of the basin to use for the test.
+    pub basin: S2BasinUri,
+
+    /// Storage class for the test stream. Uses basin default if not specified.
+    #[arg(short = 'c', long)]
+    pub storage_class: Option<StorageClass>,
 
     /// Send a batch after this interval.
     ///
@@ -519,39 +523,23 @@ pub struct PingArgs {
     #[arg(short = 'b', long, default_value_t = 32 * 1024)]
     pub batch_bytes: u64,
 
-    /// Stop after sending this number of batches.
-    #[arg(short = 'n', long)]
-    pub num_batches: Option<usize>,
-}
-
-#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
-pub enum TputMode {
-    /// Write-only throughput test.
-    Write,
-    /// Read-only throughput test.
-    Read,
-    /// Both write and read throughput test.
-    #[default]
-    Both,
+    /// Run test for this duration.
+    #[arg(short = 'd', long, default_value = "10s")]
+    pub duration: humantime::Duration,
 }
 
 #[derive(Args, Debug)]
 pub struct TputArgs {
-    /// S2 URI of the format: s2://{basin}/{stream}
-    #[arg(value_name = "S2_URI")]
-    pub uri: S2BasinAndStreamUri,
+    /// Name of the basin to use for the test.
+    pub basin: S2BasinUri,
 
-    /// Throughput test mode.
-    #[arg(short = 'm', long, default_value = "both")]
-    pub mode: TputMode,
+    /// Storage class for the test stream. Uses basin default if not specified.
+    #[arg(short = 'c', long)]
+    pub storage_class: Option<StorageClass>,
 
     /// Record size in bytes.
-    #[arg(short = 's', long, default_value_t = 1024)]
+    #[arg(short = 'b', long, default_value_t = 1024)]
     pub record_bytes: u64,
-
-    /// Number of records per batch.
-    #[arg(short = 'r', long, default_value_t = 100)]
-    pub records_per_batch: usize,
 
     /// Run test for this duration.
     #[arg(short = 'd', long, default_value = "10s")]
