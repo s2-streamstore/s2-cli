@@ -698,16 +698,20 @@ async fn run() -> Result<(), CliError> {
 
             let multi = MultiProgress::new();
 
-            let write_bar = multi.add(ProgressBar::no_length().with_prefix("write").with_style(
-                ProgressStyle::default_bar()
-                    .template("{prefix:.bold.blue} {pos:>10} MiB/s  {msg}")
-                    .expect("valid template"),
-            ));
-            let read_bar = multi.add(ProgressBar::no_length().with_prefix("read").with_style(
-                ProgressStyle::default_bar()
-                    .template("{prefix:.bold.green} {pos:>10} MiB/s  {msg}")
-                    .expect("valid template"),
-            ));
+            let write_bar = multi.add(
+                ProgressBar::no_length().with_prefix("write").with_style(
+                    ProgressStyle::default_bar()
+                        .template("{prefix:.bold.blue} {pos:>10} MiB/s  {msg}")
+                        .expect("valid template"),
+                ),
+            );
+            let read_bar = multi.add(
+                ProgressBar::no_length().with_prefix("read").with_style(
+                    ProgressStyle::default_bar()
+                        .template("{prefix:.bold.green} {pos:>10} MiB/s  {msg}")
+                        .expect("valid template"),
+                ),
+            );
 
             let update_bar = |bar: &ProgressBar, sample: &TputSample| {
                 bar.set_position(sample.mib_per_sec() as u64);
@@ -722,28 +726,28 @@ async fn run() -> Result<(), CliError> {
             let mut write_sample: Option<TputSample> = None;
             let mut read_sample: Option<TputSample> = None;
 
-            let write_stop = Arc::new(AtomicBool::new(false));
-            let write_stream = ops::tput_write(stream.clone(), record_bytes, write_stop.clone());
-            let read_stream = ops::tput_read(stream.clone(), record_bytes, write_stop.clone());
+            let stop = Arc::new(AtomicBool::new(false));
+            let write_complete = Arc::new(AtomicBool::new(false));
+            let write_stream = ops::tput_write(stream.clone(), record_bytes, stop.clone());
+            let read_stream = ops::tput_read(stream.clone(), record_bytes, write_complete.clone());
             let mut write_stream = std::pin::pin!(write_stream);
             let mut read_stream = std::pin::pin!(read_stream);
 
             let deadline = tokio::time::Instant::now() + duration;
-            let mut write_done = false;
             let mut read_done = false;
 
             loop {
-                if write_done && read_done {
+                if write_complete.load(Ordering::Relaxed) && read_done {
                     break;
                 }
                 select! {
-                    _ = tokio::time::sleep_until(deadline), if !write_stop.load(Ordering::Relaxed) => {
-                        write_stop.store(true, Ordering::Relaxed);
+                    _ = tokio::time::sleep_until(deadline), if !stop.load(Ordering::Relaxed) => {
+                        stop.store(true, Ordering::Relaxed);
                     }
-                    _ = tokio::signal::ctrl_c(), if !write_stop.load(Ordering::Relaxed) => {
-                        write_stop.store(true, Ordering::Relaxed);
+                    _ = tokio::signal::ctrl_c(), if !stop.load(Ordering::Relaxed) => {
+                        stop.store(true, Ordering::Relaxed);
                     }
-                    result = write_stream.next(), if !write_done => {
+                    result = write_stream.next(), if !write_complete.load(Ordering::Relaxed) => {
                         match result {
                             Some(Ok(sample)) => {
                                 update_bar(&write_bar, &sample);
@@ -757,7 +761,9 @@ async fn run() -> Result<(), CliError> {
                                     .await;
                                 return Err(e);
                             }
-                            None => write_done = true,
+                            None => {
+                                write_complete.store(true, Ordering::Relaxed);
+                            }
                         }
                     }
                     result = read_stream.next(), if !read_done => {

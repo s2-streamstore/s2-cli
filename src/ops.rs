@@ -983,13 +983,11 @@ fn tput_read_inner(
             }
         }
 
-        if let Some(expected) = expected_records {
-            if total_records < expected {
+        if let Some(expected) = expected_records && total_records < expected {
                 yield Err(CliError::TputVerification(format!(
                     "catchup read incomplete: expected at least {expected} records, read {total_records}"
                 )));
                 return;
-            }
         }
 
         yield Ok(TputSample {
