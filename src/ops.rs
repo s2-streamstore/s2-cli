@@ -922,14 +922,13 @@ fn tput_read_inner(
 
         let mut total_bytes: u64 = 0;
         let mut total_records: u64 = 0;
-        let mut at_tail = false;
         let start = Instant::now();
         let mut last_yield = Instant::now();
 
         while let Some(batch_result) = read_session.next().await {
             match batch_result {
                 Ok(batch) => {
-                    at_tail = batch.records.last().is_some_and(|record| {
+                    let is_last_record = batch.records.last().is_some_and(|record| {
                         batch
                             .tail
                             .as_ref()
@@ -973,7 +972,7 @@ fn tput_read_inner(
                         });
                     }
 
-                    if write_stop.load(Ordering::Relaxed) && at_tail {
+                    if write_stop.load(Ordering::Relaxed) && is_last_record {
                         break;
                     }
                 }
