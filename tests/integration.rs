@@ -570,7 +570,7 @@ fn trim_stream() {
     s2().args(["trim", &uri, "3"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("@"));
+        .stderr(predicate::str::contains("@"));
 
     cleanup_stream(&basin, &stream);
 }
@@ -591,7 +591,7 @@ fn fence_stream() {
     s2().args(["fence", &uri, "my-token"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("@"));
+        .stderr(predicate::str::contains("@"));
 
     cleanup_stream(&basin, &stream);
 }
@@ -1113,6 +1113,133 @@ fn reconfigure_stream_timestamping() {
         .assert()
         .success()
         .stdout(predicate::str::contains("arrival").or(predicate::str::contains("Arrival")));
+
+    cleanup_stream(&basin, &stream);
+}
+
+#[test]
+#[serial]
+fn read_with_timestamp() {
+    if !has_token() {
+        return;
+    }
+
+    let basin = ensure_test_basin("test-cli-data");
+    let stream = unique_name("test-data-ts-read");
+    let uri = format!("s2://{basin}/{stream}");
+
+    s2().args(["create-stream", &uri]).assert().success();
+
+    s2().args(["append", &uri, "--format", "text", "--input", "-"])
+        .write_stdin("timestamp test record\n")
+        .assert()
+        .success();
+
+    s2().args([
+        "read",
+        &uri,
+        "--timestamp",
+        "0",
+        "--count",
+        "1",
+        "--format",
+        "text",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("timestamp test record"));
+
+    cleanup_stream(&basin, &stream);
+}
+
+#[test]
+#[serial]
+fn trim_with_fencing_token() {
+    if !has_token() {
+        return;
+    }
+
+    let basin = ensure_test_basin("test-cli-data");
+    let stream = unique_name("test-data-trim-fence");
+    let uri = format!("s2://{basin}/{stream}");
+
+    s2().args(["create-stream", &uri]).assert().success();
+
+    let temp = tempfile::TempDir::new().unwrap();
+    let input = temp.path().join("input.txt");
+    {
+        let mut f = std::fs::File::create(&input).unwrap();
+        for i in 1..=5 {
+            writeln!(f, "record {i}").unwrap();
+        }
+    }
+
+    s2().args([
+        "append",
+        &uri,
+        "--format",
+        "text",
+        "--input",
+        input.to_str().unwrap(),
+    ])
+    .assert()
+    .success();
+
+    s2().args(["fence", &uri, "trim-token"]).assert().success();
+
+    s2().args(["trim", &uri, "3", "--fencing-token", "trim-token"])
+        .assert()
+        .success();
+
+    s2().args(["trim", &uri, "4", "--fencing-token", "wrong-token"])
+        .assert()
+        .failure();
+
+    cleanup_stream(&basin, &stream);
+}
+
+#[test]
+#[serial]
+fn fence_with_existing_token() {
+    if !has_token() {
+        return;
+    }
+
+    let basin = ensure_test_basin("test-cli-data");
+    let stream = unique_name("test-data-fence-existing");
+    let uri = format!("s2://{basin}/{stream}");
+
+    s2().args(["create-stream", &uri]).assert().success();
+
+    s2().args(["fence", &uri, "token-v1"]).assert().success();
+
+    s2().args(["fence", &uri, "token-v2", "--fencing-token", "token-v1"])
+        .assert()
+        .success();
+
+    s2().args(["fence", &uri, "token-v3", "--fencing-token", "wrong-token"])
+        .assert()
+        .failure();
+
+    cleanup_stream(&basin, &stream);
+}
+
+#[test]
+#[serial]
+fn ping_stream() {
+    if !has_token() {
+        return;
+    }
+
+    let basin = ensure_test_basin("test-cli-data");
+    let stream = unique_name("test-data-ping");
+    let uri = format!("s2://{basin}/{stream}");
+
+    s2().args(["create-stream", &uri]).assert().success();
+
+    s2().args(["ping", &uri, "--num-batches", "2"])
+        .assert()
+        .success();
 
     cleanup_stream(&basin, &stream);
 }
