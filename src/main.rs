@@ -723,9 +723,8 @@ async fn run() -> Result<(), CliError> {
             let mut read_sample: Option<TputSample> = None;
 
             let write_stop = Arc::new(AtomicBool::new(false));
-            let read_stop = Arc::new(AtomicBool::new(false));
             let write_stream = ops::tput_write(stream.clone(), record_bytes, write_stop.clone());
-            let read_stream = ops::tput_read(stream.clone(), record_bytes, read_stop.clone());
+            let read_stream = ops::tput_read(stream.clone(), record_bytes, write_stop.clone());
             let mut write_stream = std::pin::pin!(write_stream);
             let mut read_stream = std::pin::pin!(read_stream);
 
@@ -758,10 +757,7 @@ async fn run() -> Result<(), CliError> {
                                     .await;
                                 return Err(e);
                             }
-                            None => {
-                                write_done = true;
-                                read_stop.store(true, Ordering::Relaxed);
-                            }
+                            None => write_done = true,
                         }
                     }
                     result = read_stream.next(), if !read_done => {

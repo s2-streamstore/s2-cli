@@ -872,9 +872,9 @@ pub fn tput_write(
 pub fn tput_read(
     stream: S2Stream,
     record_bytes: u32,
-    stop: Arc<AtomicBool>,
+    write_stop: Arc<AtomicBool>,
 ) -> impl Stream<Item = Result<TputSample, CliError>> + Send {
-    tput_read_inner(stream, record_bytes, ReadStop::new(), None, stop)
+    tput_read_inner(stream, record_bytes, ReadStop::new(), None, write_stop)
 }
 
 pub fn tput_read_catchup(
@@ -887,7 +887,7 @@ pub fn tput_read_catchup(
         record_bytes,
         ReadStop::new().with_wait(0),
         Some(expected_records),
-        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(true)),
     )
 }
 
@@ -896,7 +896,7 @@ fn tput_read_inner(
     record_bytes: u32,
     stop: ReadStop,
     expected_records: Option<u64>,
-    read_stop: Arc<AtomicBool>,
+    write_stop: Arc<AtomicBool>,
 ) -> impl Stream<Item = Result<TputSample, CliError>> + Send {
     use tokio::time::Instant;
 
@@ -973,7 +973,7 @@ fn tput_read_inner(
                         });
                     }
 
-                    if read_stop.load(Ordering::Relaxed) && at_tail {
+                    if write_stop.load(Ordering::Relaxed) && at_tail {
                         break;
                     }
                 }
