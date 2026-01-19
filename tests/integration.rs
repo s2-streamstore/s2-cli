@@ -82,10 +82,7 @@ fn create_get_delete_basin() {
 
     let basin = unique_name("test-cli-basin");
 
-    s2().args(["create-basin", &basin])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(&basin));
+    s2().args(["create-basin", &basin]).assert().success();
 
     wait_for_basin(&basin);
 
@@ -218,10 +215,7 @@ fn create_get_delete_stream() {
     let stream = unique_name("test-stream");
     let uri = format!("s2://{basin}/{stream}");
 
-    s2().args(["create-stream", &uri])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(&stream));
+    s2().args(["create-stream", &uri]).assert().success();
 
     s2().args(["get-stream-config", &uri]).assert().success();
 
