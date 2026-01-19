@@ -95,6 +95,7 @@ pub enum OpKind {
     Read,
     Tail,
     Ping,
+    Tput,
 }
 
 impl std::fmt::Display for OpKind {

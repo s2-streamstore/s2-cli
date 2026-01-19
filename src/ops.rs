@@ -24,10 +24,10 @@ use crate::cli::{
     CreateBasinArgs, CreateStreamArgs, FenceArgs, GetAccountMetricsArgs, GetBasinMetricsArgs,
     GetStreamMetricsArgs, IssueAccessTokenArgs, ListAccessTokensArgs, ListBasinsArgs,
     ListStreamsArgs, PingArgs, ReadArgs, ReconfigureBasinArgs, ReconfigureStreamArgs, TailArgs,
-    TimeRangeArgs, TrimArgs,
+    TimeRangeArgs, TrimArgs, TputArgs,
 };
 use crate::error::{CliError, OpKind};
-use crate::types::{BasinConfig, Interval, Pong, S2BasinAndStreamUri, StreamConfig};
+use crate::types::{BasinConfig, Interval, Pong, S2BasinAndStreamUri, StreamConfig, TputSample};
 
 pub async fn list_basins<'a>(
     s2: &'a S2,
@@ -745,4 +745,119 @@ async fn ping_inner(
     *seq_num = ack.end.seq_num;
 
     Ok((ping_bytes, ack_at, read_at))
+}
+
+pub fn tput_write<'a>(
+    s2: &'a S2,
+    args: &'a TputArgs,
+) -> impl Stream<Item = Result<TputSample, CliError>> + Send + 'a {
+    use rand::Rng;
+    use tokio::time::Instant;
+
+    let uri = args.uri.clone();
+    let stream = s2.basin(uri.basin).stream(uri.stream);
+
+    let record_bytes = args.record_bytes;
+
+    let producer_config = ProducerConfig::new()
+        .with_batching(BatchingConfig::new().with_linger(Duration::from_millis(5)));
+    let producer = stream.producer(producer_config);
+
+    async_stream::stream! {
+        let body: Vec<u8> = rand::rng()
+            .sample_iter(
+                rand::distr::Uniform::new_inclusive(0, u8::MAX)
+                    .expect("valid range"),
+            )
+            .take(record_bytes as usize)
+            .collect();
+
+        let mut total_bytes: u64 = 0;
+        let mut total_records: u64 = 0;
+        let start = Instant::now();
+
+        let mut pending_acks = FuturesUnordered::new();
+
+        loop {
+            tokio::select! {
+                biased;
+
+                Some(res) = pending_acks.next() => {
+                    match res {
+                        Ok(_ack) => {
+                            total_bytes += record_bytes;
+                            total_records += 1;
+
+                            yield Ok(TputSample {
+                                bytes: total_bytes,
+                                records: total_records,
+                                elapsed: start.elapsed(),
+                            });
+                        }
+                        Err(e) => {
+                            yield Err(CliError::op(OpKind::Tput, e));
+                            return;
+                        }
+                    }
+                }
+
+                permit = producer.reserve(record_bytes as u32) => {
+                    match permit {
+                        Ok(permit) => {
+                            let record = AppendRecord::new(body.clone()).expect("valid record");
+                            pending_acks.push(permit.submit(record));
+                        }
+                        Err(e) => {
+                            yield Err(CliError::op(OpKind::Tput, e));
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn tput_read<'a>(
+    s2: &'a S2,
+    args: &'a TputArgs,
+) -> impl Stream<Item = Result<TputSample, CliError>> + Send + 'a {
+    use tokio::time::Instant;
+
+    let uri = args.uri.clone();
+    let stream = s2.basin(uri.basin).stream(uri.stream);
+
+    async_stream::stream! {
+        let read_input = ReadInput::new()
+            .with_start(ReadStart::new().with_from(ReadFrom::SeqNum(0)));
+        let mut read_session = stream
+            .read_session(read_input)
+            .await
+            .map_err(|e| CliError::op(OpKind::Tput, e))?;
+
+        let mut total_bytes: u64 = 0;
+        let mut total_records: u64 = 0;
+        let start = Instant::now();
+
+        while let Some(batch_result) = read_session.next().await {
+            match batch_result {
+                Ok(batch) => {
+                    let batch_records = batch.records.len() as u64;
+                    let batch_bytes: u64 = batch.records.iter().map(|r| r.body.len() as u64).sum();
+                    total_bytes += batch_bytes;
+                    total_records += batch_records;
+
+                    yield Ok(TputSample {
+                        bytes: total_bytes,
+                        records: total_records,
+                        elapsed: start.elapsed(),
+                    });
+                }
+                Err(e) => {
+                    yield Err(CliError::op(OpKind::Tput, e));
+                    return;
+                }
+            }
+        }
+    }
 }

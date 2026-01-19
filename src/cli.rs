@@ -150,6 +150,9 @@ pub enum Command {
 
     /// Ping a stream to measure append acknowledgement and end-to-end latencies.
     Ping(PingArgs),
+
+    /// Throughput test a stream to measure write and read throughput.
+    Tput(TputArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -519,6 +522,40 @@ pub struct PingArgs {
     /// Stop after sending this number of batches.
     #[arg(short = 'n', long)]
     pub num_batches: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
+pub enum TputMode {
+    /// Write-only throughput test.
+    Write,
+    /// Read-only throughput test.
+    Read,
+    /// Both write and read throughput test.
+    #[default]
+    Both,
+}
+
+#[derive(Args, Debug)]
+pub struct TputArgs {
+    /// S2 URI of the format: s2://{basin}/{stream}
+    #[arg(value_name = "S2_URI")]
+    pub uri: S2BasinAndStreamUri,
+
+    /// Throughput test mode.
+    #[arg(short = 'm', long, default_value = "both")]
+    pub mode: TputMode,
+
+    /// Record size in bytes.
+    #[arg(short = 's', long, default_value_t = 1024)]
+    pub record_bytes: u64,
+
+    /// Number of records per batch.
+    #[arg(short = 'r', long, default_value_t = 100)]
+    pub records_per_batch: usize,
+
+    /// Run test for this duration.
+    #[arg(short = 'd', long, default_value = "10s")]
+    pub duration: humantime::Duration,
 }
 
 /// Time range args for gauge metrics (no interval).

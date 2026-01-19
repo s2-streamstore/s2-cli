@@ -857,6 +857,25 @@ pub struct Pong {
     pub e2e: Duration,
 }
 
+pub struct TputSample {
+    pub bytes: u64,
+    pub records: u64,
+    pub elapsed: Duration,
+}
+
+impl TputSample {
+    pub fn mib_per_sec(&self) -> f64 {
+        let mib = self.bytes as f64 / (1024.0 * 1024.0);
+        let secs = self.elapsed.as_secs_f64();
+        if secs > 0.0 { mib / secs } else { 0.0 }
+    }
+
+    pub fn records_per_sec(&self) -> f64 {
+        let secs = self.elapsed.as_secs_f64();
+        if secs > 0.0 { self.records as f64 / secs } else { 0.0 }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::error::S2UriParseError;

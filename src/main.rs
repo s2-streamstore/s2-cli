@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use clap::Parser;
 use cli::ConfigCommand;
-use cli::{Cli, Command, ListBasinsArgs, ListStreamsArgs};
+use cli::{Cli, Command, ListBasinsArgs, ListStreamsArgs, TputMode};
 use colored::Colorize;
 use config::{
     ConfigKey, load_cli_config, load_config_file, sdk_config, set_config_value, unset_config_value,
@@ -33,6 +33,7 @@ use tokio::select;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 use types::{
     AccessTokenInfo, BasinConfig, LatencyStats, Pong, S2BasinAndMaybeStreamUri, StreamConfig,
+    TputSample,
 };
 
 #[tokio::main]
@@ -621,6 +622,173 @@ async fn run() -> Result<(), CliError> {
                 print_latency_stats(LatencyStats::compute(acks), "Append Acknowledgement");
                 eprintln!();
                 print_latency_stats(LatencyStats::compute(e2es), "End-to-End");
+            }
+        }
+
+        Command::Tput(args) => {
+            let duration = *args.duration;
+            let mode = args.mode;
+
+            let stat_bars = MultiProgress::new();
+
+            let write_bar = ProgressBar::no_length().with_prefix("write").with_style(
+                ProgressStyle::default_bar()
+                    .template("{prefix:.bold.blue} {pos:>10} MiB/s  {msg}")
+                    .expect("valid template"),
+            );
+            let read_bar = ProgressBar::no_length().with_prefix("read").with_style(
+                ProgressStyle::default_bar()
+                    .template("{prefix:.bold.green} {pos:>10} MiB/s  {msg}")
+                    .expect("valid template"),
+            );
+
+            let show_write = matches!(mode, TputMode::Write | TputMode::Both);
+            let show_read = matches!(mode, TputMode::Read | TputMode::Both);
+
+            if show_write {
+                stat_bars.add(write_bar.clone());
+            }
+            if show_read {
+                stat_bars.add(read_bar.clone());
+            }
+
+            let update_bar = |bar: &ProgressBar, sample: &TputSample| {
+                bar.set_position(sample.mib_per_sec() as u64);
+                bar.set_message(format!(
+                    "{:.0} rec/s | {} bytes | {} records",
+                    sample.records_per_sec(),
+                    sample.bytes,
+                    sample.records
+                ));
+            };
+
+            let mut write_sample: Option<TputSample> = None;
+            let mut read_sample: Option<TputSample> = None;
+
+            if show_write && !show_read {
+                let write_stream = ops::tput_write(&s2, &args);
+                let mut write_stream = std::pin::pin!(write_stream);
+
+                let deadline = tokio::time::Instant::now() + duration;
+
+                loop {
+                    select! {
+                        _ = tokio::time::sleep_until(deadline) => break,
+                        _ = tokio::signal::ctrl_c() => break,
+                        result = write_stream.next() => {
+                            match result {
+                                Some(Ok(sample)) => {
+                                    update_bar(&write_bar, &sample);
+                                    write_sample = Some(sample);
+                                }
+                                Some(Err(e)) => {
+                                    write_bar.finish_and_clear();
+                                    return Err(e);
+                                }
+                                None => break,
+                            }
+                        }
+                    }
+                }
+            } else if show_read && !show_write {
+                let read_stream = ops::tput_read(&s2, &args);
+                let mut read_stream = std::pin::pin!(read_stream);
+
+                let deadline = tokio::time::Instant::now() + duration;
+
+                loop {
+                    select! {
+                        _ = tokio::time::sleep_until(deadline) => break,
+                        _ = tokio::signal::ctrl_c() => break,
+                        result = read_stream.next() => {
+                            match result {
+                                Some(Ok(sample)) => {
+                                    update_bar(&read_bar, &sample);
+                                    read_sample = Some(sample);
+                                }
+                                Some(Err(e)) => {
+                                    read_bar.finish_and_clear();
+                                    return Err(e);
+                                }
+                                None => break,
+                            }
+                        }
+                    }
+                }
+            } else {
+                let write_stream = ops::tput_write(&s2, &args);
+                let read_stream = ops::tput_read(&s2, &args);
+                let mut write_stream = std::pin::pin!(write_stream);
+                let mut read_stream = std::pin::pin!(read_stream);
+
+                let deadline = tokio::time::Instant::now() + duration;
+                let mut write_done = false;
+                let mut read_done = false;
+
+                loop {
+                    if write_done && read_done {
+                        break;
+                    }
+                    select! {
+                        _ = tokio::time::sleep_until(deadline) => break,
+                        _ = tokio::signal::ctrl_c() => break,
+                        result = write_stream.next(), if !write_done => {
+                            match result {
+                                Some(Ok(sample)) => {
+                                    update_bar(&write_bar, &sample);
+                                    write_sample = Some(sample);
+                                }
+                                Some(Err(e)) => {
+                                    write_bar.finish_and_clear();
+                                    read_bar.finish_and_clear();
+                                    return Err(e);
+                                }
+                                None => write_done = true,
+                            }
+                        }
+                        result = read_stream.next(), if !read_done => {
+                            match result {
+                                Some(Ok(sample)) => {
+                                    update_bar(&read_bar, &sample);
+                                    read_sample = Some(sample);
+                                }
+                                Some(Err(e)) => {
+                                    write_bar.finish_and_clear();
+                                    read_bar.finish_and_clear();
+                                    return Err(e);
+                                }
+                                None => read_done = true,
+                            }
+                        }
+                    }
+                }
+            }
+
+            write_bar.finish_and_clear();
+            read_bar.finish_and_clear();
+
+            eprintln!();
+            if let Some(sample) = write_sample {
+                eprintln!(
+                    "{}: {:.2} MiB/s, {:.0} records/s ({} bytes, {} records in {:.2}s)",
+                    "Write".bold().blue(),
+                    sample.mib_per_sec(),
+                    sample.records_per_sec(),
+                    sample.bytes,
+                    sample.records,
+                    sample.elapsed.as_secs_f64()
+                );
+            }
+            if let Some(sample) = read_sample {
+                eprintln!(
+                    "{}: {:.2} MiB/s, {:.0} records/s ({} bytes, {} records in {:.2}s)",
+                    "Read".bold().green(),
+                    sample.mib_per_sec(),
+                    sample.records_per_sec(),
+                    sample.bytes,
+                    sample.records,
+                    sample.elapsed.as_secs_f64()
+                );
             }
         }
     }
