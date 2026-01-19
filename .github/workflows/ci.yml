@@ -58,7 +58,7 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run integration tests
-        run: cargo nextest run --test e2e -j 1
+        run: cargo nextest run --test integration -j 1
   build-s2-lite:
     name: Build S2-lite
     uses: s2-streamstore/s2/.github/workflows/build-s2-lite.yml@main
@@ -77,7 +77,7 @@ jobs:
             "repo": "${{ github.repository }}",
             "ref": "${{ github.ref }}",
             "lang": "rust",
-            "test_cmd": "cargo install cargo-nextest && cargo nextest run --test e2e -j 1"
+            "test_cmd": "cargo install cargo-nextest && cargo nextest run --test integration -j 1"
           }
         ]
   lint:

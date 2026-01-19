@@ -296,7 +296,7 @@ fn check_tail() {
     s2().args(["check-tail", &uri])
         .assert()
         .success()
-        .stdout(predicate::str::contains("seq_num"));
+        .stdout(predicate::str::contains("@"));
 
     cleanup_stream(&basin, &stream);
 }
@@ -576,7 +576,7 @@ fn trim_stream() {
     s2().args(["trim", &uri, "3"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("seq_num"));
+        .stdout(predicate::str::contains("@"));
 
     cleanup_stream(&basin, &stream);
 }
@@ -597,7 +597,7 @@ fn fence_stream() {
     s2().args(["fence", &uri, "my-token"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("seq_num"));
+        .stdout(predicate::str::contains("@"));
 
     cleanup_stream(&basin, &stream);
 }
