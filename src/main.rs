@@ -803,6 +803,61 @@ async fn run() -> Result<(), CliError> {
                 );
             }
 
+            eprintln!();
+            eprintln!("Waiting 20s before catchup read...");
+            tokio::time::sleep(Duration::from_secs(20)).await;
+
+            let tail = stream
+                .check_tail()
+                .await
+                .map_err(|e| CliError::op(OpKind::Tput, e))?;
+            let expected_records = tail.seq_num;
+
+            let catchup_bar = ProgressBar::no_length().with_prefix("catchup").with_style(
+                ProgressStyle::default_bar()
+                    .template("{prefix:.bold.cyan} {pos:>10} MiB/s  {msg}")
+                    .expect("valid template"),
+            );
+            stat_bars.add(catchup_bar.clone());
+            let mut catchup_sample: Option<TputSample> = None;
+            let catchup_stream =
+                ops::tput_read_catchup(stream.clone(), record_bytes, expected_records);
+            let mut catchup_stream = std::pin::pin!(catchup_stream);
+
+            while let Some(result) = catchup_stream.next().await {
+                match result {
+                    Ok(sample) => {
+                        update_bar(&catchup_bar, &sample);
+                        catchup_sample = Some(sample);
+                    }
+                    Err(e) => {
+                        catchup_bar.finish_and_clear();
+                        let _ = basin
+                            .delete_stream(DeleteStreamInput::new(stream_name.clone()))
+                            .await;
+                        return Err(e);
+                    }
+                }
+            }
+
+            catchup_bar.finish_and_clear();
+            if let Some(sample) = catchup_sample {
+                eprintln!(
+                    "{}: {:.2} MiB/s, {:.0} records/s ({} bytes, {} records in {:.2}s)",
+                    "Catchup".bold().cyan(),
+                    sample.mib_per_sec(),
+                    sample.records_per_sec(),
+                    sample.bytes,
+                    sample.records,
+                    sample.elapsed.as_secs_f64()
+                );
+            } else {
+                eprintln!(
+                    "{}: no records available for catchup read",
+                    "Catchup".bold().cyan()
+                );
+            }
+
             basin
                 .delete_stream(DeleteStreamInput::new(stream_name))
                 .await

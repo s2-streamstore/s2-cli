@@ -858,6 +858,28 @@ pub fn tput_read(
     stream: S2Stream,
     record_bytes: u32,
 ) -> impl Stream<Item = Result<TputSample, CliError>> + Send {
+    tput_read_inner(stream, record_bytes, ReadStop::new(), None)
+}
+
+pub fn tput_read_catchup(
+    stream: S2Stream,
+    record_bytes: u32,
+    expected_records: u64,
+) -> impl Stream<Item = Result<TputSample, CliError>> + Send {
+    tput_read_inner(
+        stream,
+        record_bytes,
+        ReadStop::new().with_wait(0),
+        Some(expected_records),
+    )
+}
+
+fn tput_read_inner(
+    stream: S2Stream,
+    record_bytes: u32,
+    stop: ReadStop,
+    expected_records: Option<u64>,
+) -> impl Stream<Item = Result<TputSample, CliError>> + Send {
     use tokio::time::Instant;
 
     async_stream::stream! {
@@ -870,7 +892,8 @@ pub fn tput_read(
         }
 
         let read_input = ReadInput::new()
-            .with_start(ReadStart::new().with_from(ReadFrom::SeqNum(0)));
+            .with_start(ReadStart::new().with_from(ReadFrom::SeqNum(0)))
+            .with_stop(stop);
         let mut read_session = stream
             .read_session(read_input)
             .await
@@ -929,6 +952,15 @@ pub fn tput_read(
                     yield Err(CliError::op(OpKind::Tput, e));
                     return;
                 }
+            }
+        }
+
+        if let Some(expected) = expected_records {
+            if total_records < expected {
+                yield Err(CliError::TputVerification(format!(
+                    "catchup read incomplete: expected at least {expected} records, read {total_records}"
+                )));
+                return;
             }
         }
     }
