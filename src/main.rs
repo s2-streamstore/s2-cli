@@ -8,6 +8,8 @@ mod tput;
 mod types;
 
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use clap::Parser;
@@ -694,21 +696,18 @@ async fn run() -> Result<(), CliError> {
 
             let stream = basin.stream(stream_name.clone());
 
-            let stat_bars = MultiProgress::new();
+            let multi = MultiProgress::new();
 
-            let write_bar = ProgressBar::no_length().with_prefix("write").with_style(
+            let write_bar = multi.add(ProgressBar::no_length().with_prefix("write").with_style(
                 ProgressStyle::default_bar()
                     .template("{prefix:.bold.blue} {pos:>10} MiB/s  {msg}")
                     .expect("valid template"),
-            );
-            let read_bar = ProgressBar::no_length().with_prefix("read").with_style(
+            ));
+            let read_bar = multi.add(ProgressBar::no_length().with_prefix("read").with_style(
                 ProgressStyle::default_bar()
                     .template("{prefix:.bold.green} {pos:>10} MiB/s  {msg}")
                     .expect("valid template"),
-            );
-
-            stat_bars.add(write_bar.clone());
-            stat_bars.add(read_bar.clone());
+            ));
 
             let update_bar = |bar: &ProgressBar, sample: &TputSample| {
                 bar.set_position(sample.mib_per_sec() as u64);
@@ -723,8 +722,10 @@ async fn run() -> Result<(), CliError> {
             let mut write_sample: Option<TputSample> = None;
             let mut read_sample: Option<TputSample> = None;
 
-            let write_stream = ops::tput_write(stream.clone(), record_bytes);
-            let read_stream = ops::tput_read(stream.clone(), record_bytes);
+            let write_stop = Arc::new(AtomicBool::new(false));
+            let read_stop = Arc::new(AtomicBool::new(false));
+            let write_stream = ops::tput_write(stream.clone(), record_bytes, write_stop.clone());
+            let read_stream = ops::tput_read(stream.clone(), record_bytes, read_stop.clone());
             let mut write_stream = std::pin::pin!(write_stream);
             let mut read_stream = std::pin::pin!(read_stream);
 
@@ -737,8 +738,12 @@ async fn run() -> Result<(), CliError> {
                     break;
                 }
                 select! {
-                    _ = tokio::time::sleep_until(deadline) => break,
-                    _ = tokio::signal::ctrl_c() => break,
+                    _ = tokio::time::sleep_until(deadline), if !write_stop.load(Ordering::Relaxed) => {
+                        write_stop.store(true, Ordering::Relaxed);
+                    }
+                    _ = tokio::signal::ctrl_c(), if !write_stop.load(Ordering::Relaxed) => {
+                        write_stop.store(true, Ordering::Relaxed);
+                    }
                     result = write_stream.next(), if !write_done => {
                         match result {
                             Some(Ok(sample)) => {
@@ -753,7 +758,10 @@ async fn run() -> Result<(), CliError> {
                                     .await;
                                 return Err(e);
                             }
-                            None => write_done = true,
+                            None => {
+                                write_done = true;
+                                read_stop.store(true, Ordering::Relaxed);
+                            }
                         }
                     }
                     result = read_stream.next(), if !read_done => {
@@ -780,7 +788,7 @@ async fn run() -> Result<(), CliError> {
             read_bar.finish_and_clear();
 
             eprintln!();
-            if let Some(sample) = write_sample {
+            if let Some(sample) = &write_sample {
                 eprintln!(
                     "{}: {:.2} MiB/s, {:.0} records/s ({} bytes, {} records in {:.2}s)",
                     "Write".bold().blue(),
@@ -791,7 +799,7 @@ async fn run() -> Result<(), CliError> {
                     sample.elapsed.as_secs_f64()
                 );
             }
-            if let Some(sample) = read_sample {
+            if let Some(sample) = &read_sample {
                 eprintln!(
                     "{}: {:.2} MiB/s, {:.0} records/s ({} bytes, {} records in {:.2}s)",
                     "Read".bold().green(),
@@ -803,22 +811,17 @@ async fn run() -> Result<(), CliError> {
                 );
             }
 
+            let expected_records = write_sample.as_ref().map(|s| s.records).unwrap_or(0);
+
             eprintln!();
             eprintln!("Waiting 20s before catchup read...");
             tokio::time::sleep(Duration::from_secs(20)).await;
-
-            let tail = stream
-                .check_tail()
-                .await
-                .map_err(|e| CliError::op(OpKind::Tput, e))?;
-            let expected_records = tail.seq_num;
 
             let catchup_bar = ProgressBar::no_length().with_prefix("catchup").with_style(
                 ProgressStyle::default_bar()
                     .template("{prefix:.bold.cyan} {pos:>10} MiB/s  {msg}")
                     .expect("valid template"),
             );
-            stat_bars.add(catchup_bar.clone());
             let mut catchup_sample: Option<TputSample> = None;
             let catchup_stream =
                 ops::tput_read_catchup(stream.clone(), record_bytes, expected_records);

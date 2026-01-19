@@ -1,4 +1,6 @@
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures::{Stream, StreamExt, TryStreamExt, stream, stream::FuturesUnordered};
@@ -748,6 +750,7 @@ async fn ping_inner(
 pub fn tput_write(
     stream: S2Stream,
     record_bytes: u32,
+    stop: Arc<AtomicBool>,
 ) -> impl Stream<Item = Result<TputSample, CliError>> + Send {
     use tokio::time::Instant;
 
@@ -802,7 +805,13 @@ pub fn tput_write(
         let mut pending_acks = FuturesUnordered::new();
         let mut next_seq: u64 = 0;
 
+        let stopping = || stop.load(Ordering::Relaxed);
+
         loop {
+            if stopping() && pending_acks.is_empty() {
+                break;
+            }
+
             tokio::select! {
                 biased;
 
@@ -828,7 +837,7 @@ pub fn tput_write(
                     }
                 }
 
-                permit = producer.reserve(record_metered_bytes) => {
+                permit = producer.reserve(record_metered_bytes), if !stopping() => {
                     match permit {
                         Ok(permit) => {
                             let record = match tput::record(&body, next_seq) {
@@ -851,14 +860,21 @@ pub fn tput_write(
                 }
             }
         }
+
+        yield Ok(TputSample {
+            bytes: total_bytes,
+            records: total_records,
+            elapsed: start.elapsed(),
+        });
     }
 }
 
 pub fn tput_read(
     stream: S2Stream,
     record_bytes: u32,
+    stop: Arc<AtomicBool>,
 ) -> impl Stream<Item = Result<TputSample, CliError>> + Send {
-    tput_read_inner(stream, record_bytes, ReadStop::new(), None)
+    tput_read_inner(stream, record_bytes, ReadStop::new(), None, stop)
 }
 
 pub fn tput_read_catchup(
@@ -871,6 +887,7 @@ pub fn tput_read_catchup(
         record_bytes,
         ReadStop::new().with_wait(0),
         Some(expected_records),
+        Arc::new(AtomicBool::new(false)),
     )
 }
 
@@ -879,6 +896,7 @@ fn tput_read_inner(
     record_bytes: u32,
     stop: ReadStop,
     expected_records: Option<u64>,
+    read_stop: Arc<AtomicBool>,
 ) -> impl Stream<Item = Result<TputSample, CliError>> + Send {
     use tokio::time::Instant;
 
@@ -900,16 +918,23 @@ fn tput_read_inner(
             .map_err(|e| CliError::op(OpKind::Tput, e))?;
 
         let expected_body = tput::body(record_bytes);
-        let mut expected_seq: u64 = 0;
+        let mut next_seq: u64 = 0;
 
         let mut total_bytes: u64 = 0;
         let mut total_records: u64 = 0;
+        let mut at_tail = false;
         let start = Instant::now();
         let mut last_yield = Instant::now();
 
         while let Some(batch_result) = read_session.next().await {
             match batch_result {
                 Ok(batch) => {
+                    at_tail = batch.records.last().is_some_and(|record| {
+                        batch
+                            .tail
+                            .as_ref()
+                            .is_some_and(|tail| record.seq_num == tail.seq_num - 1)
+                    });
                     let batch_records = batch.records.len() as u64;
                     let mut batch_bytes: u64 = 0;
                     for record in &batch.records {
@@ -926,11 +951,11 @@ fn tput_read_inner(
                                 return;
                             }
                         };
-                        if seq == expected_seq {
-                            expected_seq = expected_seq.wrapping_add(1);
-                        } else if seq > expected_seq {
+                        if seq == next_seq {
+                            next_seq = next_seq.wrapping_add(1);
+                        } else if seq > next_seq {
                             yield Err(CliError::TputVerification(format!(
-                                "record order mismatch: expected {expected_seq}, got {seq}"
+                                "record order mismatch: expected {next_seq}, got {seq}"
                             )));
                             return;
                         }
@@ -946,6 +971,10 @@ fn tput_read_inner(
                             records: total_records,
                             elapsed: start.elapsed(),
                         });
+                    }
+
+                    if read_stop.load(Ordering::Relaxed) && at_tail {
+                        break;
                     }
                 }
                 Err(e) => {
@@ -963,5 +992,11 @@ fn tput_read_inner(
                 return;
             }
         }
+
+        yield Ok(TputSample {
+            bytes: total_bytes,
+            records: total_records,
+            elapsed: start.elapsed(),
+        });
     }
 }
