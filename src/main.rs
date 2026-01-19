@@ -25,7 +25,8 @@ use record_format::{
 use s2_sdk::{
     S2,
     types::{
-        BasinState, CreateStreamInput, DeleteStreamInput, MeteredBytes, Metric, StreamConfig as SdkStreamConfig,
+        BasinState, CreateStreamInput, DeleteOnEmptyConfig, DeleteStreamInput, MeteredBytes,
+        Metric, RetentionPolicy, StreamConfig as SdkStreamConfig, StreamName,
     },
 };
 use strum::VariantNames;
@@ -506,7 +507,7 @@ async fn run() -> Result<(), CliError> {
             prepare_spinner.enable_steady_tick(Duration::from_millis(50));
 
             let basin = s2.basin(args.basin.0);
-            let stream_name: s2_sdk::types::StreamName = format!(
+            let stream_name: StreamName = format!(
                 "ping-{}",
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -521,9 +522,9 @@ async fn run() -> Result<(), CliError> {
                 stream_config = stream_config.with_storage_class(sc.into());
             }
             stream_config = stream_config
-                .with_retention_policy(s2_sdk::types::RetentionPolicy::Age(3600))
+                .with_retention_policy(RetentionPolicy::Age(3600))
                 .with_delete_on_empty(
-                    s2_sdk::types::DeleteOnEmptyConfig::new().with_min_age(Duration::from_secs(60)),
+                    DeleteOnEmptyConfig::new().with_min_age(Duration::from_secs(60)),
                 );
 
             let create_input =
@@ -672,7 +673,7 @@ async fn run() -> Result<(), CliError> {
             let record_bytes = args.record_bytes;
 
             let basin = s2.basin(args.basin.0);
-            let stream_name: s2_sdk::types::StreamName = format!(
+            let stream_name: StreamName = format!(
                 "tput-{}",
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -687,9 +688,9 @@ async fn run() -> Result<(), CliError> {
                 stream_config = stream_config.with_storage_class(sc.into());
             }
             stream_config = stream_config
-                .with_retention_policy(s2_sdk::types::RetentionPolicy::Age(3600))
+                .with_retention_policy(RetentionPolicy::Age(3600))
                 .with_delete_on_empty(
-                    s2_sdk::types::DeleteOnEmptyConfig::new().with_min_age(Duration::from_secs(60)),
+                    DeleteOnEmptyConfig::new().with_min_age(Duration::from_secs(60)),
                 );
 
             let create_input =
@@ -756,7 +757,7 @@ async fn run() -> Result<(), CliError> {
                                 write_bar.finish_and_clear();
                                 read_bar.finish_and_clear();
                                 let _ = basin
-                                    .delete_stream(DeleteStreamInput::new(stream_name))
+                                    .delete_stream(DeleteStreamInput::new(stream_name.clone()))
                                     .await;
                                 return Err(e);
                             }
