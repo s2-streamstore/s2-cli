@@ -872,7 +872,11 @@ impl TputSample {
 
     pub fn records_per_sec(&self) -> f64 {
         let secs = self.elapsed.as_secs_f64();
-        if secs > 0.0 { self.records as f64 / secs } else { 0.0 }
+        if secs > 0.0 {
+            self.records as f64 / secs
+        } else {
+            0.0
+        }
     }
 }
 

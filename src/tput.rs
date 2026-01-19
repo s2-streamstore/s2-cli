@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use rand::{RngCore, SeedableRng};
-use s2_sdk::types::{AppendRecord, Header, SequencedRecord, ValidationError, RECORD_BATCH_MAX};
+use s2_sdk::types::{AppendRecord, Header, RECORD_BATCH_MAX, SequencedRecord, ValidationError};
 
 pub const TPUT_SEQ_HEADER_NAME: &[u8] = b"tput-seq";
 const TPUT_SEQ_HEADER_VALUE_LEN: usize = 8;
@@ -10,8 +10,7 @@ const TPUT_RECORD_OVERHEAD_BYTES: usize = TPUT_RECORD_BASE_OVERHEAD
     + 2 * TPUT_HEADER_COUNT
     + TPUT_SEQ_HEADER_NAME.len()
     + TPUT_SEQ_HEADER_VALUE_LEN;
-pub const TPUT_MAX_RECORD_BYTES: u32 =
-    (RECORD_BATCH_MAX.bytes - TPUT_RECORD_OVERHEAD_BYTES) as u32;
+pub const TPUT_MAX_RECORD_BYTES: u32 = (RECORD_BATCH_MAX.bytes - TPUT_RECORD_OVERHEAD_BYTES) as u32;
 
 pub fn body(record_bytes: u32) -> Bytes {
     // Deterministic payload so the reader can verify data integrity.
