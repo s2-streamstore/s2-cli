@@ -59,7 +59,7 @@ pub async fn list_basins<'a>(
 
         Ok(Box::pin(stream::iter(page.values.into_iter().map(Ok))))
     } else {
-        let mut input = ListAllBasinsInput::new();
+        let mut input = ListAllBasinsInput::new().with_ignore_pending_deletions(false);
         if let Some(p) = prefix {
             input = input.with_prefix(p);
         }
@@ -320,7 +320,7 @@ pub async fn list_streams<'a>(
 
         Ok(Box::pin(stream::iter(page.values.into_iter().map(Ok))))
     } else {
-        let mut input = ListAllStreamsInput::new();
+        let mut input = ListAllStreamsInput::new().with_ignore_pending_deletions(false);
         if let Some(p) = prefix {
             input = input.with_prefix(p);
         }
