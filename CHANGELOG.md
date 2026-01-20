@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.2] - 2026-01-20
+
+### Features
+
+- Add musl static binaries for linux ([#200](https://github.com/s2-streamstore/s2-cli/issues/200))
+
+### Miscellaneous Tasks
+
+- Llm generated tests ([#197](https://github.com/s2-streamstore/s2-cli/issues/197))
+
 ## [0.24.1] - 2026-01-18
 
 ### Miscellaneous Tasks
