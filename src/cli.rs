@@ -532,7 +532,7 @@ pub struct BenchArgs {
     pub duration: humantime::Duration,
 
     /// Delay before starting the catchup read.
-    #[arg(long, default_value = "20s")]
+    #[arg(short = 'w', long, default_value = "20s")]
     pub catchup_delay: humantime::Duration,
 }
 
