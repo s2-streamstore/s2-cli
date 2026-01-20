@@ -528,7 +528,7 @@ pub struct BenchArgs {
     pub target_mibps: NonZeroU64,
 
     /// Run test for this duration.
-    #[arg(short = 'd', long, default_value = "30s")]
+    #[arg(short = 'd', long, default_value = "60s")]
     pub duration: humantime::Duration,
 
     /// Skip the catchup read after the live run.

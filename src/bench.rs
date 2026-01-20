@@ -379,7 +379,7 @@ fn bench_read_inner(
                                 e2e_latencies.push(Duration::from_micros(
                                     now_micros.saturating_sub(record.timestamp),
                                 ));
-                                batch_bytes += record.body.len() as u64;
+                                batch_bytes += record_size as u64;
                             }
                             total_bytes += batch_bytes;
                             total_records += batch_records;

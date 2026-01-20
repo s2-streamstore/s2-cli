@@ -532,7 +532,7 @@ async fn run() -> Result<(), CliError> {
                 .map_err(|e| CliError::op(OpKind::Bench, e))?;
 
             eprintln!(
-                "Running for {} targeting {} MiB/s with {} byte records",
+                "Running for {} targeting {} MiB/s with {} byte records, Ctrl+C to end early",
                 args.duration, args.target_mibps, args.record_size,
             );
 
