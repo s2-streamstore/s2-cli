@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.0] - 2026-01-20
+
+### Features
+
+- [**breaking**] Replaced `ping` command which only tested latency. with a new `bench` command that measures throughput and latency.
+
+### Bug Fixes
+
+- Use cross instead of musl.cc for static bins ([#202](https://github.com/s2-streamstore/s2-cli/issues/202))
+
+### Refactor
+
+- `--catchup-delay` arg for `bench` ([#203](https://github.com/s2-streamstore/s2-cli/issues/203))
+
 ## [0.24.2] - 2026-01-20
 
 ### Features
