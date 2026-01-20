@@ -20,6 +20,19 @@ jobs:
               CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+            deps: |
+              sudo apt-get update
+              sudo apt-get install -y musl-tools
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-musl
+            deps: |
+              sudo apt-get update
+              sudo apt-get install -y wget
+              wget -q https://musl.cc/aarch64-linux-musl-cross.tgz
+              tar xzf aarch64-linux-musl-cross.tgz
+              echo "$PWD/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
           - os: macos-latest
             target: x86_64-apple-darwin
           - os: macos-latest
@@ -42,6 +55,9 @@ jobs:
       - name: Set CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+      - name: Set CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc" >> $GITHUB_ENV
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
       - name: Create pem and certificate.der files
