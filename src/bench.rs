@@ -424,7 +424,7 @@ pub async fn run(
     record_size: usize,
     target_mibps: NonZeroU64,
     duration: Duration,
-    catchup: bool,
+    catchup_delay: Duration,
 ) -> Result<(), CliError> {
     assert!(record_size <= RECORD_BATCH_MAX.bytes);
 
@@ -634,66 +634,61 @@ pub async fn run(
         )));
     }
 
-    if catchup {
-        eprintln!();
-        eprintln!("Waiting 20s before catchup read...");
-        tokio::time::sleep(Duration::from_secs(20)).await;
+    eprintln!();
+    eprintln!("Waiting {:?} before catchup read...", catchup_delay);
+    tokio::time::sleep(catchup_delay).await;
 
-        let catchup_bar = ProgressBar::no_length()
-            .with_prefix(format!("{:width$}", "catchup", width = prefix_width))
-            .with_style(
-                ProgressStyle::default_bar()
-                    .template("{prefix:.bold.cyan} {msg}")
-                    .expect("valid template"),
-            );
-        let mut catchup_sample: Option<BenchReadSample> = None;
-        let mut catchup_run_hash: Option<u64> = None;
-        let catchup_stream = bench_read_catchup(stream.clone(), record_size, bench_start);
-        let mut catchup_stream = std::pin::pin!(catchup_stream);
-        while let Some(result) = catchup_stream.next().await {
-            match result {
-                Ok(sample) => {
-                    update_bench_bar(&catchup_bar, &sample);
-                    if let Some(hash) = sample.run_hash {
-                        catchup_run_hash = Some(hash);
-                    }
-                    catchup_sample = Some(sample);
+    let catchup_bar = ProgressBar::no_length()
+        .with_prefix(format!("{:width$}", "catchup", width = prefix_width))
+        .with_style(
+            ProgressStyle::default_bar()
+                .template("{prefix:.bold.cyan} {msg}")
+                .expect("valid template"),
+        );
+    let mut catchup_sample: Option<BenchReadSample> = None;
+    let mut catchup_run_hash: Option<u64> = None;
+    let catchup_stream = bench_read_catchup(stream.clone(), record_size, bench_start);
+    let mut catchup_stream = std::pin::pin!(catchup_stream);
+    while let Some(result) = catchup_stream.next().await {
+        match result {
+            Ok(sample) => {
+                update_bench_bar(&catchup_bar, &sample);
+                if let Some(hash) = sample.run_hash {
+                    catchup_run_hash = Some(hash);
                 }
-                Err(e) => {
-                    catchup_bar.finish_and_clear();
-                    return Err(e);
-                }
+                catchup_sample = Some(sample);
+            }
+            Err(e) => {
+                catchup_bar.finish_and_clear();
+                return Err(e);
             }
         }
+    }
 
-        catchup_bar.finish_and_clear();
-        if let Some(sample) = catchup_sample {
-            eprintln!(
-                "{}: {:.2} MiB/s, {:.0} records/s ({} bytes, {} records in {:.2}s)",
-                "Catchup".bold().cyan(),
-                sample.mib_per_sec(),
-                sample.records_per_sec(),
-                sample.bytes,
-                sample.records,
-                sample.elapsed.as_secs_f64()
-            );
-        } else {
-            eprintln!(
-                "{}: no records available for catchup read",
-                "Catchup".bold().cyan()
-            );
-        }
-
-        if let (Some(expected), Some(actual)) = (write_run_hash, catchup_run_hash)
-            && expected != actual
-        {
-            return Err(CliError::BenchVerification(format!(
-                "catchup read hash mismatch: expected {expected}, got {actual}"
-            )));
-        }
+    catchup_bar.finish_and_clear();
+    if let Some(sample) = catchup_sample {
+        eprintln!(
+            "{}: {:.2} MiB/s, {:.0} records/s ({} bytes, {} records in {:.2}s)",
+            "Catchup".bold().cyan(),
+            sample.mib_per_sec(),
+            sample.records_per_sec(),
+            sample.bytes,
+            sample.records,
+            sample.elapsed.as_secs_f64()
+        );
     } else {
-        eprintln!();
-        eprintln!("Skipping catchup read.");
+        eprintln!(
+            "{}: no records available for catchup read",
+            "Catchup".bold().cyan()
+        );
+    }
+
+    if let (Some(expected), Some(actual)) = (write_run_hash, catchup_run_hash)
+        && expected != actual
+    {
+        return Err(CliError::BenchVerification(format!(
+            "catchup read hash mismatch: expected {expected}, got {actual}"
+        )));
     }
 
     Ok(())
