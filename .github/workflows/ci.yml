@@ -20,7 +20,7 @@ jobs:
     permissions:
       contents: none
     name: CI
-    needs: [test, lint, s2-lite-integration]
+    needs: [test, lint, s2-integration, s2-lite-integration]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -40,9 +40,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - name: Run unit tests
-        run: cargo nextest run --lib
-  integration:
+      - name: Run CLI validation tests
+        run: cargo nextest run --test cli
+  s2-integration:
+    name: S2 Integration
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     env:
