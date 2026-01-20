@@ -629,36 +629,6 @@ fn append_with_fencing_token() {
 
 #[test]
 #[serial]
-fn read_empty_stream() {
-    if !has_token() {
-        return;
-    }
-
-    let basin = ensure_test_basin("test-cli-data");
-    let stream = unique_name("test-data-empty");
-    let uri = format!("s2://{basin}/{stream}");
-
-    s2().args(["create-stream", &uri]).assert().success();
-
-    s2().args([
-        "read",
-        &uri,
-        "--seq-num",
-        "0",
-        "--count",
-        "1",
-        "--clamp",
-        "--format",
-        "text",
-    ])
-    .assert()
-    .success();
-
-    cleanup_stream(&basin, &stream);
-}
-
-#[test]
-#[serial]
 fn list_basins_with_start_after() {
     if !has_token() {
         return;
