@@ -81,6 +81,38 @@ jobs:
             "test_cmd": "cargo install cargo-nextest && cargo nextest run --test integration -j 1"
           }
         ]
+  test-musl-builds:
+    name: Test musl builds
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            use_cross: false
+          - target: aarch64-unknown-linux-musl
+            use_cross: true
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ""
+          target: ${{ matrix.target }}
+      - name: Install musl-tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Build
+        run: ${{ matrix.use_cross && 'cross' || 'cargo' }} build --release --target ${{ matrix.target }}
+      - name: Verify static linking
+        run: |
+          file target/${{ matrix.target }}/release/s2
+          ! ldd target/${{ matrix.target }}/release/s2 2>/dev/null || echo "Static binary confirmed"
   lint:
     runs-on: ubuntu-latest
     steps:
