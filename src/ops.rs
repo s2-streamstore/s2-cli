@@ -23,11 +23,11 @@ use s2_sdk::{
 use crate::cli::{
     CreateBasinArgs, CreateStreamArgs, FenceArgs, GetAccountMetricsArgs, GetBasinMetricsArgs,
     GetStreamMetricsArgs, IssueAccessTokenArgs, ListAccessTokensArgs, ListBasinsArgs,
-    ListStreamsArgs, PingArgs, ReadArgs, ReconfigureBasinArgs, ReconfigureStreamArgs, TailArgs,
+    ListStreamsArgs, ReadArgs, ReconfigureBasinArgs, ReconfigureStreamArgs, TailArgs,
     TimeRangeArgs, TrimArgs,
 };
 use crate::error::{CliError, OpKind};
-use crate::types::{BasinConfig, Interval, Pong, S2BasinAndStreamUri, StreamConfig};
+use crate::types::{BasinConfig, Interval, S2BasinAndStreamUri, StreamConfig};
 
 pub async fn list_basins<'a>(
     s2: &'a S2,
@@ -584,56 +584,6 @@ pub async fn tail(
     ))
 }
 
-pub fn ping<'a>(
-    s2: &'a S2,
-    args: PingArgs,
-    batch_bytes: u64,
-) -> impl Stream<Item = Result<Pong, CliError>> + Send + 'a {
-    use tokio::time::Instant;
-
-    let stream = s2.basin(args.uri.basin).stream(args.uri.stream);
-
-    async_stream::stream! {
-        let tail = stream
-            .check_tail()
-            .await
-            .map_err(|e| CliError::op(OpKind::Ping, e))?;
-
-        let read_input = ReadInput::new()
-            .with_start(ReadStart::new().with_from(ReadFrom::SeqNum(tail.seq_num)));
-        let mut read_session = stream
-            .read_session(read_input)
-            .await
-            .map_err(|e| CliError::op(OpKind::Ping, e))?;
-
-        let mut seq_num = tail.seq_num;
-
-        // Warmup ping
-        if let Err(e) = ping_inner(&stream, &mut read_session, &mut seq_num, batch_bytes).await {
-            yield Err(e);
-            return;
-        }
-
-        loop {
-            let sent_at = Instant::now();
-
-            match ping_inner(&stream, &mut read_session, &mut seq_num, batch_bytes).await {
-                Ok((ping_bytes, ack_at, read_at)) => {
-                    yield Ok(Pong {
-                        bytes: ping_bytes,
-                        ack: ack_at - sent_at,
-                        e2e: read_at - sent_at,
-                    });
-                }
-                Err(e) => {
-                    yield Err(e);
-                    return;
-                }
-            }
-        }
-    }
-}
-
 async fn append_command(
     stream: &S2Stream,
     command: CommandRecord,
@@ -688,61 +638,4 @@ fn time_range_and_interval(
         range = range.with_interval(interval.into());
     }
     range
-}
-
-async fn ping_inner(
-    stream: &S2Stream,
-    read_session: &mut Streaming<ReadBatch>,
-    seq_num: &mut u64,
-    batch_bytes: u64,
-) -> Result<(u64, tokio::time::Instant, tokio::time::Instant), CliError> {
-    use rand::Rng;
-    use tokio::time::Instant;
-
-    let jitter_factor = rand::rng().random::<f64>() * 0.5 + 0.75;
-    let ping_bytes = (batch_bytes as f64 * jitter_factor) as u64;
-
-    let body: Vec<u8> = rand::rng()
-        .sample_iter(
-            rand::distr::Uniform::new_inclusive(0, u8::MAX)
-                .expect("0..=255 is a valid range for Uniform distribution"),
-        )
-        .take(ping_bytes as usize)
-        .collect();
-
-    let record = AppendRecord::new(body.clone()).expect("pre validated append record bytes");
-    let records =
-        AppendRecordBatch::try_from_iter([record]).expect("single record should fit in batch");
-    let append_input = AppendInput::new(records).with_match_seq_num(*seq_num);
-
-    let (append_result, read_result) = tokio::join!(
-        async {
-            let res = stream.append(append_input).await;
-            (Instant::now(), res)
-        },
-        async {
-            let res = read_session.next().await;
-            (Instant::now(), res)
-        }
-    );
-
-    let (ack_at, ack) = append_result;
-    let ack = ack.map_err(|e| CliError::op(OpKind::Ping, e))?;
-
-    let (read_at, batch) = read_result;
-    let batch = batch
-        .ok_or(CliError::PingStreamMutated)?
-        .map_err(|e| CliError::op(OpKind::Ping, e))?;
-
-    if batch.records.len() != 1 {
-        return Err(CliError::PingStreamMutated);
-    }
-    let record = &batch.records[0];
-    if record.body.as_ref() != body || !record.headers.is_empty() {
-        return Err(CliError::PingStreamMutated);
-    }
-
-    *seq_num = ack.end.seq_num;
-
-    Ok((ping_bytes, ack_at, read_at))
 }

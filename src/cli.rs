@@ -3,13 +3,15 @@ use s2_sdk::types::{
     AccessTokenId, AccessTokenIdPrefix, AccessTokenIdStartAfter, BasinNamePrefix,
     BasinNameStartAfter, FencingToken, StreamNamePrefix, StreamNameStartAfter,
 };
+use std::num::NonZeroU64;
 
 use crate::record_format::{
     RecordFormat, RecordsIn, RecordsOut, parse_records_input_source, parse_records_output_source,
 };
 use crate::types::{
     AccessTokenMatcher, BasinConfig, BasinMatcher, Interval, Operation, PermittedOperationGroups,
-    S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StreamConfig, StreamMatcher,
+    S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass, StreamConfig,
+    StreamMatcher,
 };
 
 const STYLES: styling::Styles = styling::Styles::styled()
@@ -148,8 +150,8 @@ pub enum Command {
     /// Tail a stream, showing the last N records.
     Tail(TailArgs),
 
-    /// Ping a stream to measure append acknowledgement and end-to-end latencies.
-    Ping(PingArgs),
+    /// Benchmark a stream to measure throughput and latency.
+    Bench(BenchArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -499,26 +501,39 @@ pub struct TailArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct PingArgs {
-    /// S2 URI of the format: s2://{basin}/{stream}
-    #[arg(value_name = "S2_URI")]
-    pub uri: S2BasinAndStreamUri,
+pub struct BenchArgs {
+    /// Name of the basin to use for the test.
+    pub basin: S2BasinUri,
 
-    /// Send a batch after this interval.
-    ///
-    /// Will be set to a minimum of 100ms.
-    #[arg(short = 'i', long, default_value = "500ms")]
-    pub interval: humantime::Duration,
+    /// Storage class for the test stream. Uses basin default if not specified.
+    #[arg(short = 'c', long)]
+    pub storage_class: Option<StorageClass>,
 
-    /// Batch size in bytes. A jitter (+/- 25%) will be added.
-    ///
-    /// Truncated to a maximum of 128 KiB.
-    #[arg(short = 'b', long, default_value_t = 32 * 1024)]
-    pub batch_bytes: u64,
+    /// Total metered record size in bytes (includes headers and overhead).
+    #[arg(
+        short = 'b',
+        long,
+        default_value_t = 8*1024,
+        value_parser = clap::value_parser!(u32).range(128..1024*1024),
+    )]
+    pub record_size: u32,
 
-    /// Stop after sending this number of batches.
-    #[arg(short = 'n', long)]
-    pub num_batches: Option<usize>,
+    /// Target write throughput in MiB/s.
+    #[arg(
+        short = 't',
+        long,
+        value_parser = clap::value_parser!(NonZeroU64),
+        default_value_t = NonZeroU64::new(1).expect("non-zero")
+    )]
+    pub target_mibps: NonZeroU64,
+
+    /// Run test for this duration.
+    #[arg(short = 'd', long, default_value = "30s")]
+    pub duration: humantime::Duration,
+
+    /// Skip the catchup read after the live run.
+    #[arg(long, default_value_t = false)]
+    pub no_catchup: bool,
 }
 
 /// Time range args for gauge metrics (no interval).
