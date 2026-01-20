@@ -1044,7 +1044,8 @@ fn bench_stream() {
         "1s",
         "--target-mibps",
         "1",
-        "--no-catchup",
+        "--catchup-delay",
+        "0s",
     ])
     .assert()
     .success();

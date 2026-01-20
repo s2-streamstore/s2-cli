@@ -541,7 +541,7 @@ async fn run() -> Result<(), CliError> {
                 args.record_size as usize,
                 args.target_mibps,
                 *args.duration,
-                !args.no_catchup,
+                *args.catchup_delay,
             )
             .await;
             let delete_res = basin

@@ -531,9 +531,9 @@ pub struct BenchArgs {
     #[arg(short = 'd', long, default_value = "60s")]
     pub duration: humantime::Duration,
 
-    /// Skip the catchup read after the live run.
-    #[arg(long, default_value_t = false)]
-    pub no_catchup: bool,
+    /// Delay before starting the catchup read.
+    #[arg(short = 'w', long, default_value = "20s")]
+    pub catchup_delay: humantime::Duration,
 }
 
 /// Time range args for gauge metrics (no interval).
