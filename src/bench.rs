@@ -19,8 +19,8 @@ use s2_sdk::{
         SequencedRecord, ValidationError,
     },
 };
-use tokio::time::Instant;
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 use xxhash_rust::xxh3::Xxh3Default;
 
 use crate::error::{CliError, OpKind};
