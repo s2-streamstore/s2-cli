@@ -851,12 +851,6 @@ impl LatencyStats {
     }
 }
 
-pub struct Pong {
-    pub bytes: u64,
-    pub ack: Duration,
-    pub e2e: Duration,
-}
-
 #[cfg(test)]
 mod tests {
     use crate::error::S2UriParseError;

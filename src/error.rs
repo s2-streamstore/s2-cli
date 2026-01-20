@@ -45,11 +45,14 @@ pub enum CliError {
     #[error("Failed to initialize a `Record Reader`! {0}")]
     RecordReaderInit(String),
 
-    #[error("Stream mutated concurrently during ping")]
-    PingStreamMutated,
-
     #[error("Failed to write records: {0}")]
     RecordWrite(String),
+
+    #[error("Benchmark verification failed: {0}")]
+    #[diagnostic(help(
+        "Ensure no other writers are mutating the stream during bench and retry the test."
+    ))]
+    BenchVerification(String),
 
     #[error("{}: {}", .0, .1)]
     #[diagnostic(help("{}", HELP))]
@@ -94,7 +97,7 @@ pub enum OpKind {
     Append,
     Read,
     Tail,
-    Ping,
+    Bench,
 }
 
 impl std::fmt::Display for OpKind {

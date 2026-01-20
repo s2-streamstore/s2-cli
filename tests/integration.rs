@@ -1034,16 +1034,18 @@ fn fence_with_existing_token() {
 
 #[test]
 #[serial]
-fn ping_stream() {
+fn bench_stream() {
     let basin = ensure_test_basin("test-cli-data");
-    let stream = unique_name("test-data-ping");
-    let uri = format!("s2://{basin}/{stream}");
 
-    s2().args(["create-stream", &uri]).assert().success();
-
-    s2().args(["ping", &uri, "--num-batches", "2"])
-        .assert()
-        .success();
-
-    cleanup_stream(&basin, &stream);
+    s2().args([
+        "bench",
+        &basin,
+        "--duration",
+        "1s",
+        "--target-mibps",
+        "1",
+        "--no-catchup",
+    ])
+    .assert()
+    .success();
 }
