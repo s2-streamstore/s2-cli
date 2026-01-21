@@ -251,19 +251,31 @@ async fn run() -> Result<(), CliError> {
         }
 
         Command::GetAccountMetrics(args) => {
-            let plot = args.plot;
+            let plot = match &args.metric {
+                cli::AccountMetricCommand::ActiveBasins(a) => a.plot,
+                cli::AccountMetricCommand::AccountOps(a) => a.time_range.plot,
+            };
             let metrics = ops::get_account_metrics(&s2, args).await?;
             print_metrics(&metrics, plot);
         }
 
         Command::GetBasinMetrics(args) => {
-            let plot = args.plot;
+            let plot = match &args.metric {
+                cli::BasinMetricCommand::Storage(a) => a.plot,
+                cli::BasinMetricCommand::AppendOps(a) => a.time_range.plot,
+                cli::BasinMetricCommand::ReadOps(a) => a.time_range.plot,
+                cli::BasinMetricCommand::ReadThroughput(a) => a.time_range.plot,
+                cli::BasinMetricCommand::AppendThroughput(a) => a.time_range.plot,
+                cli::BasinMetricCommand::BasinOps(a) => a.time_range.plot,
+            };
             let metrics = ops::get_basin_metrics(&s2, args).await?;
             print_metrics(&metrics, plot);
         }
 
         Command::GetStreamMetrics(args) => {
-            let plot = args.plot;
+            let plot = match &args.metric {
+                cli::StreamMetricCommand::Storage(a) => a.plot,
+            };
             let metrics = ops::get_stream_metrics(&s2, args).await?;
             print_metrics(&metrics, plot);
         }
@@ -649,15 +661,43 @@ fn print_metrics(metrics: &[Metric], plot: bool) {
         value: String,
     }
 
-    for metric in metrics {
-        match metric {
-            Metric::Scalar(m) => {
-                println!("{}: {} {}", m.name, m.value, format_unit(m.unit));
+    if plot {
+        // Collect all time-series metrics for plotting together
+        let mut series: Vec<(&str, &[(u32, f64)], s2_sdk::types::MetricUnit)> = Vec::new();
+
+        for metric in metrics {
+            match metric {
+                Metric::Scalar(m) => {
+                    // Scalars don't make sense to plot, just print them
+                    println!("{}: {} {}", m.name, m.value, format_unit(m.unit));
+                }
+                Metric::Accumulation(m) => {
+                    series.push((&m.name, &m.values, m.unit));
+                }
+                Metric::Gauge(m) => {
+                    series.push((&m.name, &m.values, m.unit));
+                }
+                Metric::Label(m) => {
+                    println!("{}:", m.name);
+                    for label in &m.values {
+                        println!("  {}", label);
+                    }
+                }
             }
-            Metric::Accumulation(m) => {
-                if plot {
-                    print_metric_plot(&m.name, &m.values, m.unit);
-                } else {
+        }
+
+        if !series.is_empty() {
+            if let Err(e) = render_metrics_chart(&series) {
+                eprintln!("Failed to render chart: {}", e);
+            }
+        }
+    } else {
+        for metric in metrics {
+            match metric {
+                Metric::Scalar(m) => {
+                    println!("{}: {} {}", m.name, m.value, format_unit(m.unit));
+                }
+                Metric::Accumulation(m) => {
                     let rows: Vec<AccumulationRow> = m
                         .values
                         .iter()
@@ -689,11 +729,7 @@ fn print_metrics(metrics: &[Metric], plot: bool) {
                     println!("{table}");
                     println!();
                 }
-            }
-            Metric::Gauge(m) => {
-                if plot {
-                    print_metric_plot(&m.name, &m.values, m.unit);
-                } else {
+                Metric::Gauge(m) => {
                     let rows: Vec<GaugeRow> = m
                         .values
                         .iter()
@@ -720,40 +756,167 @@ fn print_metrics(metrics: &[Metric], plot: bool) {
                     println!("{table}");
                     println!();
                 }
-            }
-            Metric::Label(m) => {
-                println!("{}:", m.name);
-                for label in &m.values {
-                    println!("  {}", label);
+                Metric::Label(m) => {
+                    println!("{}:", m.name);
+                    for label in &m.values {
+                        println!("  {}", label);
+                    }
                 }
             }
         }
     }
 }
 
-fn print_metric_plot(name: &str, values: &[(u32, f64)], unit: s2_sdk::types::MetricUnit) {
-    use rasciigraph::{plot, Config};
+fn render_metrics_chart(
+    series: &[(&str, &[(u32, f64)], s2_sdk::types::MetricUnit)],
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crossterm::{
+        execute,
+        terminal::{disable_raw_mode, enable_raw_mode},
+    };
+    use ratatui::{
+        backend::CrosstermBackend,
+        style::{Color, Style, Stylize},
+        symbols::Marker,
+        widgets::{Axis, Block, Chart, Dataset, GraphType},
+        Terminal,
+    };
+    use std::io::stdout;
 
-    if values.is_empty() {
-        println!("{}: (no data)", name);
-        return;
+    if series.is_empty() {
+        println!("(no data to plot)");
+        return Ok(());
     }
 
-    let data: Vec<f64> = values.iter().map(|(_, v)| *v).collect();
+    // Colors for different series
+    const COLORS: &[Color] = &[
+        Color::Cyan,
+        Color::Yellow,
+        Color::Magenta,
+        Color::Green,
+        Color::Red,
+        Color::Blue,
+    ];
 
-    // Build time range label
-    let start_time = format_timestamp(values.first().unwrap().0);
-    let end_time = format_timestamp(values.last().unwrap().0);
+    // Find global time bounds across all series
+    let mut min_ts = u32::MAX;
+    let mut max_ts = u32::MIN;
+    let mut max_val: f64 = 0.0;
 
-    let caption = format!("{} ({}) | {} to {}", name, format_unit(unit), start_time, end_time);
+    for (_, values, _) in series {
+        for (ts, val) in *values {
+            min_ts = min_ts.min(*ts);
+            max_ts = max_ts.max(*ts);
+            max_val = max_val.max(*val);
+        }
+    }
 
-    let graph = plot(
-        data,
-        Config::default()
-            .with_height(10)
-            .with_caption(caption),
-    );
+    if min_ts == u32::MAX {
+        println!("(no data to plot)");
+        return Ok(());
+    }
 
-    println!("{graph}");
-    println!();
+    // Add some padding to max_val for visual clarity
+    let y_max = if max_val == 0.0 { 1.0 } else { max_val * 1.1 };
+
+    // Convert data to f64 coordinates (normalized time on x-axis)
+    let time_range = (max_ts - min_ts) as f64;
+    let datasets_data: Vec<Vec<(f64, f64)>> = series
+        .iter()
+        .map(|(_, values, _)| {
+            values
+                .iter()
+                .map(|(ts, val)| {
+                    let x = if time_range > 0.0 {
+                        (*ts - min_ts) as f64 / time_range * 100.0
+                    } else {
+                        50.0 // Single point, center it
+                    };
+                    (x, *val)
+                })
+                .collect()
+        })
+        .collect();
+
+    // Build datasets
+    let datasets: Vec<Dataset> = series
+        .iter()
+        .zip(datasets_data.iter())
+        .enumerate()
+        .map(|(i, ((name, _, _), data))| {
+            Dataset::default()
+                .name(*name)
+                .marker(Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(Style::default().fg(COLORS[i % COLORS.len()]))
+                .data(data)
+        })
+        .collect();
+
+    // Format axis labels
+    let start_label = format_timestamp(min_ts);
+    let end_label = format_timestamp(max_ts);
+
+    // Get terminal size for chart dimensions
+    let (_, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+    let chart_height = (term_height.saturating_sub(4)).min(20).max(10) as u16;
+
+    // Determine unit label from first series
+    let unit_label = format_unit(series[0].2);
+
+    let x_axis = Axis::default()
+        .title(format!("{} → {}", start_label, end_label).dim())
+        .style(Style::default().fg(Color::Gray))
+        .bounds([0.0, 100.0]);
+
+    let y_axis = Axis::default()
+        .title(unit_label)
+        .style(Style::default().fg(Color::Gray))
+        .bounds([0.0, y_max])
+        .labels(["0".to_string(), format!("{:.0}", y_max / 2.0), format!("{:.0}", y_max)]);
+
+    let chart = Chart::new(datasets)
+        .block(Block::bordered().title("Metrics"))
+        .x_axis(x_axis)
+        .y_axis(y_axis);
+
+    // Render to terminal
+    enable_raw_mode()?;
+
+    {
+        let mut stdout = stdout();
+        let backend = CrosstermBackend::new(&mut stdout);
+        let mut terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(chart_height),
+            },
+        )?;
+
+        terminal.draw(|frame| {
+            frame.render_widget(chart, frame.area());
+        })?;
+    }
+
+    disable_raw_mode()?;
+
+    // Move cursor to new line after the chart
+    execute!(stdout(), crossterm::cursor::MoveToNextLine(1))?;
+
+    // Print legend
+    for (i, (name, _, _)) in series.iter().enumerate() {
+        let color = COLORS[i % COLORS.len()];
+        let color_code = match color {
+            Color::Cyan => "\x1b[36m",
+            Color::Yellow => "\x1b[33m",
+            Color::Magenta => "\x1b[35m",
+            Color::Green => "\x1b[32m",
+            Color::Red => "\x1b[31m",
+            Color::Blue => "\x1b[34m",
+            _ => "\x1b[0m",
+        };
+        println!("{}■\x1b[0m {}", color_code, name);
+    }
+
+    Ok(())
 }

@@ -556,6 +556,10 @@ pub struct TimeRangeArgs {
     /// End time as human-friendly delta from current time (e.g., "2h", "1d", "0s").
     #[arg(long, group = "end_time")]
     pub end_ago: Option<humantime::Duration>,
+
+    /// Display metrics as an ASCII plot instead of a table.
+    #[arg(long)]
+    pub plot: bool,
 }
 
 /// Time range args for accumulation metrics (with interval).
