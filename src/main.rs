@@ -641,6 +641,61 @@ fn format_timestamp(ts: u32) -> String {
     humantime::format_rfc3339_seconds(time).to_string()
 }
 
+fn format_timestamp_short(ts: u32) -> String {
+    // Format as "MM/DD HH:MM" without external deps
+    // Using a simple calculation from unix timestamp
+    let secs = ts as i64;
+
+    // Calculate days since epoch and time of day
+    let days_since_epoch = secs / 86400;
+    let time_of_day = secs % 86400;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+
+    // Convert days since epoch to month/day (simplified, assumes UTC)
+    // This is an approximation that works for display purposes
+    let (month, day) = days_to_month_day(days_since_epoch);
+
+    format!("{:02}/{:02} {:02}:{:02}", month, day, hours, minutes)
+}
+
+fn days_to_month_day(days_since_epoch: i64) -> (u32, u32) {
+    // Simplified date calculation from days since 1970-01-01
+    let mut days = days_since_epoch;
+    let mut year = 1970i32;
+
+    loop {
+        let days_in_year = if is_leap_year(year) { 366 } else { 365 };
+        if days < days_in_year {
+            break;
+        }
+        days -= days_in_year;
+        year += 1;
+    }
+
+    let leap = is_leap_year(year);
+    let days_in_months: [i64; 12] = if leap {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+
+    let mut month = 1u32;
+    for &dim in &days_in_months {
+        if days < dim {
+            break;
+        }
+        days -= dim;
+        month += 1;
+    }
+
+    (month, days as u32 + 1)
+}
+
+fn is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
 fn format_unit(unit: s2_sdk::types::MetricUnit) -> &'static str {
     match unit {
         s2_sdk::types::MetricUnit::Bytes => "bytes",
@@ -776,7 +831,7 @@ fn render_metrics_chart(
     };
     use ratatui::{
         backend::CrosstermBackend,
-        style::{Color, Style, Stylize},
+        style::{Color, Style},
         symbols::Marker,
         widgets::{Axis, Block, Chart, Dataset, GraphType},
         Terminal,
@@ -853,21 +908,28 @@ fn render_metrics_chart(
         })
         .collect();
 
-    // Format axis labels
-    let start_label = format_timestamp(min_ts);
-    let end_label = format_timestamp(max_ts);
-
     // Get terminal size for chart dimensions
-    let (_, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+    let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
     let chart_height = (term_height.saturating_sub(4)).min(20).max(10) as u16;
+
+    // Generate x-axis tick labels (timestamps)
+    // Decide how many ticks based on terminal width
+    let num_ticks = ((term_width / 25) as usize).clamp(3, 7);
+    let x_labels: Vec<String> = (0..num_ticks)
+        .map(|i| {
+            let frac = i as f64 / (num_ticks - 1) as f64;
+            let ts = min_ts + ((max_ts - min_ts) as f64 * frac) as u32;
+            format_timestamp_short(ts)
+        })
+        .collect();
 
     // Determine unit label from first series
     let unit_label = format_unit(series[0].2);
 
     let x_axis = Axis::default()
-        .title(format!("{} → {}", start_label, end_label).dim())
         .style(Style::default().fg(Color::Gray))
-        .bounds([0.0, 100.0]);
+        .bounds([0.0, 100.0])
+        .labels(x_labels);
 
     let y_axis = Axis::default()
         .title(unit_label)
