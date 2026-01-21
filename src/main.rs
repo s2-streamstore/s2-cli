@@ -703,6 +703,40 @@ fn format_unit(unit: s2_sdk::types::MetricUnit) -> &'static str {
     }
 }
 
+fn format_bytes_human(bytes: f64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    const TIB: f64 = GIB * 1024.0;
+
+    if bytes >= TIB {
+        format!("{:.1} TiB", bytes / TIB)
+    } else if bytes >= GIB {
+        format!("{:.1} GiB", bytes / GIB)
+    } else if bytes >= MIB {
+        format!("{:.1} MiB", bytes / MIB)
+    } else if bytes >= KIB {
+        format!("{:.1} KiB", bytes / KIB)
+    } else {
+        format!("{:.0} B", bytes)
+    }
+}
+
+fn format_value_human(value: f64, unit: s2_sdk::types::MetricUnit) -> String {
+    match unit {
+        s2_sdk::types::MetricUnit::Bytes => format_bytes_human(value),
+        s2_sdk::types::MetricUnit::Operations => {
+            if value >= 1_000_000.0 {
+                format!("{:.1}M", value / 1_000_000.0)
+            } else if value >= 1_000.0 {
+                format!("{:.1}K", value / 1_000.0)
+            } else {
+                format!("{:.0}", value)
+            }
+        }
+    }
+}
+
 fn print_metrics(metrics: &[Metric], plot: bool) {
     #[derive(Tabled)]
     struct AccumulationRow {
@@ -853,16 +887,29 @@ fn render_metrics_chart(
         Color::Blue,
     ];
 
-    // Find global time bounds across all series
+    // Find global time bounds and detect interval across all series
     let mut min_ts = u32::MAX;
     let mut max_ts = u32::MIN;
     let mut max_val: f64 = 0.0;
+    let mut detected_interval: Option<u32> = None;
 
     for (_, values, _) in series {
         for (ts, val) in *values {
             min_ts = min_ts.min(*ts);
             max_ts = max_ts.max(*ts);
             max_val = max_val.max(*val);
+        }
+        // Detect interval from consecutive timestamps
+        if values.len() >= 2 && detected_interval.is_none() {
+            let intervals: Vec<u32> = values
+                .windows(2)
+                .map(|w| w[1].0.saturating_sub(w[0].0))
+                .filter(|&d| d > 0)
+                .collect();
+            if !intervals.is_empty() {
+                // Use the most common interval (mode) or minimum
+                detected_interval = Some(*intervals.iter().min().unwrap());
+            }
         }
     }
 
@@ -871,25 +918,35 @@ fn render_metrics_chart(
         return Ok(());
     }
 
+    // Default to 60 seconds if we couldn't detect an interval
+    let interval = detected_interval.unwrap_or(60);
+
     // Add some padding to max_val for visual clarity
     let y_max = if max_val == 0.0 { 1.0 } else { max_val * 1.1 };
 
-    // Convert data to f64 coordinates (normalized time on x-axis)
+    // Generate all expected timestamps and fill gaps with zeros
     let time_range = (max_ts - min_ts) as f64;
     let datasets_data: Vec<Vec<(f64, f64)>> = series
         .iter()
         .map(|(_, values, _)| {
-            values
-                .iter()
-                .map(|(ts, val)| {
-                    let x = if time_range > 0.0 {
-                        (*ts - min_ts) as f64 / time_range * 100.0
-                    } else {
-                        50.0 // Single point, center it
-                    };
-                    (x, *val)
-                })
-                .collect()
+            // Build a map of timestamp -> value for quick lookup
+            let value_map: std::collections::HashMap<u32, f64> =
+                values.iter().cloned().collect();
+
+            // Generate all timestamps from min to max at the detected interval
+            let mut result = Vec::new();
+            let mut ts = min_ts;
+            while ts <= max_ts {
+                let val = value_map.get(&ts).copied().unwrap_or(0.0);
+                let x = if time_range > 0.0 {
+                    (ts - min_ts) as f64 / time_range * 100.0
+                } else {
+                    50.0
+                };
+                result.push((x, val));
+                ts += interval;
+            }
+            result
         })
         .collect();
 
@@ -923,8 +980,8 @@ fn render_metrics_chart(
         })
         .collect();
 
-    // Determine unit label from first series
-    let unit_label = format_unit(series[0].2);
+    // Determine unit from first series
+    let unit = series[0].2;
 
     let x_axis = Axis::default()
         .style(Style::default().fg(Color::Gray))
@@ -932,10 +989,13 @@ fn render_metrics_chart(
         .labels(x_labels);
 
     let y_axis = Axis::default()
-        .title(unit_label)
         .style(Style::default().fg(Color::Gray))
         .bounds([0.0, y_max])
-        .labels(["0".to_string(), format!("{:.0}", y_max / 2.0), format!("{:.0}", y_max)]);
+        .labels([
+            format_value_human(0.0, unit),
+            format_value_human(y_max / 2.0, unit),
+            format_value_human(y_max, unit),
+        ]);
 
     let chart = Chart::new(datasets)
         .block(Block::bordered().title("Metrics"))
