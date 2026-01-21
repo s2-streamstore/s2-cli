@@ -251,18 +251,21 @@ async fn run() -> Result<(), CliError> {
         }
 
         Command::GetAccountMetrics(args) => {
+            let plot = args.plot;
             let metrics = ops::get_account_metrics(&s2, args).await?;
-            print_metrics(&metrics);
+            print_metrics(&metrics, plot);
         }
 
         Command::GetBasinMetrics(args) => {
+            let plot = args.plot;
             let metrics = ops::get_basin_metrics(&s2, args).await?;
-            print_metrics(&metrics);
+            print_metrics(&metrics, plot);
         }
 
         Command::GetStreamMetrics(args) => {
+            let plot = args.plot;
             let metrics = ops::get_stream_metrics(&s2, args).await?;
-            print_metrics(&metrics);
+            print_metrics(&metrics, plot);
         }
 
         Command::ListStreams(args) => {
@@ -633,7 +636,7 @@ fn format_unit(unit: s2_sdk::types::MetricUnit) -> &'static str {
     }
 }
 
-fn print_metrics(metrics: &[Metric]) {
+fn print_metrics(metrics: &[Metric], plot: bool) {
     #[derive(Tabled)]
     struct AccumulationRow {
         interval_start: String,
@@ -652,63 +655,71 @@ fn print_metrics(metrics: &[Metric]) {
                 println!("{}: {} {}", m.name, m.value, format_unit(m.unit));
             }
             Metric::Accumulation(m) => {
-                let rows: Vec<AccumulationRow> = m
-                    .values
-                    .iter()
-                    .map(|(ts, value)| AccumulationRow {
-                        interval_start: format_timestamp(*ts),
-                        count: value.to_string(),
-                    })
-                    .collect();
+                if plot {
+                    print_metric_plot(&m.name, &m.values, m.unit);
+                } else {
+                    let rows: Vec<AccumulationRow> = m
+                        .values
+                        .iter()
+                        .map(|(ts, value)| AccumulationRow {
+                            interval_start: format_timestamp(*ts),
+                            count: value.to_string(),
+                        })
+                        .collect();
 
-                println!("{}", m.name);
+                    println!("{}", m.name);
 
-                let mut table = Table::new(rows);
-                table.modify(
-                    tabled::settings::object::Columns::last(),
-                    tabled::settings::Alignment::right(),
-                );
+                    let mut table = Table::new(rows);
+                    table.modify(
+                        tabled::settings::object::Columns::last(),
+                        tabled::settings::Alignment::right(),
+                    );
 
-                let interval_col = "interval start time".to_string();
-                let count_col = format_unit(m.unit).to_string();
-                table.with(
-                    tabled::settings::Modify::new(tabled::settings::object::Cell::new(0, 0))
-                        .with(tabled::settings::Format::content(|_| interval_col.clone())),
-                );
-                table.with(
-                    tabled::settings::Modify::new(tabled::settings::object::Cell::new(0, 1))
-                        .with(tabled::settings::Format::content(|_| count_col.clone())),
-                );
+                    let interval_col = "interval start time".to_string();
+                    let count_col = format_unit(m.unit).to_string();
+                    table.with(
+                        tabled::settings::Modify::new(tabled::settings::object::Cell::new(0, 0))
+                            .with(tabled::settings::Format::content(|_| interval_col.clone())),
+                    );
+                    table.with(
+                        tabled::settings::Modify::new(tabled::settings::object::Cell::new(0, 1))
+                            .with(tabled::settings::Format::content(|_| count_col.clone())),
+                    );
 
-                println!("{table}");
-                println!();
+                    println!("{table}");
+                    println!();
+                }
             }
             Metric::Gauge(m) => {
-                let rows: Vec<GaugeRow> = m
-                    .values
-                    .iter()
-                    .map(|(ts, value)| GaugeRow {
-                        time: format_timestamp(*ts),
-                        value: value.to_string(),
-                    })
-                    .collect();
+                if plot {
+                    print_metric_plot(&m.name, &m.values, m.unit);
+                } else {
+                    let rows: Vec<GaugeRow> = m
+                        .values
+                        .iter()
+                        .map(|(ts, value)| GaugeRow {
+                            time: format_timestamp(*ts),
+                            value: value.to_string(),
+                        })
+                        .collect();
 
-                let count_col = format_unit(m.unit).to_string();
-                println!("{}\n", m.name);
+                    let count_col = format_unit(m.unit).to_string();
+                    println!("{}\n", m.name);
 
-                let mut table = Table::new(rows);
-                table.modify(
-                    tabled::settings::object::Columns::last(),
-                    tabled::settings::Alignment::right(),
-                );
+                    let mut table = Table::new(rows);
+                    table.modify(
+                        tabled::settings::object::Columns::last(),
+                        tabled::settings::Alignment::right(),
+                    );
 
-                table.with(
-                    tabled::settings::Modify::new(tabled::settings::object::Cell::new(0, 1))
-                        .with(tabled::settings::Format::content(|_| count_col.clone())),
-                );
+                    table.with(
+                        tabled::settings::Modify::new(tabled::settings::object::Cell::new(0, 1))
+                            .with(tabled::settings::Format::content(|_| count_col.clone())),
+                    );
 
-                println!("{table}");
-                println!();
+                    println!("{table}");
+                    println!();
+                }
             }
             Metric::Label(m) => {
                 println!("{}:", m.name);
@@ -718,4 +729,31 @@ fn print_metrics(metrics: &[Metric]) {
             }
         }
     }
+}
+
+fn print_metric_plot(name: &str, values: &[(u32, f64)], unit: s2_sdk::types::MetricUnit) {
+    use rasciigraph::{plot, Config};
+
+    if values.is_empty() {
+        println!("{}: (no data)", name);
+        return;
+    }
+
+    let data: Vec<f64> = values.iter().map(|(_, v)| *v).collect();
+
+    // Build time range label
+    let start_time = format_timestamp(values.first().unwrap().0);
+    let end_time = format_timestamp(values.last().unwrap().0);
+
+    let caption = format!("{} ({}) | {} to {}", name, format_unit(unit), start_time, end_time);
+
+    let graph = plot(
+        data,
+        Config::default()
+            .with_height(10)
+            .with_caption(caption),
+    );
+
+    println!("{graph}");
+    println!();
 }

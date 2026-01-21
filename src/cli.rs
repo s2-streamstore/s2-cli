@@ -608,6 +608,10 @@ pub enum StreamMetricCommand {
 #[derive(Args, Debug)]
 #[command(subcommand_value_name = "METRIC", subcommand_help_heading = "Metrics")]
 pub struct GetAccountMetricsArgs {
+    /// Display metrics as an ASCII plot instead of a table.
+    #[arg(long)]
+    pub plot: bool,
+
     #[command(subcommand)]
     pub metric: AccountMetricCommand,
 }
@@ -617,6 +621,10 @@ pub struct GetAccountMetricsArgs {
 pub struct GetBasinMetricsArgs {
     /// Basin name.
     pub basin: S2BasinUri,
+
+    /// Display metrics as an ASCII plot instead of a table.
+    #[arg(long)]
+    pub plot: bool,
 
     #[command(subcommand)]
     pub metric: BasinMetricCommand,
@@ -628,6 +636,10 @@ pub struct GetStreamMetricsArgs {
     /// S2 URI of the format: s2://{basin}/{stream}
     #[arg(value_name = "S2_URI")]
     pub uri: S2BasinAndStreamUri,
+
+    /// Display metrics as an ASCII plot instead of a table.
+    #[arg(long)]
+    pub plot: bool,
 
     #[command(subcommand)]
     pub metric: StreamMetricCommand,
