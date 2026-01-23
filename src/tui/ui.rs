@@ -6,7 +6,9 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap},
 };
 
-use super::app::{App, BasinsState, InputMode, MessageLevel, ReadViewState, Screen, StreamDetailState, StreamsState};
+use crate::types::{StorageClass, TimestampingMode};
+
+use super::app::{App, AgoUnit, BasinsState, InputMode, MessageLevel, ReadStartFrom, ReadViewState, RetentionPolicyOption, Screen, StreamDetailState, StreamsState};
 
 // S2 Console dark theme
 const GREEN: Color = Color::Rgb(34, 197, 94);            // Active green
@@ -84,20 +86,18 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
 
     let search_text = if state.filter_active {
         Line::from(vec![
-            Span::styled(" 🔍 ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(" [/] ", Style::default().fg(GREEN)),
             Span::styled(&state.filter, Style::default().fg(TEXT_PRIMARY)),
             Span::styled("_", Style::default().fg(GREEN)),
         ])
     } else if state.filter.is_empty() {
         Line::from(vec![
-            Span::styled(" 🔍 Filter by prefix... ", Style::default().fg(TEXT_MUTED)),
-            Span::styled("(press /)", Style::default().fg(BORDER)),
+            Span::styled(" [/] Filter by prefix...", Style::default().fg(TEXT_MUTED)),
         ])
     } else {
         Line::from(vec![
-            Span::styled(" 🔍 ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(" [/] ", Style::default().fg(TEXT_MUTED)),
             Span::styled(&state.filter, Style::default().fg(TEXT_PRIMARY)),
-            Span::styled("  (esc to clear)", Style::default().fg(BORDER)),
         ])
     };
 
@@ -258,9 +258,10 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
         }
     };
 
+    let basin_name_str = state.basin_name.to_string();
     let title = Line::from(vec![
         Span::styled(" ← ", Style::default().fg(TEXT_MUTED)),
-        Span::styled(&state.basin_name.to_string(), Style::default().fg(GREEN).bold()),
+        Span::styled(&basin_name_str, Style::default().fg(GREEN).bold()),
         Span::styled(count_text, Style::default().fg(TEXT_MUTED)),
     ]);
     f.render_widget(Paragraph::new(title), chunks[0]);
@@ -273,20 +274,18 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
 
     let search_text = if state.filter_active {
         Line::from(vec![
-            Span::styled(" 🔍 ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(" [/] ", Style::default().fg(GREEN)),
             Span::styled(&state.filter, Style::default().fg(TEXT_PRIMARY)),
             Span::styled("_", Style::default().fg(GREEN)),
         ])
     } else if state.filter.is_empty() {
         Line::from(vec![
-            Span::styled(" 🔍 Filter by prefix... ", Style::default().fg(TEXT_MUTED)),
-            Span::styled("(press /)", Style::default().fg(BORDER)),
+            Span::styled(" [/] Filter by prefix...", Style::default().fg(TEXT_MUTED)),
         ])
     } else {
         Line::from(vec![
-            Span::styled(" 🔍 ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(" [/] ", Style::default().fg(TEXT_MUTED)),
             Span::styled(&state.filter, Style::default().fg(TEXT_PRIMARY)),
-            Span::styled("  (esc to clear)", Style::default().fg(BORDER)),
         ])
     };
 
@@ -376,17 +375,8 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
             name
         };
 
-        // Created timestamp
-        let created = stream.created_at
-            .map(|ts| {
-                // Convert milliseconds timestamp to readable format
-                let secs = ts / 1000;
-                let datetime = chrono::DateTime::from_timestamp(secs as i64, 0)
-                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-                    .unwrap_or_else(|| format!("{}", ts));
-                datetime
-            })
-            .unwrap_or_else(|| "—".to_string());
+        // Created timestamp - S2DateTime implements Display
+        let created = stream.created_at.to_string();
 
         // Render name
         let name_style = if is_selected {
@@ -500,8 +490,8 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
         .padding(Padding::new(2, 2, 1, 1));
 
     let actions = vec![
-        ("r", "Read from beginning", "Fetch historical records from seq 0"),
-        ("t", "Tail stream", "Follow new records in real-time"),
+        ("t", "Tail stream", "Live follow from current position"),
+        ("r", "Custom read", "Configure start position and limits"),
     ];
 
     let mut action_lines = vec![Line::from("")];
@@ -621,14 +611,14 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
 
 fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     let hints = match &app.screen {
-        Screen::Basins(_) => "/ search  j/k navigate  enter select  c create  d delete  r refresh  ? help  q quit",
-        Screen::Streams(_) => "/ search  j/k navigate  enter select  c create  d delete  r refresh  esc back",
-        Screen::StreamDetail(_) => "j/k navigate  enter select  r read  t tail  esc back",
+        Screen::Basins(_) => "/ filter | jk nav | ret open | c new | e cfg | d del | r ref | ? | q",
+        Screen::Streams(_) => "/ filter | jk nav | ret open | c new | e cfg | d del | r ref | esc",
+        Screen::StreamDetail(_) => "jk nav | ret run | t tail | r custom | e cfg | esc",
         Screen::ReadView(s) => {
             if s.is_tailing {
-                "space pause  j/k scroll  esc back"
+                "space pause | jk scroll | esc"
             } else {
-                "j/k scroll  g/G top/bottom  esc back"
+                "jk scroll | gG top/bot | esc"
             }
         }
     };
@@ -674,12 +664,20 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
                 Span::styled("Top / Bottom", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(vec![
+                Span::styled("    / ", Style::default().fg(GREEN).bold()),
+                Span::styled("Filter", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
                 Span::styled("enter ", Style::default().fg(GREEN).bold()),
                 Span::styled("Select basin", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(vec![
                 Span::styled("    c ", Style::default().fg(GREEN).bold()),
                 Span::styled("Create basin", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    e ", Style::default().fg(GREEN).bold()),
+                Span::styled("Reconfigure basin", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(vec![
                 Span::styled("    d ", Style::default().fg(GREEN).bold()),
@@ -702,12 +700,20 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
                 Span::styled("Navigate", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(vec![
+                Span::styled("    / ", Style::default().fg(GREEN).bold()),
+                Span::styled("Filter", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
                 Span::styled("enter ", Style::default().fg(GREEN).bold()),
                 Span::styled("Select stream", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(vec![
                 Span::styled("    c ", Style::default().fg(GREEN).bold()),
                 Span::styled("Create stream", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    e ", Style::default().fg(GREEN).bold()),
+                Span::styled("Reconfigure stream", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(vec![
                 Span::styled("    d ", Style::default().fg(GREEN).bold()),
@@ -734,12 +740,16 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
                 Span::styled("Execute action", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(vec![
-                Span::styled("    r ", Style::default().fg(GREEN).bold()),
-                Span::styled("Read from start", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
                 Span::styled("    t ", Style::default().fg(GREEN).bold()),
                 Span::styled("Tail (live follow)", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    r ", Style::default().fg(GREEN).bold()),
+                Span::styled("Custom read", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    e ", Style::default().fg(GREEN).bold()),
+                Span::styled("Reconfigure stream", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(vec![
                 Span::styled("  esc ", Style::default().fg(GREEN).bold()),
@@ -881,9 +891,320 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             ],
             "y confirm  n/esc cancel",
         ),
+
+        InputMode::ReconfigureBasin {
+            basin,
+            create_stream_on_append,
+            create_stream_on_read,
+            storage_class,
+            retention_policy,
+            retention_age_secs,
+            timestamping_mode,
+            timestamping_uncapped,
+            selected,
+            editing_age,
+            age_input,
+        } => {
+            let checkbox = |checked: bool| if checked { "[x]" } else { "[ ]" };
+            let sel = |idx: usize, s: &usize| if idx == *s { ">" } else { " " };
+            let sc_str = match storage_class {
+                None => "default",
+                Some(StorageClass::Express) => "express",
+                Some(StorageClass::Standard) => "standard",
+            };
+            let ts_str = match timestamping_mode {
+                None => "default",
+                Some(TimestampingMode::ClientPrefer) => "client-prefer",
+                Some(TimestampingMode::ClientRequire) => "client-require",
+                Some(TimestampingMode::Arrival) => "arrival",
+            };
+
+            let mut lines = vec![
+                Line::from(vec![
+                    Span::styled(basin.to_string(), Style::default().fg(GREEN).bold()),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled("-- Create Streams Automatically --", Style::default().fg(TEXT_MUTED))),
+                Line::from(vec![
+                    Span::styled(sel(0, selected), Style::default().fg(GREEN)),
+                    Span::styled(format!(" {} on append", checkbox(create_stream_on_append.unwrap_or(false))), Style::default().fg(TEXT_SECONDARY)),
+                ]),
+                Line::from(vec![
+                    Span::styled(sel(1, selected), Style::default().fg(GREEN)),
+                    Span::styled(format!(" {} on read", checkbox(create_stream_on_read.unwrap_or(false))), Style::default().fg(TEXT_SECONDARY)),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled("-- Default Stream Config --", Style::default().fg(TEXT_MUTED))),
+                Line::from(vec![
+                    Span::styled(sel(2, selected), Style::default().fg(GREEN)),
+                    Span::styled(format!(" Storage class: < {} >", sc_str), Style::default().fg(TEXT_SECONDARY)),
+                ]),
+                Line::from(vec![
+                    Span::styled(sel(3, selected), Style::default().fg(GREEN)),
+                    Span::styled(format!(" Retention: < {} >", if *retention_policy == RetentionPolicyOption::Infinite { "infinite" } else { "age-based" }), Style::default().fg(TEXT_SECONDARY)),
+                ]),
+            ];
+
+            if *retention_policy == RetentionPolicyOption::Age {
+                let age_display = if *editing_age {
+                    format!("{}_ secs", age_input)
+                } else {
+                    format!("{} secs", retention_age_secs)
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(sel(4, selected), Style::default().fg(GREEN)),
+                    Span::styled(format!("   Age: {}", age_display), Style::default().fg(if *editing_age { GREEN } else { TEXT_SECONDARY })),
+                ]));
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled("    Age: (n/a)", Style::default().fg(BORDER)),
+                ]));
+            }
+
+            lines.extend(vec![
+                Line::from(vec![
+                    Span::styled(sel(5, selected), Style::default().fg(GREEN)),
+                    Span::styled(format!(" Timestamping: < {} >", ts_str), Style::default().fg(TEXT_SECONDARY)),
+                ]),
+                Line::from(vec![
+                    Span::styled(sel(6, selected), Style::default().fg(GREEN)),
+                    Span::styled(format!(" {} Allow ts > arrival", checkbox(timestamping_uncapped.unwrap_or(false))), Style::default().fg(TEXT_SECONDARY)),
+                ]),
+            ]);
+
+            (
+                " Reconfigure Basin ",
+                lines,
+                "jk nav | space/enter toggle | s save | esc cancel",
+            )
+        }
+
+        InputMode::ReconfigureStream {
+            basin,
+            stream,
+            storage_class,
+            retention_policy,
+            retention_age_secs,
+            timestamping_mode,
+            timestamping_uncapped,
+            selected,
+            editing_age,
+            age_input,
+        } => {
+            let checkbox = |checked: bool| if checked { "[x]" } else { "[ ]" };
+            let sel = |idx: usize, s: &usize| if idx == *s { ">" } else { " " };
+            let sc_str = match storage_class {
+                None => "default",
+                Some(StorageClass::Express) => "express",
+                Some(StorageClass::Standard) => "standard",
+            };
+            let ts_str = match timestamping_mode {
+                None => "default",
+                Some(TimestampingMode::ClientPrefer) => "client-prefer",
+                Some(TimestampingMode::ClientRequire) => "client-require",
+                Some(TimestampingMode::Arrival) => "arrival",
+            };
+
+            let mut lines = vec![
+                Line::from(vec![
+                    Span::styled(format!("{}/{}", basin, stream), Style::default().fg(GREEN).bold()),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(sel(0, selected), Style::default().fg(GREEN)),
+                    Span::styled(format!(" Storage class: < {} >", sc_str), Style::default().fg(TEXT_SECONDARY)),
+                ]),
+                Line::from(vec![
+                    Span::styled(sel(1, selected), Style::default().fg(GREEN)),
+                    Span::styled(format!(" Retention: < {} >", if *retention_policy == RetentionPolicyOption::Infinite { "infinite" } else { "age-based" }), Style::default().fg(TEXT_SECONDARY)),
+                ]),
+            ];
+
+            if *retention_policy == RetentionPolicyOption::Age {
+                let age_display = if *editing_age {
+                    format!("{}_ secs", age_input)
+                } else {
+                    format!("{} secs", retention_age_secs)
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(sel(2, selected), Style::default().fg(GREEN)),
+                    Span::styled(format!("   Age: {}", age_display), Style::default().fg(if *editing_age { GREEN } else { TEXT_SECONDARY })),
+                ]));
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled("    Age: (n/a)", Style::default().fg(BORDER)),
+                ]));
+            }
+
+            lines.extend(vec![
+                Line::from(vec![
+                    Span::styled(sel(3, selected), Style::default().fg(GREEN)),
+                    Span::styled(format!(" Timestamping: < {} >", ts_str), Style::default().fg(TEXT_SECONDARY)),
+                ]),
+                Line::from(vec![
+                    Span::styled(sel(4, selected), Style::default().fg(GREEN)),
+                    Span::styled(format!(" {} Allow ts > arrival", checkbox(timestamping_uncapped.unwrap_or(false))), Style::default().fg(TEXT_SECONDARY)),
+                ]),
+            ]);
+
+            (
+                " Reconfigure Stream ",
+                lines,
+                "jk nav | space/enter toggle | s save | esc cancel",
+            )
+        }
+
+        InputMode::CustomRead {
+            basin,
+            stream,
+            start_from,
+            seq_num_value,
+            timestamp_value,
+            ago_value,
+            ago_unit,
+            tail_offset_value,
+            count_limit,
+            byte_limit,
+            until_timestamp,
+            selected,
+            editing,
+        } => {
+            let sel = |idx: usize, s: &usize| if idx == *s { ">" } else { " " };
+            let editable = |idx: usize, s: &usize, e: &bool| {
+                if idx == *s && *e { GREEN } else if idx == *s { TEXT_PRIMARY } else { TEXT_SECONDARY }
+            };
+
+            let start_str = match start_from {
+                ReadStartFrom::Tail => "tail (live follow)",
+                ReadStartFrom::SeqNum => "sequence number",
+                ReadStartFrom::Timestamp => "timestamp (ms)",
+                ReadStartFrom::Ago => "time ago",
+                ReadStartFrom::TailOffset => "tail offset",
+            };
+
+            let mut lines = vec![
+                Line::from(vec![
+                    Span::styled(format!("{}/{}", basin, stream), Style::default().fg(GREEN).bold()),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled("-- Start Position --", Style::default().fg(TEXT_MUTED))),
+                Line::from(vec![
+                    Span::styled(sel(0, selected), Style::default().fg(GREEN)),
+                    Span::styled(format!(" Start from: < {} >", start_str), Style::default().fg(if *selected == 0 { TEXT_PRIMARY } else { TEXT_SECONDARY })),
+                ]),
+            ];
+
+            // Show relevant input based on start_from
+            match start_from {
+                ReadStartFrom::Tail => {
+                    lines.push(Line::from(Span::styled("   (follows new records only)", Style::default().fg(TEXT_MUTED))));
+                }
+                ReadStartFrom::SeqNum => {
+                    let display = if *editing && *selected == 1 {
+                        format!("{}|", seq_num_value)
+                    } else {
+                        if seq_num_value.is_empty() { "0".to_string() } else { seq_num_value.clone() }
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(sel(1, selected), Style::default().fg(GREEN)),
+                        Span::styled(format!("   Seq num: {}", display), Style::default().fg(editable(1, selected, editing))),
+                    ]));
+                }
+                ReadStartFrom::Timestamp => {
+                    let display = if *editing && *selected == 2 {
+                        format!("{}|", timestamp_value)
+                    } else {
+                        if timestamp_value.is_empty() { "(enter ms)".to_string() } else { format!("{} ms", timestamp_value) }
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(sel(2, selected), Style::default().fg(GREEN)),
+                        Span::styled(format!("   Timestamp: {}", display), Style::default().fg(editable(2, selected, editing))),
+                    ]));
+                }
+                ReadStartFrom::Ago => {
+                    let display = if *editing && *selected == 3 {
+                        format!("{}|", ago_value)
+                    } else {
+                        if ago_value.is_empty() { "5".to_string() } else { ago_value.clone() }
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(sel(3, selected), Style::default().fg(GREEN)),
+                        Span::styled(format!("   Value: {}", display), Style::default().fg(editable(3, selected, editing))),
+                    ]));
+                    lines.push(Line::from(vec![
+                        Span::styled(sel(4, selected), Style::default().fg(GREEN)),
+                        Span::styled(format!("   Unit: < {} >", match ago_unit {
+                            AgoUnit::Seconds => "seconds",
+                            AgoUnit::Minutes => "minutes",
+                            AgoUnit::Hours => "hours",
+                            AgoUnit::Days => "days",
+                        }), Style::default().fg(if *selected == 4 { TEXT_PRIMARY } else { TEXT_SECONDARY })),
+                    ]));
+                }
+                ReadStartFrom::TailOffset => {
+                    let display = if *editing && *selected == 5 {
+                        format!("{}|", tail_offset_value)
+                    } else {
+                        if tail_offset_value.is_empty() { "10".to_string() } else { format!("{} records back", tail_offset_value) }
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(sel(5, selected), Style::default().fg(GREEN)),
+                        Span::styled(format!("   Offset: {}", display), Style::default().fg(editable(5, selected, editing))),
+                    ]));
+                }
+            }
+
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled("-- Limits (optional) --", Style::default().fg(TEXT_MUTED))));
+
+            // Count limit
+            let count_display = if *editing && *selected == 6 {
+                format!("{}|", count_limit)
+            } else {
+                if count_limit.is_empty() { "unlimited".to_string() } else { format!("{} records", count_limit) }
+            };
+            lines.push(Line::from(vec![
+                Span::styled(sel(6, selected), Style::default().fg(GREEN)),
+                Span::styled(format!(" Max records: {}", count_display), Style::default().fg(editable(6, selected, editing))),
+            ]));
+
+            // Byte limit
+            let byte_display = if *editing && *selected == 7 {
+                format!("{}|", byte_limit)
+            } else {
+                if byte_limit.is_empty() { "unlimited".to_string() } else { format!("{} bytes", byte_limit) }
+            };
+            lines.push(Line::from(vec![
+                Span::styled(sel(7, selected), Style::default().fg(GREEN)),
+                Span::styled(format!(" Max bytes: {}", byte_display), Style::default().fg(editable(7, selected, editing))),
+            ]));
+
+            // Until timestamp
+            let until_display = if *editing && *selected == 8 {
+                format!("{}|", until_timestamp)
+            } else {
+                if until_timestamp.is_empty() { "none".to_string() } else { format!("{} ms", until_timestamp) }
+            };
+            lines.push(Line::from(vec![
+                Span::styled(sel(8, selected), Style::default().fg(GREEN)),
+                Span::styled(format!(" Until timestamp: {}", until_display), Style::default().fg(editable(8, selected, editing))),
+            ]));
+
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled(sel(9, selected), Style::default().fg(GREEN)),
+                Span::styled(" [ Start Reading ]", Style::default().fg(if *selected == 9 { GREEN } else { TEXT_SECONDARY }).bold()),
+            ]));
+
+            (
+                " Custom Read ",
+                lines,
+                "jk nav | space/enter edit | esc cancel",
+            )
+        }
     };
 
-    let area = centered_rect(50, 40, f.area());
+    let area = centered_rect(60, 60, f.area());
 
     let block = Block::default()
         .title(Line::from(Span::styled(title, Style::default().fg(TEXT_PRIMARY).bold())))
