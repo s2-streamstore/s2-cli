@@ -145,8 +145,10 @@ pub enum InputMode {
         // Limits
         count_limit: String,
         byte_limit: String,
-        // Options
         until_timestamp: String,
+        // Options
+        clamp: bool,
+        format: ReadFormat,
         // UI state
         selected: usize,
         editing: bool,
@@ -197,15 +199,6 @@ pub enum AgoUnit {
 }
 
 impl AgoUnit {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            AgoUnit::Seconds => "s",
-            AgoUnit::Minutes => "m",
-            AgoUnit::Hours => "h",
-            AgoUnit::Days => "d",
-        }
-    }
-
     pub fn to_seconds(&self, value: u64) -> u64 {
         match self {
             AgoUnit::Seconds => value,
@@ -228,6 +221,33 @@ impl AgoUnit {
 impl Default for AgoUnit {
     fn default() -> Self {
         Self::Minutes
+    }
+}
+
+/// Output format for read operation
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ReadFormat {
+    #[default]
+    Text,
+    Json,
+    JsonBase64,
+}
+
+impl ReadFormat {
+    pub fn next(&self) -> Self {
+        match self {
+            ReadFormat::Text => ReadFormat::Json,
+            ReadFormat::Json => ReadFormat::JsonBase64,
+            ReadFormat::JsonBase64 => ReadFormat::Text,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ReadFormat::Text => "text",
+            ReadFormat::Json => "json",
+            ReadFormat::JsonBase64 => "json-base64",
+        }
     }
 }
 
@@ -984,39 +1004,42 @@ impl App {
                 count_limit,
                 byte_limit,
                 until_timestamp,
+                clamp,
+                format,
                 selected,
                 editing,
             } => {
                 // If editing a value, handle text input
                 if *editing {
                     match key.code {
-                        KeyCode::Esc => {
+                        KeyCode::Esc | KeyCode::Enter => {
                             *editing = false;
                         }
-                        KeyCode::Enter => {
-                            *editing = false;
+                        KeyCode::Tab if *selected == 2 => {
+                            // Cycle time unit while editing ago value
+                            *ago_unit = ago_unit.next();
                         }
                         KeyCode::Backspace => {
                             match *selected {
-                                1 => { seq_num_value.pop(); }
-                                2 => { timestamp_value.pop(); }
-                                3 => { ago_value.pop(); }
-                                5 => { tail_offset_value.pop(); }
-                                6 => { count_limit.pop(); }
-                                7 => { byte_limit.pop(); }
-                                8 => { until_timestamp.pop(); }
+                                0 => { seq_num_value.pop(); }
+                                1 => { timestamp_value.pop(); }
+                                2 => { ago_value.pop(); }
+                                3 => { tail_offset_value.pop(); }
+                                4 => { count_limit.pop(); }
+                                5 => { byte_limit.pop(); }
+                                6 => { until_timestamp.pop(); }
                                 _ => {}
                             }
                         }
                         KeyCode::Char(c) if c.is_ascii_digit() => {
                             match *selected {
-                                1 => seq_num_value.push(c),
-                                2 => timestamp_value.push(c),
-                                3 => ago_value.push(c),
-                                5 => tail_offset_value.push(c),
-                                6 => count_limit.push(c),
-                                7 => byte_limit.push(c),
-                                8 => until_timestamp.push(c),
+                                0 => seq_num_value.push(c),
+                                1 => timestamp_value.push(c),
+                                2 => ago_value.push(c),
+                                3 => tail_offset_value.push(c),
+                                4 => count_limit.push(c),
+                                5 => byte_limit.push(c),
+                                6 => until_timestamp.push(c),
                                 _ => {}
                             }
                         }
@@ -1025,18 +1048,17 @@ impl App {
                     return;
                 }
 
-                // Navigation and selection
-                // Rows:
-                // 0: start_from selector
-                // 1: seq_num (if SeqNum)
-                // 2: timestamp (if Timestamp)
-                // 3: ago value (if Ago)
-                // 4: ago unit (if Ago)
-                // 5: tail_offset (if TailOffset)
-                // 6: count_limit
-                // 7: byte_limit
-                // 8: until_timestamp
-                // 9: [Start Reading] button
+                // Navigation layout:
+                // 0: Sequence number (radio + input)
+                // 1: Timestamp (radio + input)
+                // 2: Time ago (radio + input, tab=unit)
+                // 3: Tail offset (radio + input)
+                // 4: Max records
+                // 5: Max bytes
+                // 6: Until timestamp
+                // 7: Clamp (checkbox)
+                // 8: Format (selector)
+                // 9: Start button
                 const MAX_ROW: usize = 9;
 
                 match key.code {
@@ -1053,36 +1075,46 @@ impl App {
                             *selected += 1;
                         }
                     }
-                    KeyCode::Char(' ') | KeyCode::Enter => {
+                    KeyCode::Tab if *selected == 2 => {
+                        // Cycle time unit for ago
+                        *ago_unit = ago_unit.next();
+                    }
+                    KeyCode::Char(' ') => {
+                        // Space = select/toggle
+                        match *selected {
+                            0 => *start_from = ReadStartFrom::SeqNum,
+                            1 => *start_from = ReadStartFrom::Timestamp,
+                            2 => *start_from = ReadStartFrom::Ago,
+                            3 => *start_from = ReadStartFrom::TailOffset,
+                            7 => *clamp = !*clamp,
+                            8 => *format = format.next(),
+                            _ => {}
+                        }
+                    }
+                    KeyCode::Enter => {
+                        // Enter = select + edit value, toggle, or run
                         match *selected {
                             0 => {
-                                // Cycle start_from
-                                *start_from = match start_from {
-                                    ReadStartFrom::Tail => ReadStartFrom::SeqNum,
-                                    ReadStartFrom::SeqNum => ReadStartFrom::Timestamp,
-                                    ReadStartFrom::Timestamp => ReadStartFrom::Ago,
-                                    ReadStartFrom::Ago => ReadStartFrom::TailOffset,
-                                    ReadStartFrom::TailOffset => ReadStartFrom::Tail,
-                                };
-                            }
-                            1 if *start_from == ReadStartFrom::SeqNum => {
+                                *start_from = ReadStartFrom::SeqNum;
                                 *editing = true;
                             }
-                            2 if *start_from == ReadStartFrom::Timestamp => {
+                            1 => {
+                                *start_from = ReadStartFrom::Timestamp;
                                 *editing = true;
                             }
-                            3 if *start_from == ReadStartFrom::Ago => {
+                            2 => {
+                                *start_from = ReadStartFrom::Ago;
                                 *editing = true;
                             }
-                            4 if *start_from == ReadStartFrom::Ago => {
-                                *ago_unit = ago_unit.next();
-                            }
-                            5 if *start_from == ReadStartFrom::TailOffset => {
+                            3 => {
+                                *start_from = ReadStartFrom::TailOffset;
                                 *editing = true;
                             }
-                            6 => *editing = true, // count_limit
-                            7 => *editing = true, // byte_limit
-                            8 => *editing = true, // until_timestamp
+                            4 => *editing = true, // count_limit
+                            5 => *editing = true, // byte_limit
+                            6 => *editing = true, // until_timestamp
+                            7 => *clamp = !*clamp,
+                            8 => *format = format.next(),
                             9 => {
                                 // Start reading - clone all values first
                                 let b = basin.clone();
@@ -1096,8 +1128,10 @@ impl App {
                                 let cl = count_limit.clone();
                                 let bl = byte_limit.clone();
                                 let ut = until_timestamp.clone();
+                                let clp = *clamp;
+                                let fmt = *format;
                                 self.input_mode = InputMode::Normal;
-                                self.start_custom_read(b, s, sf, snv, tsv, agv, agu, tov, cl, bl, ut, tx.clone());
+                                self.start_custom_read(b, s, sf, snv, tsv, agv, agu, tov, cl, bl, ut, clp, fmt, tx.clone());
                             }
                             _ => {}
                         }
@@ -1826,6 +1860,8 @@ impl App {
             count_limit: String::new(),
             byte_limit: String::new(),
             until_timestamp: String::new(),
+            clamp: true,
+            format: ReadFormat::Text,
             selected: 0,
             editing: false,
         };
@@ -1845,6 +1881,8 @@ impl App {
         count_limit: String,
         byte_limit: String,
         until_timestamp: String,
+        clamp: bool,
+        format: ReadFormat,
         tx: mpsc::UnboundedSender<Event>,
     ) {
         self.screen = Screen::ReadView(ReadViewState {
@@ -1888,8 +1926,6 @@ impl App {
 
             let tail_offset = if start_from == ReadStartFrom::TailOffset {
                 tail_offset_value.parse().ok()
-            } else if start_from == ReadStartFrom::Tail {
-                Some(0) // Tail means TailOffset(0)
             } else {
                 None
             };
@@ -1897,6 +1933,12 @@ impl App {
             let count = count_limit.parse().ok().filter(|&v| v > 0);
             let bytes = byte_limit.parse().ok().filter(|&v| v > 0);
             let until = until_timestamp.parse().ok().filter(|&v| v > 0);
+
+            let record_format = match format {
+                ReadFormat::Text => RecordFormat::Text,
+                ReadFormat::Json => RecordFormat::Json,
+                ReadFormat::JsonBase64 => RecordFormat::JsonBase64,
+            };
 
             let args = ReadArgs {
                 uri,
@@ -1906,9 +1948,9 @@ impl App {
                 tail_offset,
                 count,
                 bytes,
-                clamp: true,
+                clamp,
                 until,
-                format: RecordFormat::default(),
+                format: record_format,
                 output: RecordsOut::Stdout,
             };
 
