@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::types::{StorageClass, TimestampingMode};
 
-use super::app::{AccessTokensState, App, AgoUnit, AppendViewState, BasinsState, ExpiryOption, InputMode, MessageLevel, ReadStartFrom, ReadViewState, RetentionPolicyOption, ScopeOption, Screen, StreamDetailState, StreamsState, Tab};
+use super::app::{AccessTokensState, App, AgoUnit, AppendViewState, BasinsState, ExpiryOption, InputMode, MessageLevel, MetricCategory, MetricsType, MetricsViewState, ReadStartFrom, ReadViewState, RetentionPolicyOption, ScopeOption, Screen, StreamDetailState, StreamsState, Tab};
 
 // S2 Console dark theme
 const GREEN: Color = Color::Rgb(34, 197, 94);            // Active green
@@ -81,6 +81,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Screen::ReadView(state) => draw_read_view(f, chunks[1], state),
         Screen::AppendView(state) => draw_append_view(f, chunks[1], state),
         Screen::AccessTokens(state) => draw_access_tokens(f, chunks[1], state),
+        Screen::MetricsView(state) => draw_metrics_view(f, chunks[1], state),
     }
 
     // Draw status bar
@@ -330,6 +331,460 @@ fn format_scope_summary(token: &s2_sdk::types::AccessTokenInfo) -> String {
     parts.join(", ")
 }
 
+/// Format a basin matcher for display
+fn format_basin_matcher(matcher: &Option<s2_sdk::types::BasinMatcher>) -> String {
+    use s2_sdk::types::BasinMatcher;
+    match matcher {
+        None => "All".to_string(),
+        Some(BasinMatcher::None) => "None".to_string(),
+        Some(BasinMatcher::Prefix(p)) => format!("Prefix: {}", p),
+        Some(BasinMatcher::Exact(e)) => format!("Exact: {}", e),
+    }
+}
+
+/// Format a stream matcher for display
+fn format_stream_matcher(matcher: &Option<s2_sdk::types::StreamMatcher>) -> String {
+    use s2_sdk::types::StreamMatcher;
+    match matcher {
+        None => "All".to_string(),
+        Some(StreamMatcher::None) => "None".to_string(),
+        Some(StreamMatcher::Prefix(p)) => format!("Prefix: {}", p),
+        Some(StreamMatcher::Exact(e)) => format!("Exact: {}", e),
+    }
+}
+
+/// Format an access token matcher for display
+fn format_token_matcher(matcher: &Option<s2_sdk::types::AccessTokenMatcher>) -> String {
+    use s2_sdk::types::AccessTokenMatcher;
+    match matcher {
+        None => "All".to_string(),
+        Some(AccessTokenMatcher::None) => "None".to_string(),
+        Some(AccessTokenMatcher::Prefix(p)) => format!("Prefix: {}", p),
+        Some(AccessTokenMatcher::Exact(e)) => format!("Exact: {}", e),
+    }
+}
+
+/// Format an operation for display
+fn format_operation(op: &s2_sdk::types::Operation) -> String {
+    use s2_sdk::types::Operation as SdkOp;
+    match op {
+        SdkOp::ListBasins => "list_basins",
+        SdkOp::CreateBasin => "create_basin",
+        SdkOp::DeleteBasin => "delete_basin",
+        SdkOp::GetBasinConfig => "get_basin_config",
+        SdkOp::ReconfigureBasin => "reconfigure_basin",
+        SdkOp::GetBasinMetrics => "get_basin_metrics",
+        SdkOp::ListStreams => "list_streams",
+        SdkOp::CreateStream => "create_stream",
+        SdkOp::DeleteStream => "delete_stream",
+        SdkOp::GetStreamConfig => "get_stream_config",
+        SdkOp::ReconfigureStream => "reconfigure_stream",
+        SdkOp::GetStreamMetrics => "get_stream_metrics",
+        SdkOp::CheckTail => "check_tail",
+        SdkOp::Read => "read",
+        SdkOp::Append => "append",
+        SdkOp::Fence => "fence",
+        SdkOp::Trim => "trim",
+        SdkOp::GetAccountMetrics => "get_account_metrics",
+        SdkOp::ListAccessTokens => "list_access_tokens",
+        SdkOp::IssueAccessToken => "issue_access_token",
+        SdkOp::RevokeAccessToken => "revoke_access_token",
+    }.to_string()
+}
+
+/// Check if operation is account-level
+fn is_account_op(op: &s2_sdk::types::Operation) -> bool {
+    use s2_sdk::types::Operation as SdkOp;
+    matches!(op, SdkOp::ListBasins | SdkOp::GetAccountMetrics)
+}
+
+/// Check if operation is basin-level
+fn is_basin_op(op: &s2_sdk::types::Operation) -> bool {
+    use s2_sdk::types::Operation as SdkOp;
+    matches!(op,
+        SdkOp::CreateBasin | SdkOp::DeleteBasin |
+        SdkOp::GetBasinConfig | SdkOp::ReconfigureBasin |
+        SdkOp::ListStreams | SdkOp::GetBasinMetrics)
+}
+
+/// Check if operation is stream-level
+fn is_stream_op(op: &s2_sdk::types::Operation) -> bool {
+    use s2_sdk::types::Operation as SdkOp;
+    matches!(op,
+        SdkOp::CreateStream | SdkOp::DeleteStream |
+        SdkOp::GetStreamConfig | SdkOp::ReconfigureStream |
+        SdkOp::Read | SdkOp::Append | SdkOp::CheckTail |
+        SdkOp::Fence | SdkOp::Trim | SdkOp::GetStreamMetrics)
+}
+
+/// Check if operation is token-related
+fn is_token_op(op: &s2_sdk::types::Operation) -> bool {
+    use s2_sdk::types::Operation as SdkOp;
+    matches!(op, SdkOp::ListAccessTokens | SdkOp::IssueAccessToken | SdkOp::RevokeAccessToken)
+}
+
+fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
+    use s2_sdk::types::Metric;
+
+    // Layout: Title, Category tabs, Sparkline, Stats, Bar chart
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Title
+            Constraint::Length(3), // Category tabs or info
+            Constraint::Length(5), // Sparkline graph
+            Constraint::Length(4), // Stats summary
+            Constraint::Min(1),    // Bar chart
+        ])
+        .split(area);
+
+    // === Title ===
+    let title = match &state.metrics_type {
+        MetricsType::Basin { basin_name } => format!(" Basin Metrics: {} ", basin_name),
+        MetricsType::Stream { basin_name, stream_name } => format!(" Stream Metrics: {}/{} ", basin_name, stream_name),
+    };
+
+    let title_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(GREEN))
+        .style(Style::default().bg(BG_PANEL));
+
+    let title_para = Paragraph::new(Line::from(Span::styled(
+        title,
+        Style::default().fg(TEXT_PRIMARY).bold(),
+    )))
+    .block(title_block)
+    .alignment(Alignment::Center);
+    f.render_widget(title_para, chunks[0]);
+
+    // === Category tabs (only for basin metrics) ===
+    if matches!(state.metrics_type, MetricsType::Basin { .. }) {
+        let categories = [
+            MetricCategory::Storage,
+            MetricCategory::AppendOps,
+            MetricCategory::ReadOps,
+            MetricCategory::AppendThroughput,
+            MetricCategory::ReadThroughput,
+        ];
+
+        let mut tabs: Vec<Span> = vec![
+            Span::styled(" ◀ ", Style::default().fg(TEXT_MUTED)),
+        ];
+        for cat in &categories {
+            let style = if *cat == state.selected_category {
+                Style::default().fg(BG_DARK).bg(GREEN).bold()
+            } else {
+                Style::default().fg(TEXT_MUTED)
+            };
+            tabs.push(Span::styled(format!(" {} ", cat.as_str()), style));
+        }
+        tabs.push(Span::styled(" ▶ ", Style::default().fg(TEXT_MUTED)));
+
+        let tab_line = Line::from(tabs);
+        let tabs_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(BORDER))
+            .title(Line::from(Span::styled(" ←/→ to switch ", Style::default().fg(TEXT_MUTED))))
+            .style(Style::default().bg(BG_PANEL));
+
+        let tabs_para = Paragraph::new(tab_line)
+            .block(tabs_block)
+            .alignment(Alignment::Center);
+        f.render_widget(tabs_para, chunks[1]);
+    } else {
+        let info = Line::from(vec![
+            Span::styled(" 📈 ", Style::default().fg(GREEN)),
+            Span::styled("Storage over last 24 hours", Style::default().fg(TEXT_PRIMARY)),
+        ]);
+        let info_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(BORDER))
+            .style(Style::default().bg(BG_PANEL));
+        let info_para = Paragraph::new(info).block(info_block).alignment(Alignment::Center);
+        f.render_widget(info_para, chunks[1]);
+    }
+
+    // === Loading / Empty states ===
+    if state.loading {
+        let loading_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(BORDER))
+            .style(Style::default().bg(BG_DARK));
+        let loading = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled("⏳ Loading metrics...", Style::default().fg(TEXT_MUTED))),
+        ])
+        .block(loading_block)
+        .alignment(Alignment::Center);
+
+        // Render loading in remaining chunks
+        let remaining = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1)])
+            .split(chunks[2]);
+        f.render_widget(loading, remaining[0]);
+        return;
+    }
+
+    if state.metrics.is_empty() {
+        let empty_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(BORDER))
+            .style(Style::default().bg(BG_DARK));
+        let empty = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled("📭 No metrics data available", Style::default().fg(TEXT_MUTED))),
+            Line::from(""),
+            Line::from(Span::styled("Try writing some data to the stream first", Style::default().fg(TEXT_MUTED))),
+        ])
+        .block(empty_block)
+        .alignment(Alignment::Center);
+
+        let remaining = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1)])
+            .split(chunks[2]);
+        f.render_widget(empty, remaining[0]);
+        return;
+    }
+
+    // Collect all time-series values for rendering
+    let mut all_values: Vec<(u32, f64)> = Vec::new();
+    let mut metric_name = String::new();
+    let mut metric_unit = s2_sdk::types::MetricUnit::Bytes;
+
+    for metric in &state.metrics {
+        match metric {
+            Metric::Gauge(m) => {
+                metric_name = m.name.clone();
+                metric_unit = m.unit;
+                all_values.extend(m.values.iter().cloned());
+            }
+            Metric::Accumulation(m) => {
+                metric_name = m.name.clone();
+                metric_unit = m.unit;
+                all_values.extend(m.values.iter().cloned());
+            }
+            Metric::Scalar(m) => {
+                metric_name = m.name.clone();
+                metric_unit = m.unit;
+                all_values.push((0, m.value));
+            }
+            Metric::Label(_) => {}
+        }
+    }
+
+    if all_values.is_empty() {
+        return;
+    }
+
+    // Sort by timestamp
+    all_values.sort_by_key(|(ts, _)| *ts);
+
+    // === Sparkline graph ===
+    let sparkline_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![
+            Span::styled(" ", Style::default()),
+            Span::styled("Trend", Style::default().fg(TEXT_PRIMARY).bold()),
+            Span::styled(" ", Style::default()),
+        ]))
+        .style(Style::default().bg(BG_DARK));
+
+    let sparkline_width = chunks[2].width.saturating_sub(4) as usize;
+    let sparkline = render_sparkline(&all_values, sparkline_width);
+
+    let sparkline_para = Paragraph::new(vec![
+        Line::from(""),
+        Line::from(Span::styled(sparkline, Style::default().fg(GREEN))),
+        Line::from(""),
+    ])
+    .block(sparkline_block)
+    .alignment(Alignment::Center);
+    f.render_widget(sparkline_para, chunks[2]);
+
+    // === Stats summary ===
+    let values_only: Vec<f64> = all_values.iter().map(|(_, v)| *v).collect();
+    let min_val = values_only.iter().cloned().fold(f64::MAX, f64::min);
+    let max_val = values_only.iter().cloned().fold(f64::MIN, f64::max);
+    let avg_val = if !values_only.is_empty() {
+        values_only.iter().sum::<f64>() / values_only.len() as f64
+    } else {
+        0.0
+    };
+    let latest_val = values_only.last().cloned().unwrap_or(0.0);
+
+    let stats_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![
+            Span::styled(" ", Style::default()),
+            Span::styled(&metric_name, Style::default().fg(TEXT_PRIMARY).bold()),
+            Span::styled(" ", Style::default()),
+        ]))
+        .style(Style::default().bg(BG_PANEL));
+
+    let stats_lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Current: ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(format_metric_value_f64(latest_val, metric_unit), Style::default().fg(GREEN).bold()),
+            Span::styled("    Min: ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(format_metric_value_f64(min_val, metric_unit), Style::default().fg(YELLOW)),
+            Span::styled("    Max: ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(format_metric_value_f64(max_val, metric_unit), Style::default().fg(YELLOW)),
+            Span::styled("    Avg: ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(format_metric_value_f64(avg_val, metric_unit), Style::default().fg(TEXT_SECONDARY)),
+        ]),
+    ];
+
+    let stats_para = Paragraph::new(stats_lines).block(stats_block);
+    f.render_widget(stats_para, chunks[3]);
+
+    // === Bar chart ===
+    let chart_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![
+            Span::styled(" ", Style::default()),
+            Span::styled("Timeline (scroll with j/k)", Style::default().fg(TEXT_MUTED)),
+            Span::styled(" ", Style::default()),
+        ]))
+        .style(Style::default().bg(BG_DARK));
+
+    let chart_inner = chart_block.inner(chunks[4]);
+    f.render_widget(chart_block, chunks[4]);
+
+    // Render bar chart
+    let chart_width = chart_inner.width.saturating_sub(32) as usize;
+    let visible_height = chart_inner.height as usize;
+
+    let bars: Vec<Line> = all_values
+        .iter()
+        .skip(state.scroll)
+        .take(visible_height)
+        .map(|(ts, value)| {
+            let bar_len = if max_val > 0.0 {
+                ((*value / max_val) * chart_width as f64) as usize
+            } else {
+                0
+            };
+
+            // Gradient bar with different characters based on value intensity
+            let intensity = if max_val > 0.0 { *value / max_val } else { 0.0 };
+            let bar_char = if intensity > 0.8 { "█" } else if intensity > 0.5 { "▓" } else if intensity > 0.2 { "▒" } else { "░" };
+            let bar = bar_char.repeat(bar_len);
+
+            let time_str = format_metric_timestamp_short(*ts);
+            let bar_color = if intensity > 0.8 {
+                GREEN
+            } else if intensity > 0.5 {
+                Color::Rgb(34, 197, 94)  // bright green
+            } else if intensity > 0.2 {
+                Color::Rgb(74, 222, 128) // lighter green
+            } else {
+                Color::Rgb(134, 239, 172) // very light green
+            };
+
+            Line::from(vec![
+                Span::styled(format!(" {:>12} │", time_str), Style::default().fg(TEXT_MUTED)),
+                Span::styled(bar, Style::default().fg(bar_color)),
+                Span::styled(format!(" {}", format_metric_value_f64(*value, metric_unit)), Style::default().fg(TEXT_SECONDARY)),
+            ])
+        })
+        .collect();
+
+    let bars_para = Paragraph::new(bars);
+    f.render_widget(bars_para, chart_inner);
+}
+
+/// Render a sparkline using Unicode block characters
+fn render_sparkline(values: &[(u32, f64)], width: usize) -> String {
+    if values.is_empty() {
+        return "─".repeat(width);
+    }
+
+    // Sparkline characters from lowest to highest
+    let spark_chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+    let values_only: Vec<f64> = values.iter().map(|(_, v)| *v).collect();
+    let min_val = values_only.iter().cloned().fold(f64::MAX, f64::min);
+    let max_val = values_only.iter().cloned().fold(f64::MIN, f64::max);
+    let range = max_val - min_val;
+
+    // Resample values to fit width
+    let step = values_only.len() as f64 / width as f64;
+    let mut sparkline = String::new();
+
+    for i in 0..width {
+        let idx = (i as f64 * step) as usize;
+        let val = values_only.get(idx).cloned().unwrap_or(0.0);
+
+        let normalized = if range > 0.0 {
+            ((val - min_val) / range * 7.0) as usize
+        } else {
+            4 // middle if no range
+        };
+
+        sparkline.push(spark_chars[normalized.min(7)]);
+    }
+
+    sparkline
+}
+
+/// Format timestamp in short form for bar chart
+fn format_metric_timestamp_short(ts: u32) -> String {
+    use std::time::{Duration, UNIX_EPOCH};
+    let time = UNIX_EPOCH + Duration::from_secs(ts as u64);
+    // Just show time portion
+    humantime::format_rfc3339_seconds(time)
+        .to_string()
+        .chars()
+        .skip(11) // Skip date portion
+        .take(8)  // Take HH:MM:SS
+        .collect()
+}
+
+/// Format a metric value (f64) with appropriate unit
+fn format_metric_value_f64(value: f64, unit: s2_sdk::types::MetricUnit) -> String {
+    use s2_sdk::types::MetricUnit;
+    match unit {
+        MetricUnit::Bytes => format_bytes(value as u64),
+        MetricUnit::Operations => format_count(value as u64),
+    }
+}
+
+/// Format bytes with appropriate unit
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    const TB: u64 = GB * 1024;
+
+    if bytes >= TB {
+        format!("{:.2} TB", bytes as f64 / TB as f64)
+    } else if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.2} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.2} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+/// Format count with K/M suffixes
+fn format_count(count: u64) -> String {
+    if count >= 1_000_000 {
+        format!("{:.1}M", count as f64 / 1_000_000.0)
+    } else if count >= 1_000 {
+        format!("{:.1}K", count as f64 / 1_000.0)
+    } else {
+        count.to_string()
+    }
+}
 fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
     // Layout: Search bar, Header, Table rows
     let chunks = Layout::default()
@@ -1290,9 +1745,9 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
 fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     let hints = match &app.screen {
         Screen::Splash => "", // Never shown
-        Screen::Basins(_) => "/ filter | jk nav | ret open | c new | e cfg | d del | r ref | ? | q",
-        Screen::Streams(_) => "/ filter | jk nav | ret open | c new | e cfg | d del | r ref | esc",
-        Screen::StreamDetail(_) => "jk | ret | t tail | r read | a append | f fence | m trim | e cfg | esc",
+        Screen::Basins(_) => "/ filter | jk nav | ⏎ open | M metrics | c new | e cfg | d del | r ref | ?",
+        Screen::Streams(_) => "/ filter | jk nav | ⏎ open | M metrics | c new | e cfg | d del | esc",
+        Screen::StreamDetail(_) => "t tail | r read | a append | f fence | m trim | M metrics | e cfg | esc",
         Screen::ReadView(s) => {
             if s.show_detail {
                 "esc/⏎ close"
@@ -1314,6 +1769,13 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
             }
         }
         Screen::AccessTokens(_) => "/ filter | jk nav | c issue | d revoke | r ref | ⇥ switch | ? | q",
+        Screen::MetricsView(state) => {
+            if matches!(state.metrics_type, MetricsType::Basin { .. }) {
+                "←→ category | jk scroll | r refresh | esc back | q quit"
+            } else {
+                "jk scroll | r refresh | esc back | q quit"
+            }
+        }
     };
 
     let message_span = app
@@ -1547,6 +2009,35 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
             ]),
             Line::from(""),
         ],
+        Screen::MetricsView(state) => {
+            let mut lines = vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  j/k ", Style::default().fg(GREEN).bold()),
+                    Span::styled("Scroll", Style::default().fg(TEXT_SECONDARY)),
+                ]),
+                Line::from(vec![
+                    Span::styled("    r ", Style::default().fg(GREEN).bold()),
+                    Span::styled("Refresh", Style::default().fg(TEXT_SECONDARY)),
+                ]),
+            ];
+            if matches!(state.metrics_type, MetricsType::Basin { .. }) {
+                lines.push(Line::from(vec![
+                    Span::styled("  ←/→ ", Style::default().fg(GREEN).bold()),
+                    Span::styled("Change metric", Style::default().fg(TEXT_SECONDARY)),
+                ]));
+            }
+            lines.push(Line::from(vec![
+                Span::styled("  esc ", Style::default().fg(GREEN).bold()),
+                Span::styled("Back", Style::default().fg(TEXT_SECONDARY)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("    q ", Style::default().fg(GREEN).bold()),
+                Span::styled("Quit", Style::default().fg(TEXT_SECONDARY)),
+            ]));
+            lines.push(Line::from(""));
+            lines
+        },
     };
 
     let block = Block::default()
@@ -1844,7 +2335,7 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
         } => {
             // Stylish indicators
             let radio = |active: bool| if active { "●" } else { "○" };
-            let check = |on: bool| if on { "✓" } else { " " };
+            let check = |on: bool| if on { "x" } else { " " };
 
             // Value display - clean with ∞ for unlimited
             let show_val = |value: &str, is_editing: bool, placeholder: &str| -> String {
@@ -2393,6 +2884,112 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             ],
             "press any key to dismiss",
         ),
+
+        InputMode::ViewTokenDetail { token } => {
+            let mut lines = vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Token ID:      ", Style::default().fg(TEXT_MUTED)),
+                    Span::styled(token.id.to_string(), Style::default().fg(TEXT_PRIMARY).bold()),
+                ]),
+                Line::from(vec![
+                    Span::styled("Expires At:    ", Style::default().fg(TEXT_MUTED)),
+                    Span::styled(token.expires_at.to_string(), Style::default().fg(TEXT_PRIMARY)),
+                ]),
+                Line::from(vec![
+                    Span::styled("Auto-prefix:   ", Style::default().fg(TEXT_MUTED)),
+                    Span::styled(
+                        if token.auto_prefix_streams { "Yes" } else { "No" },
+                        Style::default().fg(if token.auto_prefix_streams { GREEN } else { TEXT_MUTED }),
+                    ),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled("─── Resource Scope ───", Style::default().fg(BORDER))),
+            ];
+
+            // Basins scope
+            let basins_str = format_basin_matcher(&token.scope.basins);
+            lines.push(Line::from(vec![
+                Span::styled("Basins:        ", Style::default().fg(TEXT_MUTED)),
+                Span::styled(basins_str, Style::default().fg(TEXT_PRIMARY)),
+            ]));
+
+            // Streams scope
+            let streams_str = format_stream_matcher(&token.scope.streams);
+            lines.push(Line::from(vec![
+                Span::styled("Streams:       ", Style::default().fg(TEXT_MUTED)),
+                Span::styled(streams_str, Style::default().fg(TEXT_PRIMARY)),
+            ]));
+
+            // Access tokens scope
+            let tokens_str = format_token_matcher(&token.scope.access_tokens);
+            lines.push(Line::from(vec![
+                Span::styled("Tokens:        ", Style::default().fg(TEXT_MUTED)),
+                Span::styled(tokens_str, Style::default().fg(TEXT_PRIMARY)),
+            ]));
+
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled("─── Operations ───", Style::default().fg(BORDER))));
+
+            // Group operations by category
+            let ops = &token.scope.ops;
+
+            // Account operations
+            let account_ops: Vec<_> = ops.iter()
+                .filter(|o| is_account_op(o))
+                .map(format_operation)
+                .collect();
+            if !account_ops.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::styled("Account:       ", Style::default().fg(TEXT_MUTED)),
+                    Span::styled(account_ops.join(", "), Style::default().fg(TEXT_PRIMARY)),
+                ]));
+            }
+
+            // Basin operations
+            let basin_ops: Vec<_> = ops.iter()
+                .filter(|o| is_basin_op(o))
+                .map(format_operation)
+                .collect();
+            if !basin_ops.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::styled("Basin:         ", Style::default().fg(TEXT_MUTED)),
+                    Span::styled(basin_ops.join(", "), Style::default().fg(TEXT_PRIMARY)),
+                ]));
+            }
+
+            // Stream operations
+            let stream_ops: Vec<_> = ops.iter()
+                .filter(|o| is_stream_op(o))
+                .map(format_operation)
+                .collect();
+            if !stream_ops.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::styled("Stream:        ", Style::default().fg(TEXT_MUTED)),
+                    Span::styled(stream_ops.join(", "), Style::default().fg(TEXT_PRIMARY)),
+                ]));
+            }
+
+            // Token operations
+            let token_ops: Vec<_> = ops.iter()
+                .filter(|o| is_token_op(o))
+                .map(format_operation)
+                .collect();
+            if !token_ops.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::styled("Tokens:        ", Style::default().fg(TEXT_MUTED)),
+                    Span::styled(token_ops.join(", "), Style::default().fg(TEXT_PRIMARY)),
+                ]));
+            }
+
+            lines.push(Line::from(""));
+
+            (
+                " Access Token Details ",
+                lines,
+                "esc/enter close",
+            )
+        },
     };
 
     let area = centered_rect(55, 85, f.area());

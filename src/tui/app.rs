@@ -5,7 +5,7 @@ use base64ct::Encoding;
 use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use futures::StreamExt;
 use ratatui::{Terminal, prelude::Backend};
-use s2_sdk::types::{AccessTokenId, AccessTokenInfo, BasinInfo, BasinName, StreamInfo, StreamName, StreamPosition};
+use s2_sdk::types::{AccessTokenId, AccessTokenInfo, BasinInfo, BasinMetricSet, BasinName, StreamInfo, StreamMetricSet, StreamName, StreamPosition, TimeRange};
 use tokio::sync::mpsc;
 
 use crate::cli::{CreateBasinArgs, CreateStreamArgs, IssueAccessTokenArgs, ListAccessTokensArgs, ListBasinsArgs, ListStreamsArgs, ReadArgs, ReconfigureBasinArgs, ReconfigureStreamArgs};
@@ -38,6 +38,7 @@ pub enum Screen {
     ReadView(ReadViewState),
     AppendView(AppendViewState),
     AccessTokens(AccessTokensState),
+    MetricsView(MetricsViewState),
 }
 
 /// State for the basins list screen
@@ -124,6 +125,66 @@ pub struct AccessTokensState {
     pub loading: bool,
     pub filter: String,
     pub filter_active: bool,
+}
+
+/// Type of metrics being viewed
+#[derive(Debug, Clone)]
+pub enum MetricsType {
+    Basin { basin_name: BasinName },
+    Stream { basin_name: BasinName, stream_name: StreamName },
+}
+
+/// Which metric is currently selected
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MetricCategory {
+    #[default]
+    Storage,
+    AppendOps,
+    ReadOps,
+    AppendThroughput,
+    ReadThroughput,
+}
+
+impl MetricCategory {
+    pub fn next(&self) -> Self {
+        match self {
+            Self::Storage => Self::AppendOps,
+            Self::AppendOps => Self::ReadOps,
+            Self::ReadOps => Self::AppendThroughput,
+            Self::AppendThroughput => Self::ReadThroughput,
+            Self::ReadThroughput => Self::Storage,
+        }
+    }
+
+    pub fn prev(&self) -> Self {
+        match self {
+            Self::Storage => Self::ReadThroughput,
+            Self::AppendOps => Self::Storage,
+            Self::ReadOps => Self::AppendOps,
+            Self::AppendThroughput => Self::ReadOps,
+            Self::ReadThroughput => Self::AppendThroughput,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Storage => "Storage",
+            Self::AppendOps => "Append Ops",
+            Self::ReadOps => "Read Ops",
+            Self::AppendThroughput => "Append Throughput",
+            Self::ReadThroughput => "Read Throughput",
+        }
+    }
+}
+
+/// State for the metrics view
+#[derive(Debug, Clone)]
+pub struct MetricsViewState {
+    pub metrics_type: MetricsType,
+    pub metrics: Vec<s2_sdk::types::Metric>,
+    pub selected_category: MetricCategory,
+    pub loading: bool,
+    pub scroll: usize,
 }
 
 /// Status message level
@@ -256,6 +317,8 @@ pub enum InputMode {
     ConfirmRevokeToken { token_id: String },
     /// Show issued token (one-time display)
     ShowIssuedToken { token: String },
+    /// View access token details
+    ViewTokenDetail { token: AccessTokenInfo },
 }
 
 /// Retention policy option for UI
@@ -1049,6 +1112,40 @@ impl App {
                 }
             }
 
+            Event::BasinMetricsLoaded(result) => {
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    state.loading = false;
+                    match result {
+                        Ok(metrics) => {
+                            state.metrics = metrics;
+                        }
+                        Err(e) => {
+                            self.message = Some(StatusMessage {
+                                text: format!("Failed to load basin metrics: {e}"),
+                                level: MessageLevel::Error,
+                            });
+                        }
+                    }
+                }
+            }
+
+            Event::StreamMetricsLoaded(result) => {
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    state.loading = false;
+                    match result {
+                        Ok(metrics) => {
+                            state.metrics = metrics;
+                        }
+                        Err(e) => {
+                            self.message = Some(StatusMessage {
+                                text: format!("Failed to load stream metrics: {e}"),
+                                level: MessageLevel::Error,
+                            });
+                        }
+                    }
+                }
+            }
+
             Event::Error(e) => {
                 self.message = Some(StatusMessage {
                     text: e.to_string(),
@@ -1116,6 +1213,7 @@ impl App {
             Screen::ReadView(_) => self.handle_read_view_key(key, tx),
             Screen::AppendView(_) => self.handle_append_view_key(key, tx),
             Screen::AccessTokens(_) => self.handle_access_tokens_key(key, tx),
+            Screen::MetricsView(_) => self.handle_metrics_view_key(key, tx),
         }
     }
 
@@ -1938,6 +2036,16 @@ impl App {
                     _ => {}
                 }
             }
+
+            InputMode::ViewTokenDetail { .. } => {
+                // Esc or Enter to close detail view
+                match key.code {
+                    KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                        self.input_mode = InputMode::Normal;
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -2046,6 +2154,13 @@ impl App {
                     };
                     // Load current config
                     self.load_basin_config(basin_name, tx);
+                }
+            }
+            KeyCode::Char('M') => {
+                // Basin Metrics for selected basin
+                if let Some(basin) = filtered.get(state.selected) {
+                    let basin_name = basin.name.clone();
+                    self.open_basin_metrics(basin_name, tx);
                 }
             }
             KeyCode::Esc => {
@@ -2190,6 +2305,11 @@ impl App {
                     self.load_stream_config_for_reconfig(basin_name, stream_name, tx);
                 }
             }
+            KeyCode::Char('M') => {
+                // Basin Metrics
+                let basin_name = state.basin_name.clone();
+                self.open_basin_metrics(basin_name, tx);
+            }
             _ => {}
         }
     }
@@ -2281,6 +2401,12 @@ impl App {
                 let basin_name = state.basin_name.clone();
                 let stream_name = state.stream_name.clone();
                 self.open_trim_dialog(basin_name, stream_name);
+            }
+            KeyCode::Char('M') => {
+                // Stream Metrics
+                let basin_name = state.basin_name.clone();
+                let stream_name = state.stream_name.clone();
+                self.open_stream_metrics(basin_name, stream_name, tx);
             }
             _ => {}
         }
@@ -3640,6 +3766,14 @@ impl App {
                 state.loading = true;
                 self.load_access_tokens(tx);
             }
+            KeyCode::Char('i') | KeyCode::Enter => {
+                // View token details
+                if let Some(token) = filtered_tokens.get(state.selected) {
+                    self.input_mode = InputMode::ViewTokenDetail {
+                        token: (*token).clone(),
+                    };
+                }
+            }
             _ => {}
         }
     }
@@ -3875,5 +4009,199 @@ impl App {
                 }
             }
         });
+    }
+
+    /// Open basin metrics view
+    fn open_basin_metrics(&mut self, basin_name: BasinName, tx: mpsc::UnboundedSender<Event>) {
+        self.screen = Screen::MetricsView(MetricsViewState {
+            metrics_type: MetricsType::Basin { basin_name: basin_name.clone() },
+            metrics: Vec::new(),
+            selected_category: MetricCategory::Storage,
+            loading: true,
+            scroll: 0,
+        });
+        self.load_basin_metrics(basin_name, MetricCategory::Storage, tx);
+    }
+
+    /// Open stream metrics view
+    fn open_stream_metrics(&mut self, basin_name: BasinName, stream_name: StreamName, tx: mpsc::UnboundedSender<Event>) {
+        self.screen = Screen::MetricsView(MetricsViewState {
+            metrics_type: MetricsType::Stream { basin_name: basin_name.clone(), stream_name: stream_name.clone() },
+            metrics: Vec::new(),
+            selected_category: MetricCategory::Storage,
+            loading: true,
+            scroll: 0,
+        });
+        self.load_stream_metrics(basin_name, stream_name, tx);
+    }
+
+    /// Load basin metrics
+    fn load_basin_metrics(&self, basin_name: BasinName, category: MetricCategory, tx: mpsc::UnboundedSender<Event>) {
+        let s2 = self.s2.clone();
+
+        tokio::spawn(async move {
+            // Get metrics for last 24 hours
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as u32;
+            let day_ago = now.saturating_sub(24 * 60 * 60);
+
+            let set = match category {
+                MetricCategory::Storage => BasinMetricSet::Storage(TimeRange::new(day_ago, now)),
+                MetricCategory::AppendOps => BasinMetricSet::AppendOps(
+                    s2_sdk::types::TimeRangeAndInterval::new(day_ago, now)
+                ),
+                MetricCategory::ReadOps => BasinMetricSet::ReadOps(
+                    s2_sdk::types::TimeRangeAndInterval::new(day_ago, now)
+                ),
+                MetricCategory::AppendThroughput => BasinMetricSet::AppendThroughput(
+                    s2_sdk::types::TimeRangeAndInterval::new(day_ago, now)
+                ),
+                MetricCategory::ReadThroughput => BasinMetricSet::ReadThroughput(
+                    s2_sdk::types::TimeRangeAndInterval::new(day_ago, now)
+                ),
+            };
+
+            let input = s2_sdk::types::GetBasinMetricsInput::new(basin_name, set);
+            match s2.get_basin_metrics(input).await {
+                Ok(metrics) => {
+                    let _ = tx.send(Event::BasinMetricsLoaded(Ok(metrics)));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::BasinMetricsLoaded(Err(CliError::op(
+                        crate::error::OpKind::GetBasinMetrics,
+                        e,
+                    ))));
+                }
+            }
+        });
+    }
+
+    /// Load stream metrics
+    fn load_stream_metrics(&self, basin_name: BasinName, stream_name: StreamName, tx: mpsc::UnboundedSender<Event>) {
+        let s2 = self.s2.clone();
+
+        tokio::spawn(async move {
+            // Get metrics for last 24 hours
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as u32;
+            let day_ago = now.saturating_sub(24 * 60 * 60);
+
+            let set = StreamMetricSet::Storage(TimeRange::new(day_ago, now));
+
+            let input = s2_sdk::types::GetStreamMetricsInput::new(basin_name, stream_name, set);
+            match s2.get_stream_metrics(input).await {
+                Ok(metrics) => {
+                    let _ = tx.send(Event::StreamMetricsLoaded(Ok(metrics)));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::StreamMetricsLoaded(Err(CliError::op(
+                        crate::error::OpKind::GetStreamMetrics,
+                        e,
+                    ))));
+                }
+            }
+        });
+    }
+
+    /// Handle keys in metrics view
+    fn handle_metrics_view_key(&mut self, key: KeyEvent, tx: mpsc::UnboundedSender<Event>) {
+        // Extract data from state first to avoid borrow issues
+        let (metrics_type, selected_category) = {
+            let Screen::MetricsView(state) = &self.screen else {
+                return;
+            };
+            (state.metrics_type.clone(), state.selected_category)
+        };
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                // Go back to previous screen
+                match &metrics_type {
+                    MetricsType::Basin { basin_name } => {
+                        let basin_name = basin_name.clone();
+                        self.screen = Screen::Streams(StreamsState {
+                            basin_name: basin_name.clone(),
+                            streams: Vec::new(),
+                            selected: 0,
+                            loading: true,
+                            filter: String::new(),
+                            filter_active: false,
+                        });
+                        self.load_streams(basin_name, tx);
+                    }
+                    MetricsType::Stream { basin_name, stream_name } => {
+                        let basin_name = basin_name.clone();
+                        let stream_name = stream_name.clone();
+                        self.screen = Screen::StreamDetail(StreamDetailState {
+                            basin_name: basin_name.clone(),
+                            stream_name: stream_name.clone(),
+                            config: None,
+                            tail_position: None,
+                            selected_action: 0,
+                            loading: true,
+                        });
+                        self.load_stream_detail(basin_name, stream_name, tx);
+                    }
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                // Previous metric category (only for basin metrics)
+                if let MetricsType::Basin { basin_name } = &metrics_type {
+                    let basin_name = basin_name.clone();
+                    let new_category = selected_category.prev();
+                    if let Screen::MetricsView(state) = &mut self.screen {
+                        state.selected_category = new_category;
+                        state.loading = true;
+                        state.metrics.clear();
+                    }
+                    self.load_basin_metrics(basin_name, new_category, tx);
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                // Next metric category (only for basin metrics)
+                if let MetricsType::Basin { basin_name } = &metrics_type {
+                    let basin_name = basin_name.clone();
+                    let new_category = selected_category.next();
+                    if let Screen::MetricsView(state) = &mut self.screen {
+                        state.selected_category = new_category;
+                        state.loading = true;
+                        state.metrics.clear();
+                    }
+                    self.load_basin_metrics(basin_name, new_category, tx);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    if state.scroll > 0 {
+                        state.scroll -= 1;
+                    }
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    state.scroll += 1;
+                }
+            }
+            KeyCode::Char('r') => {
+                // Refresh
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    state.loading = true;
+                    state.metrics.clear();
+                }
+                match &metrics_type {
+                    MetricsType::Basin { basin_name } => {
+                        self.load_basin_metrics(basin_name.clone(), selected_category, tx);
+                    }
+                    MetricsType::Stream { basin_name, stream_name } => {
+                        self.load_stream_metrics(basin_name.clone(), stream_name.clone(), tx);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
