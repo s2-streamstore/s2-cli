@@ -69,6 +69,15 @@ pub enum Event {
     /// Stream reconfigured successfully
     StreamReconfigured(Result<(), CliError>),
 
+    /// Record appended successfully (seq_num, body_preview, header_count)
+    RecordAppended(Result<(u64, String, usize), CliError>),
+
+    /// Stream fenced successfully (new token)
+    StreamFenced(Result<String, CliError>),
+
+    /// Stream trimmed successfully (trim_point, new_tail_seq_num)
+    StreamTrimmed(Result<(u64, u64), CliError>),
+
     /// An error occurred in a background task
     Error(CliError),
 }

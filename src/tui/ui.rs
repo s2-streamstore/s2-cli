@@ -3,12 +3,12 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Padding, Paragraph},
 };
 
 use crate::types::{StorageClass, TimestampingMode};
 
-use super::app::{App, AgoUnit, BasinsState, InputMode, MessageLevel, ReadStartFrom, ReadViewState, RetentionPolicyOption, Screen, StreamDetailState, StreamsState};
+use super::app::{App, AgoUnit, AppendViewState, BasinsState, InputMode, MessageLevel, ReadStartFrom, ReadViewState, RetentionPolicyOption, Screen, StreamDetailState, StreamsState};
 
 // S2 Console dark theme
 const GREEN: Color = Color::Rgb(34, 197, 94);            // Active green
@@ -51,6 +51,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Screen::Streams(state) => draw_streams(f, chunks[0], state),
         Screen::StreamDetail(state) => draw_stream_detail(f, chunks[0], state),
         Screen::ReadView(state) => draw_read_view(f, chunks[0], state),
+        Screen::AppendView(state) => draw_append_view(f, chunks[0], state),
     }
 
     // Draw status bar
@@ -521,9 +522,6 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
 
     // === Actions ===
     let actions_block = Block::default()
-        .title(Line::from(vec![
-            Span::styled(" Read Stream ", Style::default().fg(TEXT_PRIMARY).bold()),
-        ]))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(BORDER))
         .padding(Padding::new(2, 2, 1, 1));
@@ -531,6 +529,9 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
     let actions = vec![
         ("t", "Tail", "Live follow from current position - see new records as they arrive"),
         ("r", "Custom Read", "Configure start position, limits, and time range"),
+        ("a", "Append", "Write records to this stream"),
+        ("f", "Fence", "Set a fencing token to block other writers"),
+        ("m", "Trim", "Delete records before a sequence number"),
     ];
 
     let mut action_lines = vec![];
@@ -575,86 +576,478 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
 
     let uri = format!("s2://{}/{}", state.basin_name, state.stream_name);
 
-    let block = Block::default()
-        .title(Line::from(vec![
-            Span::styled(" ", Style::default()),
-            Span::styled(mode_text, Style::default().fg(mode_color).bold()),
-            Span::styled("  ", Style::default()),
-            Span::styled(&uri, Style::default().fg(TEXT_SECONDARY)),
-            Span::styled(
-                format!("  {} records ", state.records.len()),
-                Style::default().fg(TEXT_MUTED),
-            ),
-        ]))
+    // Build title spans
+    let mut title_spans = vec![
+        Span::styled(" ", Style::default()),
+        Span::styled(mode_text, Style::default().fg(mode_color).bold()),
+        Span::styled("  ", Style::default()),
+        Span::styled(&uri, Style::default().fg(TEXT_SECONDARY)),
+        Span::styled(
+            format!("  {} records ", state.records.len()),
+            Style::default().fg(TEXT_MUTED),
+        ),
+    ];
+
+    // Add output file indicator if writing to file
+    if let Some(ref output) = state.output_file {
+        title_spans.push(Span::styled(" → ", Style::default().fg(TEXT_MUTED)));
+        title_spans.push(Span::styled(output, Style::default().fg(YELLOW)));
+    }
+
+    // Main container with title
+    let outer_block = Block::default()
+        .title(Line::from(title_spans))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if state.is_tailing && !state.paused { GREEN } else { BORDER }))
-        .padding(Padding::horizontal(1));
+        .border_style(Style::default().fg(if state.is_tailing && !state.paused { GREEN } else { BORDER }));
+
+    let inner_area = outer_block.inner(area);
+    f.render_widget(outer_block, area);
 
     if state.records.is_empty() {
         let text = if state.loading {
-            Line::from(Span::styled("Waiting for records...", Style::default().fg(TEXT_MUTED)))
+            "Waiting for records..."
         } else {
-            Line::from(Span::styled("No records", Style::default().fg(TEXT_MUTED)))
+            "No records"
         };
-        let para = Paragraph::new(text).block(block);
-        f.render_widget(para, area);
+        let para = Paragraph::new(Span::styled(text, Style::default().fg(TEXT_MUTED)))
+            .alignment(Alignment::Center);
+        f.render_widget(para, Rect::new(inner_area.x, inner_area.y + 2, inner_area.width, 1));
         return;
     }
 
-    // Calculate visible records
-    let inner_height = area.height.saturating_sub(2) as usize;
     let total_records = state.records.len();
-    let records_per_view = inner_height / 3;
+    let selected = state.selected.min(total_records.saturating_sub(1));
 
-    // Auto-scroll to bottom when tailing
-    let scroll_offset = if state.is_tailing && !state.paused {
-        total_records.saturating_sub(records_per_view)
+    // Layout depends on whether list is hidden
+    let body_area = if state.hide_list {
+        // Full width for body when list hidden
+        inner_area
     } else {
-        state.scroll_offset.min(total_records.saturating_sub(1))
+        // Split into left (record list) and right (body preview) panes
+        let panes = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(28),  // Record list - compact
+                Constraint::Min(20),     // Body preview - takes remaining space
+            ])
+            .split(inner_area);
+
+        let list_area = panes[0];
+        let visible_height = list_area.height as usize;
+
+        // Keep selected record in view
+        let scroll_offset = if state.is_tailing && !state.paused {
+            // Auto-scroll to show latest
+            total_records.saturating_sub(visible_height)
+        } else if selected >= visible_height {
+            selected - visible_height + 1
+        } else {
+            0
+        };
+
+        // === Left pane: Record list ===
+        for (view_idx, record) in state.records.iter().enumerate().skip(scroll_offset).take(visible_height) {
+            let y = list_area.y + (view_idx - scroll_offset) as u16;
+            if y >= list_area.y + list_area.height {
+                break;
+            }
+
+            let is_selected = view_idx == selected;
+            let has_headers = !record.headers.is_empty();
+            let row_area = Rect::new(list_area.x, y, list_area.width, 1);
+
+            // Selection highlight
+            if is_selected {
+                f.render_widget(
+                    Block::default().style(Style::default().bg(Color::Rgb(39, 39, 42))),
+                    row_area,
+                );
+            }
+
+            let sel_indicator = if is_selected { "▸" } else { " " };
+            let header_indicator = if has_headers { "⌘" } else { " " };
+
+            let line = Line::from(vec![
+                Span::styled(sel_indicator, Style::default().fg(GREEN)),
+                Span::styled(
+                    format!("#{:<8}", record.seq_num),
+                    Style::default().fg(if is_selected { GREEN } else { TEXT_SECONDARY }).bold(),
+                ),
+                Span::styled(
+                    format!("{:>13}", record.timestamp),
+                    Style::default().fg(TEXT_MUTED),
+                ),
+                Span::styled(
+                    format!(" {}", header_indicator),
+                    Style::default().fg(if has_headers { YELLOW } else { BORDER }),
+                ),
+            ]);
+            f.render_widget(Paragraph::new(line), row_area);
+        }
+
+        // Vertical separator
+        let sep_x = panes[1].x.saturating_sub(1);
+        for y in 0..inner_area.height {
+            f.render_widget(
+                Paragraph::new(Span::styled("│", Style::default().fg(BORDER))),
+                Rect::new(sep_x, inner_area.y + y, 1, 1),
+            );
+        }
+
+        panes[1]
     };
 
-    let lines: Vec<Line> = state
-        .records
-        .iter()
-        .skip(scroll_offset)
-        .take(records_per_view + 1)
-        .flat_map(|record| {
-            let body = String::from_utf8_lossy(&record.body);
-            let body_preview: String = body.chars().take(200).collect();
+    // === Body preview of selected record ===
+    if let Some(record) = state.records.get(selected) {
+        let body = String::from_utf8_lossy(&record.body);
+        let body_width = body_area.width.saturating_sub(2) as usize;
+        let body_height = body_area.height as usize;
 
-            vec![
-                Line::from(vec![
-                    Span::styled(
-                        format!("#{}", record.seq_num),
-                        Style::default().fg(GREEN).bold(),
-                    ),
-                    Span::styled(
-                        format!("  ts={}", record.timestamp),
-                        Style::default().fg(TEXT_MUTED),
-                    ),
-                ]),
-                Line::from(Span::styled(body_preview, Style::default().fg(TEXT_SECONDARY))),
-                Line::from(""),
-            ]
-        })
-        .collect();
+        // Cinema mode: when list is hidden and tailing, show raw body without chrome
+        let cinema_mode = state.hide_list && state.is_tailing && !state.paused;
 
-    let para = Paragraph::new(lines)
-        .block(block)
-        .wrap(Wrap { trim: true });
+        let (content_start_y, content_height) = if cinema_mode {
+            // Full height for body in cinema mode
+            (body_area.y, body_height)
+        } else {
+            // Header line with metadata
+            let header_line = Line::from(vec![
+                Span::styled(format!(" #{}", record.seq_num), Style::default().fg(GREEN).bold()),
+                Span::styled(format!("  {}ms", record.timestamp), Style::default().fg(TEXT_MUTED)),
+                Span::styled(format!("  {} bytes", record.body.len()), Style::default().fg(TEXT_MUTED)),
+                if !record.headers.is_empty() {
+                    Span::styled(format!("  ⌘{}", record.headers.len()), Style::default().fg(YELLOW))
+                } else {
+                    Span::styled("", Style::default())
+                },
+            ]);
+            f.render_widget(Paragraph::new(header_line), Rect::new(body_area.x, body_area.y, body_area.width, 1));
+
+            // Separator
+            let sep = "─".repeat(body_width);
+            f.render_widget(
+                Paragraph::new(Span::styled(format!(" {}", sep), Style::default().fg(BORDER))),
+                Rect::new(body_area.x, body_area.y + 1, body_area.width, 1),
+            );
+
+            (body_area.y + 2, body_height.saturating_sub(2))
+        };
+
+        if body.is_empty() {
+            f.render_widget(
+                Paragraph::new(Span::styled(" (empty body)", Style::default().fg(TEXT_MUTED).italic())),
+                Rect::new(body_area.x, content_start_y, body_area.width, 1),
+            );
+        } else {
+            // Display body text line by line (no wrapping for ASCII art)
+            let mut display_lines: Vec<Line> = Vec::new();
+
+            for line in body.lines().take(content_height) {
+                // For cinema mode, preserve spacing for ASCII art; otherwise wrap
+                if cinema_mode {
+                    display_lines.push(Line::from(Span::styled(line.to_string(), Style::default().fg(TEXT_PRIMARY))));
+                } else {
+                    let chars: Vec<char> = line.chars().collect();
+                    if chars.is_empty() {
+                        display_lines.push(Line::from(""));
+                    } else {
+                        for chunk in chars.chunks(body_width.max(1)) {
+                            let text: String = chunk.iter().collect();
+                            display_lines.push(Line::from(Span::styled(text, Style::default().fg(TEXT_PRIMARY))));
+                            if display_lines.len() >= content_height {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if display_lines.len() >= content_height {
+                    break;
+                }
+            }
+
+            let body_para = Paragraph::new(display_lines)
+                .block(Block::default().padding(Padding::horizontal(if cinema_mode { 0 } else { 1 })));
+            f.render_widget(body_para, Rect::new(body_area.x, content_start_y, body_area.width, content_height as u16));
+        }
+    }
+
+    // Draw headers popup if showing
+    if state.show_detail {
+        if let Some(record) = state.records.get(selected) {
+            draw_headers_popup(f, record);
+        }
+    }
+}
+
+fn draw_headers_popup(f: &mut Frame, record: &s2_sdk::types::SequencedRecord) {
+    // Size popup based on number of headers (min height for "no headers" message)
+    let content_lines = if record.headers.is_empty() { 1 } else { record.headers.len() };
+    let height = (content_lines + 5).min(20) as u16;
+    let area = centered_rect(50, height * 100 / f.area().height.max(1), f.area());
+
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(format!("  Record #{}", record.seq_num), Style::default().fg(GREEN).bold()),
+        ]),
+        Line::from(""),
+    ];
+
+    if record.headers.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("  No headers", Style::default().fg(TEXT_MUTED).italic()),
+        ]));
+    } else {
+        for header in &record.headers {
+            let name = String::from_utf8_lossy(&header.name);
+            let value = String::from_utf8_lossy(&header.value);
+            lines.push(Line::from(vec![
+                Span::styled("  ", Style::default()),
+                Span::styled(format!("{}", name), Style::default().fg(YELLOW)),
+                Span::styled(" = ", Style::default().fg(BORDER)),
+                Span::styled(format!("{}", value), Style::default().fg(TEXT_PRIMARY)),
+            ]));
+        }
+    }
+
+    let (title, border_color) = if record.headers.is_empty() {
+        (" Headers ", BORDER)
+    } else {
+        (" Headers ", YELLOW)
+    };
+
+    let block = Block::default()
+        .title(Line::from(Span::styled(title, Style::default().fg(border_color).bold())))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color))
+        .style(Style::default().bg(BG_DARK));
+
+    f.render_widget(Clear, area);
+    let para = Paragraph::new(lines).block(block);
     f.render_widget(para, area);
+}
+
+fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
+    let uri = format!("s2://{}/{}", state.basin_name, state.stream_name);
+
+    // Split into form (left) and history (right)
+    let main_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50),  // Form
+            Constraint::Percentage(50),  // History
+        ])
+        .split(area);
+
+    // === Form pane ===
+    let form_block = Block::default()
+        .title(Line::from(vec![
+            Span::styled(" APPEND ", Style::default().fg(GREEN).bold()),
+            Span::styled(" ", Style::default()),
+            Span::styled(&uri, Style::default().fg(TEXT_SECONDARY)),
+        ]))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(GREEN))
+        .padding(Padding::new(2, 2, 1, 1));
+
+    let form_inner = form_block.inner(main_chunks[0]);
+    f.render_widget(form_block, main_chunks[0]);
+
+    // Helper functions
+    let cursor = |editing: bool| if editing { "▎" } else { "" };
+    let selected_marker = |sel: bool| if sel { "▸ " } else { "  " };
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Row 0: Body
+    let body_selected = state.selected == 0;
+    let body_editing = body_selected && state.editing;
+    lines.push(Line::from(vec![
+        Span::styled(selected_marker(body_selected), Style::default().fg(GREEN)),
+        Span::styled("Body", Style::default().fg(if body_selected { TEXT_PRIMARY } else { TEXT_MUTED })),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  ", Style::default()),
+        Span::styled(
+            if state.body.is_empty() && !body_editing {
+                "(empty)".to_string()
+            } else {
+                format!("{}{}", &state.body, cursor(body_editing))
+            },
+            Style::default().fg(if body_editing { GREEN } else if state.body.is_empty() { TEXT_MUTED } else { TEXT_SECONDARY })
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    // Row 1: Headers
+    let headers_selected = state.selected == 1;
+    let headers_editing = headers_selected && state.editing;
+    lines.push(Line::from(vec![
+        Span::styled(selected_marker(headers_selected), Style::default().fg(GREEN)),
+        Span::styled("Headers", Style::default().fg(if headers_selected { TEXT_PRIMARY } else { TEXT_MUTED })),
+        Span::styled(format!("  ({} added)", state.headers.len()), Style::default().fg(TEXT_MUTED)),
+        if headers_selected && !headers_editing {
+            Span::styled("  d=del", Style::default().fg(BORDER))
+        } else {
+            Span::raw("")
+        },
+    ]));
+
+    // Show existing headers
+    for (key, value) in &state.headers {
+        lines.push(Line::from(vec![
+            Span::styled("    ", Style::default()),
+            Span::styled(key, Style::default().fg(YELLOW)),
+            Span::styled(": ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(value, Style::default().fg(TEXT_SECONDARY)),
+        ]));
+    }
+
+    // Show header input if editing
+    if headers_editing {
+        lines.push(Line::from(vec![
+            Span::styled("  + ", Style::default().fg(GREEN)),
+            Span::styled(
+                format!("{}{}", &state.header_key_input, if state.editing_header_key { "▎" } else { "" }),
+                Style::default().fg(if state.editing_header_key { GREEN } else { YELLOW })
+            ),
+            Span::styled(": ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(
+                format!("{}{}", &state.header_value_input, if !state.editing_header_key { "▎" } else { "" }),
+                Style::default().fg(if !state.editing_header_key { GREEN } else { TEXT_SECONDARY })
+            ),
+            Span::styled("  ⇥=switch", Style::default().fg(BORDER)),
+        ]));
+    } else if headers_selected {
+        lines.push(Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled("Press Enter to add header", Style::default().fg(TEXT_MUTED).italic()),
+        ]));
+    }
+    lines.push(Line::from(""));
+
+    // Row 2: Match seq num
+    let match_selected = state.selected == 2;
+    let match_editing = match_selected && state.editing;
+    lines.push(Line::from(vec![
+        Span::styled(selected_marker(match_selected), Style::default().fg(GREEN)),
+        Span::styled("Match Seq#", Style::default().fg(if match_selected { TEXT_PRIMARY } else { TEXT_MUTED })),
+        Span::styled("  ", Style::default()),
+        Span::styled(
+            if state.match_seq_num.is_empty() && !match_editing {
+                "(none)".to_string()
+            } else {
+                format!("{}{}", &state.match_seq_num, cursor(match_editing))
+            },
+            Style::default().fg(if match_editing { GREEN } else if state.match_seq_num.is_empty() { TEXT_MUTED } else { TEXT_SECONDARY })
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    // Row 3: Fencing token
+    let fence_selected = state.selected == 3;
+    let fence_editing = fence_selected && state.editing;
+    lines.push(Line::from(vec![
+        Span::styled(selected_marker(fence_selected), Style::default().fg(GREEN)),
+        Span::styled("Fencing Token", Style::default().fg(if fence_selected { TEXT_PRIMARY } else { TEXT_MUTED })),
+        Span::styled("  ", Style::default()),
+        Span::styled(
+            if state.fencing_token.is_empty() && !fence_editing {
+                "(none)".to_string()
+            } else {
+                format!("{}{}", &state.fencing_token, cursor(fence_editing))
+            },
+            Style::default().fg(if fence_editing { GREEN } else if state.fencing_token.is_empty() { TEXT_MUTED } else { TEXT_SECONDARY })
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    // Row 4: Send button
+    let send_selected = state.selected == 4;
+    let can_send = !state.body.is_empty() && !state.appending;
+    let (btn_fg, btn_bg) = if state.appending {
+        (BG_DARK, YELLOW)
+    } else if send_selected && can_send {
+        (BG_DARK, GREEN)
+    } else {
+        (if can_send { GREEN } else { TEXT_MUTED }, BG_PANEL)
+    };
+    lines.push(Line::from(vec![
+        Span::styled(selected_marker(send_selected), Style::default().fg(GREEN)),
+        Span::styled(
+            if state.appending { " ◌ SENDING... " } else { " ▶ SEND " },
+            Style::default().fg(btn_fg).bg(btn_bg).bold()
+        ),
+    ]));
+
+    let form_para = Paragraph::new(lines);
+    f.render_widget(form_para, form_inner);
+
+    // === History pane ===
+    let history_block = Block::default()
+        .title(Line::from(vec![
+            Span::styled(" History ", Style::default().fg(TEXT_PRIMARY)),
+            Span::styled(format!(" {} appended", state.history.len()), Style::default().fg(TEXT_MUTED)),
+        ]))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER));
+
+    if state.history.is_empty() {
+        let text = Paragraph::new(Span::styled(
+            "No records appended yet",
+            Style::default().fg(TEXT_MUTED).italic(),
+        ))
+        .alignment(Alignment::Center)
+        .block(history_block);
+        f.render_widget(text, main_chunks[1]);
+    } else {
+        let history_inner = history_block.inner(main_chunks[1]);
+        f.render_widget(history_block, main_chunks[1]);
+
+        let visible_height = history_inner.height as usize;
+        let start = state.history.len().saturating_sub(visible_height);
+
+        let mut history_lines: Vec<Line> = Vec::new();
+        for result in state.history.iter().skip(start) {
+            let mut spans = vec![
+                Span::styled(format!("#{:<8}", result.seq_num), Style::default().fg(GREEN)),
+            ];
+            if result.header_count > 0 {
+                spans.push(Span::styled(format!(" ⌘{}", result.header_count), Style::default().fg(YELLOW)));
+            }
+            spans.push(Span::styled(format!(" {}", &result.body_preview), Style::default().fg(TEXT_SECONDARY)));
+            history_lines.push(Line::from(spans));
+        }
+
+        let history_para = Paragraph::new(history_lines);
+        f.render_widget(history_para, history_inner);
+    }
 }
 
 fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     let hints = match &app.screen {
         Screen::Basins(_) => "/ filter | jk nav | ret open | c new | e cfg | d del | r ref | ? | q",
         Screen::Streams(_) => "/ filter | jk nav | ret open | c new | e cfg | d del | r ref | esc",
-        Screen::StreamDetail(_) => "jk nav | ret run | t tail | r custom | e cfg | esc",
+        Screen::StreamDetail(_) => "jk | ret | t tail | r read | a append | f fence | m trim | e cfg | esc",
         Screen::ReadView(s) => {
-            if s.is_tailing {
-                "space pause | jk scroll | esc"
+            if s.show_detail {
+                "esc/⏎ close"
+            } else if s.is_tailing {
+                "jk nav | h headers | ⇥ list | space pause | gG top/bot | esc"
             } else {
-                "jk scroll | gG top/bot | esc"
+                "jk nav | h headers | ⇥ list | gG top/bot | esc"
+            }
+        }
+        Screen::AppendView(s) => {
+            if s.editing {
+                if s.selected == 1 {
+                    "type | ⇥ key/val | ⏎ add | esc done"
+                } else {
+                    "type | ⏎ done | esc cancel"
+                }
+            } else {
+                "jk nav | ⏎ edit/send | d del header | esc back"
             }
         }
     };
@@ -784,6 +1177,18 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
                 Span::styled("Custom read", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(vec![
+                Span::styled("    a ", Style::default().fg(GREEN).bold()),
+                Span::styled("Append records", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    f ", Style::default().fg(GREEN).bold()),
+                Span::styled("Fence stream", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    m ", Style::default().fg(GREEN).bold()),
+                Span::styled("Trim stream", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
                 Span::styled("    e ", Style::default().fg(GREEN).bold()),
                 Span::styled("Reconfigure stream", Style::default().fg(TEXT_SECONDARY)),
             ]),
@@ -810,6 +1215,30 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
             Line::from(vec![
                 Span::styled("  esc ", Style::default().fg(GREEN).bold()),
                 Span::styled("Back", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(""),
+        ],
+        Screen::AppendView(_) => vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  j/k ", Style::default().fg(GREEN).bold()),
+                Span::styled("Navigate fields", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("enter ", Style::default().fg(GREEN).bold()),
+                Span::styled("Edit field / Send record", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    d ", Style::default().fg(GREEN).bold()),
+                Span::styled("Delete last header", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("  tab ", Style::default().fg(GREEN).bold()),
+                Span::styled("Switch header key/value", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("  esc ", Style::default().fg(GREEN).bold()),
+                Span::styled("Stop editing / Back", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(""),
         ],
@@ -1104,156 +1533,325 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             until_timestamp,
             clamp,
             format,
+            output_file,
             selected,
             editing,
         } => {
-            // Radio button display
-            let radio = |opt: ReadStartFrom, current: &ReadStartFrom| {
-                if opt == *current { "(o)" } else { "( )" }
-            };
-            let checkbox = |checked: bool| if checked { "[x]" } else { "[ ]" };
+            // Stylish indicators
+            let radio = |active: bool| if active { "●" } else { "○" };
+            let check = |on: bool| if on { "✓" } else { " " };
 
-            // Row selection indicator
-            let sel = |idx: usize, s: &usize| if idx == *s { ">" } else { " " };
-
-            // Input field styling - shows cursor when editing
-            let input_field = |value: &str, is_editing: bool, placeholder: &str| -> String {
+            // Value display - clean with ∞ for unlimited
+            let show_val = |value: &str, is_editing: bool, placeholder: &str| -> String {
                 if is_editing {
-                    format!("[{}|]", value)
+                    if value.is_empty() {
+                        "▎".to_string()
+                    } else {
+                        format!("{}▎", value)
+                    }
                 } else if value.is_empty() {
-                    format!("[{}]", placeholder)
+                    placeholder.to_string()
                 } else {
-                    format!("[{}]", value)
+                    value.to_string()
                 }
             };
 
             let unit_str = match ago_unit {
-                AgoUnit::Seconds => "s",
-                AgoUnit::Minutes => "m",
-                AgoUnit::Hours => "h",
-                AgoUnit::Days => "d",
+                AgoUnit::Seconds => "sec",
+                AgoUnit::Minutes => "min",
+                AgoUnit::Hours => "hr",
+                AgoUnit::Days => "day",
             };
 
             let mut lines = vec![
                 Line::from(vec![
-                    Span::styled(format!("{}/{}", basin, stream), Style::default().fg(GREEN).bold()),
+                    Span::styled("  ", Style::default()),
+                    Span::styled(format!("s2://{}/{}", basin, stream), Style::default().fg(GREEN)),
                 ]),
-                Line::from(Span::styled("Start from:", Style::default().fg(TEXT_MUTED))),
+                Line::from(""),
+                Line::from(Span::styled("  START POSITION", Style::default().fg(TEXT_MUTED))),
             ];
 
-            // Row 0: From sequence number
+            // Row 0: Sequence number
             let is_seq = *start_from == ReadStartFrom::SeqNum;
-            let seq_field = input_field(seq_num_value, *editing && *selected == 0, "0");
             lines.push(Line::from(vec![
-                Span::styled(sel(0, selected), Style::default().fg(GREEN)),
-                Span::styled(format!("{} ", radio(ReadStartFrom::SeqNum, start_from)),
-                    Style::default().fg(if is_seq { GREEN } else { TEXT_MUTED })),
-                Span::styled("seq ", Style::default().fg(if *selected == 0 { TEXT_PRIMARY } else { TEXT_SECONDARY })),
-                Span::styled(seq_field, Style::default().fg(if *selected == 0 && *editing { GREEN } else if is_seq { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(if *selected == 0 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
+                Span::styled(format!("{} ", radio(is_seq)), Style::default().fg(if is_seq { GREEN } else { BORDER })),
+                Span::styled("Sequence #  ", Style::default().fg(if *selected == 0 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(
+                    show_val(seq_num_value, *editing && *selected == 0, "0"),
+                    Style::default().fg(if *editing && *selected == 0 { GREEN } else if is_seq { TEXT_PRIMARY } else { TEXT_MUTED })
+                ),
             ]));
 
-            // Row 1: From timestamp
+            // Row 1: Timestamp
             let is_ts = *start_from == ReadStartFrom::Timestamp;
-            let ts_field = input_field(timestamp_value, *editing && *selected == 1, "0");
             lines.push(Line::from(vec![
-                Span::styled(sel(1, selected), Style::default().fg(GREEN)),
-                Span::styled(format!("{} ", radio(ReadStartFrom::Timestamp, start_from)),
-                    Style::default().fg(if is_ts { GREEN } else { TEXT_MUTED })),
-                Span::styled("ts  ", Style::default().fg(if *selected == 1 { TEXT_PRIMARY } else { TEXT_SECONDARY })),
-                Span::styled(ts_field, Style::default().fg(if *selected == 1 && *editing { GREEN } else if is_ts { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(if *selected == 1 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
+                Span::styled(format!("{} ", radio(is_ts)), Style::default().fg(if is_ts { GREEN } else { BORDER })),
+                Span::styled("Timestamp   ", Style::default().fg(if *selected == 1 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(
+                    show_val(timestamp_value, *editing && *selected == 1, "0"),
+                    Style::default().fg(if *editing && *selected == 1 { GREEN } else if is_ts { TEXT_PRIMARY } else { TEXT_MUTED })
+                ),
                 Span::styled(" ms", Style::default().fg(TEXT_MUTED)),
             ]));
 
-            // Row 2: From time ago
+            // Row 2: Time ago
             let is_ago = *start_from == ReadStartFrom::Ago;
-            let ago_field = input_field(ago_value, *editing && *selected == 2, "5");
             lines.push(Line::from(vec![
-                Span::styled(sel(2, selected), Style::default().fg(GREEN)),
-                Span::styled(format!("{} ", radio(ReadStartFrom::Ago, start_from)),
-                    Style::default().fg(if is_ago { GREEN } else { TEXT_MUTED })),
-                Span::styled("ago ", Style::default().fg(if *selected == 2 { TEXT_PRIMARY } else { TEXT_SECONDARY })),
-                Span::styled(ago_field, Style::default().fg(if *selected == 2 && *editing { GREEN } else if is_ago { TEXT_PRIMARY } else { TEXT_MUTED })),
-                Span::styled(format!(" <{}> tab", unit_str), Style::default().fg(if is_ago { GREEN_DIM } else { BORDER })),
+                Span::styled(if *selected == 2 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
+                Span::styled(format!("{} ", radio(is_ago)), Style::default().fg(if is_ago { GREEN } else { BORDER })),
+                Span::styled("Time ago    ", Style::default().fg(if *selected == 2 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(
+                    show_val(ago_value, *editing && *selected == 2, "5"),
+                    Style::default().fg(if *editing && *selected == 2 { GREEN } else if is_ago { TEXT_PRIMARY } else { TEXT_MUTED })
+                ),
+                Span::styled(format!(" {} ", unit_str), Style::default().fg(if is_ago { TEXT_SECONDARY } else { TEXT_MUTED })),
+                Span::styled("‹tab›", Style::default().fg(BORDER)),
             ]));
 
-            // Row 3: From tail offset
+            // Row 3: Tail offset
             let is_off = *start_from == ReadStartFrom::TailOffset;
-            let off_field = input_field(tail_offset_value, *editing && *selected == 3, "10");
             lines.push(Line::from(vec![
-                Span::styled(sel(3, selected), Style::default().fg(GREEN)),
-                Span::styled(format!("{} ", radio(ReadStartFrom::TailOffset, start_from)),
-                    Style::default().fg(if is_off { GREEN } else { TEXT_MUTED })),
-                Span::styled("off ", Style::default().fg(if *selected == 3 { TEXT_PRIMARY } else { TEXT_SECONDARY })),
-                Span::styled(off_field, Style::default().fg(if *selected == 3 && *editing { GREEN } else if is_off { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(if *selected == 3 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
+                Span::styled(format!("{} ", radio(is_off)), Style::default().fg(if is_off { GREEN } else { BORDER })),
+                Span::styled("Tail offset ", Style::default().fg(if *selected == 3 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(
+                    show_val(tail_offset_value, *editing && *selected == 3, "10"),
+                    Style::default().fg(if *editing && *selected == 3 { GREEN } else if is_off { TEXT_PRIMARY } else { TEXT_MUTED })
+                ),
                 Span::styled(" back", Style::default().fg(TEXT_MUTED)),
             ]));
 
-            lines.push(Line::from(Span::styled("Limits:", Style::default().fg(TEXT_MUTED))));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled("  LIMITS", Style::default().fg(TEXT_MUTED))));
 
-            // Row 4: Max records
-            let cnt_field = input_field(count_limit, *editing && *selected == 4, "-");
+            // Row 4: Count
             lines.push(Line::from(vec![
-                Span::styled(sel(4, selected), Style::default().fg(GREEN)),
-                Span::styled(" count ", Style::default().fg(if *selected == 4 { TEXT_PRIMARY } else { TEXT_SECONDARY })),
-                Span::styled(cnt_field, Style::default().fg(if *selected == 4 && *editing { GREEN } else { TEXT_MUTED })),
+                Span::styled(if *selected == 4 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
+                Span::styled("Max records ", Style::default().fg(if *selected == 4 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(
+                    show_val(count_limit, *editing && *selected == 4, "∞"),
+                    Style::default().fg(if *editing && *selected == 4 { GREEN } else { TEXT_SECONDARY })
+                ),
             ]));
 
-            // Row 5: Max bytes
-            let byte_field = input_field(byte_limit, *editing && *selected == 5, "-");
+            // Row 5: Bytes
             lines.push(Line::from(vec![
-                Span::styled(sel(5, selected), Style::default().fg(GREEN)),
-                Span::styled(" bytes ", Style::default().fg(if *selected == 5 { TEXT_PRIMARY } else { TEXT_SECONDARY })),
-                Span::styled(byte_field, Style::default().fg(if *selected == 5 && *editing { GREEN } else { TEXT_MUTED })),
+                Span::styled(if *selected == 5 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
+                Span::styled("Max bytes   ", Style::default().fg(if *selected == 5 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(
+                    show_val(byte_limit, *editing && *selected == 5, "∞"),
+                    Style::default().fg(if *editing && *selected == 5 { GREEN } else { TEXT_SECONDARY })
+                ),
             ]));
 
-            // Row 6: Until timestamp
-            let until_field = input_field(until_timestamp, *editing && *selected == 6, "-");
+            // Row 6: Until
             lines.push(Line::from(vec![
-                Span::styled(sel(6, selected), Style::default().fg(GREEN)),
-                Span::styled(" until ", Style::default().fg(if *selected == 6 { TEXT_PRIMARY } else { TEXT_SECONDARY })),
-                Span::styled(until_field, Style::default().fg(if *selected == 6 && *editing { GREEN } else { TEXT_MUTED })),
+                Span::styled(if *selected == 6 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
+                Span::styled("Until       ", Style::default().fg(if *selected == 6 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(
+                    show_val(until_timestamp, *editing && *selected == 6, "∞"),
+                    Style::default().fg(if *editing && *selected == 6 { GREEN } else { TEXT_SECONDARY })
+                ),
                 Span::styled(" ms", Style::default().fg(TEXT_MUTED)),
             ]));
 
-            lines.push(Line::from(Span::styled("Options:", Style::default().fg(TEXT_MUTED))));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled("  OPTIONS", Style::default().fg(TEXT_MUTED))));
 
             // Row 7: Clamp
             lines.push(Line::from(vec![
-                Span::styled(sel(7, selected), Style::default().fg(GREEN)),
-                Span::styled(format!(" {} clamp to tail", checkbox(*clamp)),
-                    Style::default().fg(if *selected == 7 { TEXT_PRIMARY } else { TEXT_SECONDARY })),
+                Span::styled(if *selected == 7 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
+                Span::styled(format!("[{}] ", check(*clamp)), Style::default().fg(if *clamp { GREEN } else { BORDER })),
+                Span::styled("Clamp to tail", Style::default().fg(if *selected == 7 { TEXT_PRIMARY } else { TEXT_MUTED })),
             ]));
 
             // Row 8: Format
             lines.push(Line::from(vec![
-                Span::styled(sel(8, selected), Style::default().fg(GREEN)),
-                Span::styled(format!(" format <{}>", format.as_str()),
-                    Style::default().fg(if *selected == 8 { TEXT_PRIMARY } else { TEXT_SECONDARY })),
+                Span::styled(if *selected == 8 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
+                Span::styled("Format      ", Style::default().fg(if *selected == 8 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(format!("‹ {} ›", format.as_str()), Style::default().fg(if *selected == 8 { GREEN } else { TEXT_SECONDARY })),
+            ]));
+
+            // Row 9: Output file
+            lines.push(Line::from(vec![
+                Span::styled(if *selected == 9 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
+                Span::styled("Output      ", Style::default().fg(if *selected == 9 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(
+                    show_val(output_file, *editing && *selected == 9, "(display only)"),
+                    Style::default().fg(if *editing && *selected == 9 { GREEN } else if output_file.is_empty() { TEXT_MUTED } else { TEXT_SECONDARY })
+                ),
             ]));
 
             lines.push(Line::from(""));
 
-            // Row 9: Start button
-            let btn_style = if *selected == 9 {
-                Style::default().fg(BG_DARK).bg(GREEN).bold()
+            // Row 10: Start button
+            let (btn_fg, btn_bg) = if *selected == 10 {
+                (BG_DARK, GREEN)
             } else {
-                Style::default().fg(GREEN).bold()
+                (GREEN, BG_PANEL)
             };
             lines.push(Line::from(vec![
-                Span::styled(sel(9, selected), Style::default().fg(GREEN)),
-                Span::styled(" ", Style::default()),
-                Span::styled(" Start Reading ", btn_style),
+                Span::styled(if *selected == 10 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
+                Span::styled(" ▶ START ", Style::default().fg(btn_fg).bg(btn_bg).bold()),
             ]));
 
             (
                 " Custom Read ",
                 lines,
-                "jk nav | spc/ret select | tab unit | esc",
+                "↑↓ nav  ⏎ edit  ␣ toggle  ⇥ unit  esc",
+            )
+        }
+
+        InputMode::Fence {
+            basin,
+            stream,
+            new_token,
+            current_token,
+            selected,
+            editing,
+        } => {
+            let cursor = |is_editing: bool| if is_editing { "▎" } else { "" };
+            let marker = |sel: bool| if sel { "▸ " } else { "  " };
+
+            let mut lines = vec![
+                Line::from(vec![
+                    Span::styled("  ", Style::default()),
+                    Span::styled(format!("s2://{}/{}", basin, stream), Style::default().fg(GREEN)),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled("  Set a new fencing token to block other writers.", Style::default().fg(TEXT_MUTED))),
+                Line::from(""),
+            ];
+
+            // Row 0: New token
+            let new_editing = *editing && *selected == 0;
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 0), Style::default().fg(GREEN)),
+                Span::styled("New Token     ", Style::default().fg(if *selected == 0 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(
+                    if new_token.is_empty() && !new_editing {
+                        "(required)".to_string()
+                    } else {
+                        format!("{}{}", new_token, cursor(new_editing))
+                    },
+                    Style::default().fg(if new_editing { GREEN } else if new_token.is_empty() { WARNING } else { TEXT_SECONDARY })
+                ),
+            ]));
+
+            // Row 1: Current token
+            let cur_editing = *editing && *selected == 1;
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 1), Style::default().fg(GREEN)),
+                Span::styled("Current Token ", Style::default().fg(if *selected == 1 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(
+                    if current_token.is_empty() && !cur_editing {
+                        "(none)".to_string()
+                    } else {
+                        format!("{}{}", current_token, cursor(cur_editing))
+                    },
+                    Style::default().fg(if cur_editing { GREEN } else if current_token.is_empty() { TEXT_MUTED } else { TEXT_SECONDARY })
+                ),
+            ]));
+
+            lines.push(Line::from(""));
+
+            // Row 2: Submit button
+            let can_submit = !new_token.is_empty();
+            let (btn_fg, btn_bg) = if *selected == 2 && can_submit {
+                (BG_DARK, GREEN)
+            } else {
+                (if can_submit { GREEN } else { TEXT_MUTED }, BG_PANEL)
+            };
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 2), Style::default().fg(GREEN)),
+                Span::styled(" ▶ FENCE ", Style::default().fg(btn_fg).bg(btn_bg).bold()),
+            ]));
+
+            (
+                " Fence Stream ",
+                lines,
+                "↑↓ nav  ⏎ edit/submit  esc",
+            )
+        }
+
+        InputMode::Trim {
+            basin,
+            stream,
+            trim_point,
+            fencing_token,
+            selected,
+            editing,
+        } => {
+            let cursor = |is_editing: bool| if is_editing { "▎" } else { "" };
+            let marker = |sel: bool| if sel { "▸ " } else { "  " };
+
+            let mut lines = vec![
+                Line::from(vec![
+                    Span::styled("  ", Style::default()),
+                    Span::styled(format!("s2://{}/{}", basin, stream), Style::default().fg(GREEN)),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled("  Delete all records before the trim point.", Style::default().fg(TEXT_MUTED))),
+                Line::from(Span::styled("  This is eventually consistent.", Style::default().fg(TEXT_MUTED))),
+                Line::from(""),
+            ];
+
+            // Row 0: Trim point
+            let trim_editing = *editing && *selected == 0;
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 0), Style::default().fg(GREEN)),
+                Span::styled("Trim Point    ", Style::default().fg(if *selected == 0 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(
+                    if trim_point.is_empty() && !trim_editing {
+                        "(seq num)".to_string()
+                    } else {
+                        format!("{}{}", trim_point, cursor(trim_editing))
+                    },
+                    Style::default().fg(if trim_editing { GREEN } else if trim_point.is_empty() { WARNING } else { TEXT_SECONDARY })
+                ),
+            ]));
+
+            // Row 1: Fencing token
+            let fence_editing = *editing && *selected == 1;
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 1), Style::default().fg(GREEN)),
+                Span::styled("Fencing Token ", Style::default().fg(if *selected == 1 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(
+                    if fencing_token.is_empty() && !fence_editing {
+                        "(none)".to_string()
+                    } else {
+                        format!("{}{}", fencing_token, cursor(fence_editing))
+                    },
+                    Style::default().fg(if fence_editing { GREEN } else if fencing_token.is_empty() { TEXT_MUTED } else { TEXT_SECONDARY })
+                ),
+            ]));
+
+            lines.push(Line::from(""));
+
+            // Row 2: Submit button
+            let can_submit = !trim_point.is_empty() && trim_point.parse::<u64>().is_ok();
+            let (btn_fg, btn_bg) = if *selected == 2 && can_submit {
+                (BG_DARK, WARNING)
+            } else {
+                (if can_submit { WARNING } else { TEXT_MUTED }, BG_PANEL)
+            };
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 2), Style::default().fg(GREEN)),
+                Span::styled(" ▶ TRIM ", Style::default().fg(btn_fg).bg(btn_bg).bold()),
+            ]));
+
+            (
+                " Trim Stream ",
+                lines,
+                "↑↓ nav  ⏎ edit/submit  esc",
             )
         }
     };
 
-    let area = centered_rect(50, 70, f.area());
+    let area = centered_rect(55, 85, f.area());
 
     let block = Block::default()
         .title(Line::from(Span::styled(title, Style::default().fg(TEXT_PRIMARY).bold())))

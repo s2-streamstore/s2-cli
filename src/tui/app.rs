@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
+use base64ct::Encoding;
 use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use futures::StreamExt;
 use ratatui::{Terminal, prelude::Backend};
@@ -26,6 +27,7 @@ pub enum Screen {
     Streams(StreamsState),
     StreamDetail(StreamDetailState),
     ReadView(ReadViewState),
+    AppendView(AppendViewState),
 }
 
 /// State for the basins list screen
@@ -67,9 +69,41 @@ pub struct ReadViewState {
     pub stream_name: StreamName,
     pub records: VecDeque<s2_sdk::types::SequencedRecord>,
     pub is_tailing: bool,
-    pub scroll_offset: usize,
+    pub selected: usize,
     pub paused: bool,
     pub loading: bool,
+    pub show_detail: bool,
+    pub hide_list: bool,
+    pub output_file: Option<String>,
+}
+
+/// State for the append view
+#[derive(Debug, Clone)]
+pub struct AppendViewState {
+    pub basin_name: BasinName,
+    pub stream_name: StreamName,
+    // Record fields
+    pub body: String,
+    pub headers: Vec<(String, String)>,  // List of (key, value) pairs
+    pub match_seq_num: String,           // Empty = none
+    pub fencing_token: String,           // Empty = none
+    // UI state
+    pub selected: usize,                 // 0=body, 1=headers, 2=match_seq, 3=fencing, 4=send
+    pub editing: bool,
+    pub header_key_input: String,        // For adding new header
+    pub header_value_input: String,
+    pub editing_header_key: bool,        // true = editing key, false = editing value
+    // Results
+    pub history: Vec<AppendResult>,
+    pub appending: bool,
+}
+
+/// Result of an append operation
+#[derive(Debug, Clone)]
+pub struct AppendResult {
+    pub seq_num: u64,
+    pub body_preview: String,
+    pub header_count: usize,
 }
 
 /// Status message level
@@ -149,8 +183,27 @@ pub enum InputMode {
         // Options
         clamp: bool,
         format: ReadFormat,
+        output_file: String,  // Empty = display only, path = write to file
         // UI state
         selected: usize,
+        editing: bool,
+    },
+    /// Fence a stream (set new fencing token)
+    Fence {
+        basin: BasinName,
+        stream: StreamName,
+        new_token: String,
+        current_token: String,  // Empty = no current token
+        selected: usize,        // 0=new_token, 1=current_token, 2=submit
+        editing: bool,
+    },
+    /// Trim a stream (delete records before seq num)
+    Trim {
+        basin: BasinName,
+        stream: StreamName,
+        trim_point: String,
+        fencing_token: String,  // Empty = no fencing token
+        selected: usize,        // 0=trim_point, 1=fencing_token, 2=submit
         editing: bool,
     },
 }
@@ -433,6 +486,14 @@ impl App {
                                 // Keep buffer bounded
                                 while state.records.len() > MAX_RECORDS_BUFFER {
                                     state.records.pop_front();
+                                    // Adjust selected if we removed records from front
+                                    if state.selected > 0 {
+                                        state.selected = state.selected.saturating_sub(1);
+                                    }
+                                }
+                                // Auto-follow: keep selected at latest when tailing
+                                if state.is_tailing {
+                                    state.selected = state.records.len().saturating_sub(1);
                                 }
                             }
                         }
@@ -654,6 +715,59 @@ impl App {
                 }
             }
 
+            Event::StreamFenced(result) => {
+                self.input_mode = InputMode::Normal;
+                match result {
+                    Ok(token) => {
+                        self.message = Some(StatusMessage {
+                            text: format!("Stream fenced with token: {}", token),
+                            level: MessageLevel::Success,
+                        });
+                    }
+                    Err(e) => {
+                        self.message = Some(StatusMessage {
+                            text: format!("Failed to fence stream: {e}"),
+                            level: MessageLevel::Error,
+                        });
+                    }
+                }
+            }
+
+            Event::StreamTrimmed(result) => {
+                self.input_mode = InputMode::Normal;
+                match result {
+                    Ok((trim_point, new_tail)) => {
+                        self.message = Some(StatusMessage {
+                            text: format!("Trimmed to {} (tail: {})", trim_point, new_tail),
+                            level: MessageLevel::Success,
+                        });
+                    }
+                    Err(e) => {
+                        self.message = Some(StatusMessage {
+                            text: format!("Failed to trim stream: {e}"),
+                            level: MessageLevel::Error,
+                        });
+                    }
+                }
+            }
+
+            Event::RecordAppended(result) => {
+                if let Screen::AppendView(state) = &mut self.screen {
+                    state.appending = false;
+                    match result {
+                        Ok((seq_num, body_preview, header_count)) => {
+                            state.history.push(AppendResult { seq_num, body_preview, header_count });
+                        }
+                        Err(e) => {
+                            self.message = Some(StatusMessage {
+                                text: format!("Append failed: {e}"),
+                                level: MessageLevel::Error,
+                            });
+                        }
+                    }
+                }
+            }
+
             Event::Error(e) => {
                 self.message = Some(StatusMessage {
                     text: e.to_string(),
@@ -706,7 +820,8 @@ impl App {
             Screen::Basins(_) => self.handle_basins_key(key, tx),
             Screen::Streams(_) => self.handle_streams_key(key, tx),
             Screen::StreamDetail(_) => self.handle_stream_detail_key(key, tx),
-            Screen::ReadView(_) => self.handle_read_view_key(key),
+            Screen::ReadView(_) => self.handle_read_view_key(key, tx),
+            Screen::AppendView(_) => self.handle_append_view_key(key, tx),
         }
     }
 
@@ -1006,6 +1121,7 @@ impl App {
                 until_timestamp,
                 clamp,
                 format,
+                output_file,
                 selected,
                 editing,
             } => {
@@ -1028,6 +1144,7 @@ impl App {
                                 4 => { count_limit.pop(); }
                                 5 => { byte_limit.pop(); }
                                 6 => { until_timestamp.pop(); }
+                                9 => { output_file.pop(); }
                                 _ => {}
                             }
                         }
@@ -1042,6 +1159,10 @@ impl App {
                                 6 => until_timestamp.push(c),
                                 _ => {}
                             }
+                        }
+                        KeyCode::Char(c) if *selected == 9 => {
+                            // Output file accepts any printable char
+                            output_file.push(c);
                         }
                         _ => {}
                     }
@@ -1058,8 +1179,9 @@ impl App {
                 // 6: Until timestamp
                 // 7: Clamp (checkbox)
                 // 8: Format (selector)
-                // 9: Start button
-                const MAX_ROW: usize = 9;
+                // 9: Output file
+                // 10: Start button
+                const MAX_ROW: usize = 10;
 
                 match key.code {
                     KeyCode::Esc => {
@@ -1115,7 +1237,8 @@ impl App {
                             6 => *editing = true, // until_timestamp
                             7 => *clamp = !*clamp,
                             8 => *format = format.next(),
-                            9 => {
+                            9 => *editing = true, // output_file
+                            10 => {
                                 // Start reading - clone all values first
                                 let b = basin.clone();
                                 let s = stream.clone();
@@ -1130,8 +1253,157 @@ impl App {
                                 let ut = until_timestamp.clone();
                                 let clp = *clamp;
                                 let fmt = *format;
+                                let of = output_file.clone();
                                 self.input_mode = InputMode::Normal;
-                                self.start_custom_read(b, s, sf, snv, tsv, agv, agu, tov, cl, bl, ut, clp, fmt, tx.clone());
+                                // Show message if writing to file
+                                if !of.is_empty() {
+                                    self.message = Some(StatusMessage {
+                                        text: format!("Writing to {}", of),
+                                        level: MessageLevel::Info,
+                                    });
+                                }
+                                self.start_custom_read(b, s, sf, snv, tsv, agv, agu, tov, cl, bl, ut, clp, fmt, of, tx.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            InputMode::Fence {
+                basin,
+                stream,
+                new_token,
+                current_token,
+                selected,
+                editing,
+            } => {
+                if *editing {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Enter => {
+                            *editing = false;
+                        }
+                        KeyCode::Backspace => {
+                            match *selected {
+                                0 => { new_token.pop(); }
+                                1 => { current_token.pop(); }
+                                _ => {}
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            match *selected {
+                                0 => new_token.push(c),
+                                1 => current_token.push(c),
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                    return;
+                }
+
+                // Navigation: 0=new_token, 1=current_token, 2=submit
+                match key.code {
+                    KeyCode::Esc => {
+                        self.input_mode = InputMode::Normal;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if *selected > 0 {
+                            *selected -= 1;
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if *selected < 2 {
+                            *selected += 1;
+                        }
+                    }
+                    KeyCode::Enter => {
+                        match *selected {
+                            0 | 1 => *editing = true,
+                            2 => {
+                                // Submit fence
+                                if !new_token.is_empty() {
+                                    let b = basin.clone();
+                                    let s = stream.clone();
+                                    let nt = new_token.clone();
+                                    let ct = if current_token.is_empty() {
+                                        None
+                                    } else {
+                                        Some(current_token.clone())
+                                    };
+                                    self.fence_stream(b, s, nt, ct, tx.clone());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            InputMode::Trim {
+                basin,
+                stream,
+                trim_point,
+                fencing_token,
+                selected,
+                editing,
+            } => {
+                if *editing {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Enter => {
+                            *editing = false;
+                        }
+                        KeyCode::Backspace => {
+                            match *selected {
+                                0 => { trim_point.pop(); }
+                                1 => { fencing_token.pop(); }
+                                _ => {}
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            match *selected {
+                                0 if c.is_ascii_digit() => trim_point.push(c),
+                                1 => fencing_token.push(c),
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                    return;
+                }
+
+                // Navigation: 0=trim_point, 1=fencing_token, 2=submit
+                match key.code {
+                    KeyCode::Esc => {
+                        self.input_mode = InputMode::Normal;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if *selected > 0 {
+                            *selected -= 1;
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if *selected < 2 {
+                            *selected += 1;
+                        }
+                    }
+                    KeyCode::Enter => {
+                        match *selected {
+                            0 | 1 => *editing = true,
+                            2 => {
+                                // Submit trim
+                                if let Ok(tp) = trim_point.parse::<u64>() {
+                                    let b = basin.clone();
+                                    let s = stream.clone();
+                                    let ft = if fencing_token.is_empty() {
+                                        None
+                                    } else {
+                                        Some(fencing_token.clone())
+                                    };
+                                    self.trim_stream(b, s, tp, ft, tx.clone());
+                                }
                             }
                             _ => {}
                         }
@@ -1419,8 +1691,8 @@ impl App {
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if state.selected_action < 1 {
-                    // 2 actions: tail, custom read
+                if state.selected_action < 4 {
+                    // 5 actions: tail, custom read, append, fence, trim
                     state.selected_action += 1;
                 }
             }
@@ -1430,6 +1702,9 @@ impl App {
                 match state.selected_action {
                     0 => self.start_tail(basin_name, stream_name, tx), // Tail
                     1 => self.open_custom_read_dialog(basin_name, stream_name), // Custom read
+                    2 => self.open_append_view(basin_name, stream_name), // Append
+                    3 => self.open_fence_dialog(basin_name, stream_name), // Fence
+                    4 => self.open_trim_dialog(basin_name, stream_name), // Trim
                     _ => {}
                 }
             }
@@ -1444,6 +1719,12 @@ impl App {
                 let basin_name = state.basin_name.clone();
                 let stream_name = state.stream_name.clone();
                 self.open_custom_read_dialog(basin_name, stream_name);
+            }
+            KeyCode::Char('a') => {
+                // Append records
+                let basin_name = state.basin_name.clone();
+                let stream_name = state.stream_name.clone();
+                self.open_append_view(basin_name, stream_name);
             }
             KeyCode::Char('e') => {
                 let basin_name = state.basin_name.clone();
@@ -1462,26 +1743,52 @@ impl App {
                 };
                 self.load_stream_config_for_reconfig(basin_name, stream_name, tx);
             }
+            KeyCode::Char('f') => {
+                // Fence stream
+                let basin_name = state.basin_name.clone();
+                let stream_name = state.stream_name.clone();
+                self.open_fence_dialog(basin_name, stream_name);
+            }
+            KeyCode::Char('m') => {
+                // Trim stream
+                let basin_name = state.basin_name.clone();
+                let stream_name = state.stream_name.clone();
+                self.open_trim_dialog(basin_name, stream_name);
+            }
             _ => {}
         }
     }
 
-    fn handle_read_view_key(&mut self, key: KeyEvent) {
+    fn handle_read_view_key(&mut self, key: KeyEvent, tx: mpsc::UnboundedSender<Event>) {
         let Screen::ReadView(state) = &mut self.screen else {
             return;
         };
 
+        // If showing detail panel, handle differently
+        if state.show_detail {
+            match key.code {
+                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                    state.show_detail = false;
+                }
+                _ => {}
+            }
+            return;
+        }
+
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
-                // Go back to stream detail
+                // Go back to stream detail and reload data
+                let basin_name = state.basin_name.clone();
+                let stream_name = state.stream_name.clone();
                 self.screen = Screen::StreamDetail(StreamDetailState {
-                    basin_name: state.basin_name.clone(),
-                    stream_name: state.stream_name.clone(),
+                    basin_name: basin_name.clone(),
+                    stream_name: stream_name.clone(),
                     config: None,
                     tail_position: None,
                     selected_action: 0,
-                    loading: false,
+                    loading: true,
                 });
+                self.load_stream_detail(basin_name, stream_name, tx);
             }
             KeyCode::Char(' ') => {
                 state.paused = !state.paused;
@@ -1495,21 +1802,31 @@ impl App {
                 });
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if state.scroll_offset > 0 {
-                    state.scroll_offset -= 1;
+                if state.selected > 0 {
+                    state.selected -= 1;
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                let max_offset = state.records.len().saturating_sub(1);
-                if state.scroll_offset < max_offset {
-                    state.scroll_offset += 1;
+                let max_idx = state.records.len().saturating_sub(1);
+                if state.selected < max_idx {
+                    state.selected += 1;
                 }
             }
             KeyCode::Char('g') => {
-                state.scroll_offset = 0;
+                state.selected = 0;
             }
             KeyCode::Char('G') => {
-                state.scroll_offset = state.records.len().saturating_sub(1);
+                state.selected = state.records.len().saturating_sub(1);
+            }
+            KeyCode::Tab | KeyCode::Char('l') => {
+                // Toggle list pane visibility
+                state.hide_list = !state.hide_list;
+            }
+            KeyCode::Enter | KeyCode::Char('h') => {
+                // Show headers popup
+                if !state.records.is_empty() {
+                    state.show_detail = true;
+                }
             }
             _ => {}
         }
@@ -1789,9 +2106,12 @@ impl App {
             stream_name: stream_name.clone(),
             records: VecDeque::new(),
             is_tailing: true,
-            scroll_offset: 0,
+            selected: 0,
             paused: false,
             loading: true,
+            show_detail: false,
+            hide_list: false,
+            output_file: None,
         });
 
         let s2 = self.s2.clone();
@@ -1862,6 +2182,7 @@ impl App {
             until_timestamp: String::new(),
             clamp: true,
             format: ReadFormat::Text,
+            output_file: String::new(),
             selected: 0,
             editing: false,
         };
@@ -1883,16 +2204,21 @@ impl App {
         until_timestamp: String,
         clamp: bool,
         format: ReadFormat,
+        output_file: String,
         tx: mpsc::UnboundedSender<Event>,
     ) {
+        let has_output = !output_file.is_empty();
         self.screen = Screen::ReadView(ReadViewState {
             basin_name: basin_name.clone(),
             stream_name: stream_name.clone(),
             records: VecDeque::new(),
             is_tailing: true,
-            scroll_offset: 0,
+            selected: 0,
             paused: false,
             loading: true,
+            show_detail: false,
+            hide_list: false,
+            output_file: if has_output { Some(output_file.clone()) } else { None },
         });
 
         let s2 = self.s2.clone();
@@ -1940,6 +2266,13 @@ impl App {
                 ReadFormat::JsonBase64 => RecordFormat::JsonBase64,
             };
 
+            // Set up output file if specified
+            let output = if output_file.is_empty() {
+                RecordsOut::Stdout
+            } else {
+                RecordsOut::File(std::path::PathBuf::from(&output_file))
+            };
+
             let args = ReadArgs {
                 uri,
                 seq_num,
@@ -1951,16 +2284,66 @@ impl App {
                 clamp,
                 until,
                 format: record_format,
-                output: RecordsOut::Stdout,
+                output: output.clone(),
+            };
+
+            // Open file writer if output file is specified
+            let mut file_writer: Option<tokio::fs::File> = if !output_file.is_empty() {
+                match tokio::fs::File::create(&output_file).await {
+                    Ok(f) => Some(f),
+                    Err(e) => {
+                        let _ = tx.send(Event::Error(crate::error::CliError::RecordWrite(e.to_string())));
+                        return;
+                    }
+                }
+            } else {
+                None
             };
 
             match ops::read(&s2, &args).await {
                 Ok(mut batch_stream) => {
                     use futures::StreamExt;
+                    use tokio::io::AsyncWriteExt;
                     while let Some(batch_result) = batch_stream.next().await {
                         match batch_result {
                             Ok(batch) => {
                                 for record in batch.records {
+                                    // Write to file if specified
+                                    if let Some(ref mut writer) = file_writer {
+                                        let line = match record_format {
+                                            RecordFormat::Text => {
+                                                format!("{}\n", String::from_utf8_lossy(&record.body))
+                                            }
+                                            RecordFormat::Json => {
+                                                format!("{}\n", serde_json::json!({
+                                                    "seq_num": record.seq_num,
+                                                    "timestamp": record.timestamp,
+                                                    "headers": record.headers.iter().map(|h| {
+                                                        serde_json::json!({
+                                                            "name": String::from_utf8_lossy(&h.name),
+                                                            "value": String::from_utf8_lossy(&h.value)
+                                                        })
+                                                    }).collect::<Vec<_>>(),
+                                                    "body": String::from_utf8_lossy(&record.body).to_string()
+                                                }))
+                                            }
+                                            RecordFormat::JsonBase64 => {
+                                                format!("{}\n", serde_json::json!({
+                                                    "seq_num": record.seq_num,
+                                                    "timestamp": record.timestamp,
+                                                    "headers": record.headers.iter().map(|h| {
+                                                        serde_json::json!({
+                                                            "name": String::from_utf8_lossy(&h.name),
+                                                            "value": String::from_utf8_lossy(&h.value)
+                                                        })
+                                                    }).collect::<Vec<_>>(),
+                                                    "body": base64ct::Base64::encode_string(&record.body)
+                                                }))
+                                            }
+                                        };
+                                        let _ = writer.write_all(line.as_bytes()).await;
+                                    }
+
                                     if tx.send(Event::RecordReceived(Ok(record))).is_err() {
                                         return;
                                     }
@@ -2183,6 +2566,425 @@ impl App {
                 }
                 Err(e) => {
                     let _ = tx.send(Event::StreamReconfigured(Err(e)));
+                }
+            }
+        });
+    }
+
+    /// Open the append view
+    fn open_append_view(&mut self, basin_name: BasinName, stream_name: StreamName) {
+        self.screen = Screen::AppendView(AppendViewState {
+            basin_name,
+            stream_name,
+            body: String::new(),
+            headers: Vec::new(),
+            match_seq_num: String::new(),
+            fencing_token: String::new(),
+            selected: 0,
+            editing: false,
+            header_key_input: String::new(),
+            header_value_input: String::new(),
+            editing_header_key: true,
+            history: Vec::new(),
+            appending: false,
+        });
+    }
+
+    /// Handle keys in append view
+    /// Layout: 0=body, 1=headers, 2=match_seq, 3=fencing, 4=send
+    fn handle_append_view_key(&mut self, key: KeyEvent, tx: mpsc::UnboundedSender<Event>) {
+        let Screen::AppendView(state) = &mut self.screen else {
+            return;
+        };
+
+        // Don't handle keys while appending
+        if state.appending {
+            return;
+        }
+
+        // If editing a field, handle text input
+        if state.editing {
+            match key.code {
+                KeyCode::Esc => {
+                    state.editing = false;
+                }
+                KeyCode::Enter => {
+                    if state.selected == 1 {
+                        // Headers: if editing key, move to value; if editing value, add header
+                        if state.editing_header_key {
+                            if !state.header_key_input.is_empty() {
+                                state.editing_header_key = false;
+                            }
+                        } else {
+                            // Add the header if key is not empty
+                            if !state.header_key_input.is_empty() {
+                                state.headers.push((
+                                    state.header_key_input.clone(),
+                                    state.header_value_input.clone(),
+                                ));
+                                state.header_key_input.clear();
+                                state.header_value_input.clear();
+                                state.editing_header_key = true;
+                            }
+                            state.editing = false;
+                        }
+                    } else {
+                        state.editing = false;
+                    }
+                }
+                KeyCode::Tab if state.selected == 1 => {
+                    // Toggle between key and value in headers
+                    state.editing_header_key = !state.editing_header_key;
+                }
+                KeyCode::Backspace => {
+                    match state.selected {
+                        0 => { state.body.pop(); }
+                        1 => {
+                            if state.editing_header_key {
+                                state.header_key_input.pop();
+                            } else {
+                                state.header_value_input.pop();
+                            }
+                        }
+                        2 => { state.match_seq_num.pop(); }
+                        3 => { state.fencing_token.pop(); }
+                        _ => {}
+                    }
+                }
+                KeyCode::Char(c) => {
+                    match state.selected {
+                        0 => { state.body.push(c); }
+                        1 => {
+                            if state.editing_header_key {
+                                state.header_key_input.push(c);
+                            } else {
+                                state.header_value_input.push(c);
+                            }
+                        }
+                        2 => {
+                            // Only allow digits for match_seq_num
+                            if c.is_ascii_digit() {
+                                state.match_seq_num.push(c);
+                            }
+                        }
+                        3 => { state.fencing_token.push(c); }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Not editing - handle navigation
+        match key.code {
+            KeyCode::Esc => {
+                // Go back to stream detail
+                let basin_name = state.basin_name.clone();
+                let stream_name = state.stream_name.clone();
+                self.screen = Screen::StreamDetail(StreamDetailState {
+                    basin_name: basin_name.clone(),
+                    stream_name: stream_name.clone(),
+                    config: None,
+                    tail_position: None,
+                    selected_action: 2, // Append action
+                    loading: true,
+                });
+                self.load_stream_detail(basin_name, stream_name, tx);
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                state.selected = (state.selected + 1).min(4);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                state.selected = state.selected.saturating_sub(1);
+            }
+            KeyCode::Char('d') if state.selected == 1 => {
+                // Delete last header
+                state.headers.pop();
+            }
+            KeyCode::Enter => {
+                if state.selected == 4 {
+                    // Send button - append the record
+                    if !state.body.is_empty() {
+                        let basin_name = state.basin_name.clone();
+                        let stream_name = state.stream_name.clone();
+                        let body = state.body.clone();
+                        let headers = state.headers.clone();
+                        let match_seq_num = state.match_seq_num.parse::<u64>().ok();
+                        let fencing_token = if state.fencing_token.is_empty() {
+                            None
+                        } else {
+                            Some(state.fencing_token.clone())
+                        };
+                        state.body.clear();
+                        // Keep headers for convenience (user might want to send similar records)
+                        state.appending = true;
+                        self.append_record(basin_name, stream_name, body, headers, match_seq_num, fencing_token, tx);
+                    }
+                } else {
+                    // Start editing the selected field
+                    state.editing = true;
+                    if state.selected == 1 {
+                        state.editing_header_key = true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Append a single record to the stream
+    fn append_record(
+        &self,
+        basin_name: BasinName,
+        stream_name: StreamName,
+        body: String,
+        headers: Vec<(String, String)>,
+        match_seq_num: Option<u64>,
+        fencing_token: Option<String>,
+        tx: mpsc::UnboundedSender<Event>,
+    ) {
+        let s2 = self.s2.clone();
+        let body_preview = if body.len() > 50 {
+            format!("{}...", &body[..50])
+        } else {
+            body.clone()
+        };
+        let header_count = headers.len();
+
+        tokio::spawn(async move {
+            use s2_sdk::types::{AppendInput, AppendRecord, AppendRecordBatch, FencingToken, Header};
+
+            let stream = s2.basin(basin_name).stream(stream_name);
+
+            let mut record = match AppendRecord::new(body.into_bytes()) {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = tx.send(Event::RecordAppended(Err(crate::error::CliError::RecordWrite(
+                        e.to_string(),
+                    ))));
+                    return;
+                }
+            };
+
+            // Add headers if any
+            if !headers.is_empty() {
+                let parsed_headers: Vec<Header> = headers
+                    .into_iter()
+                    .map(|(k, v)| Header::new(k.into_bytes(), v.into_bytes()))
+                    .collect();
+                record = match record.with_headers(parsed_headers) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let _ = tx.send(Event::RecordAppended(Err(crate::error::CliError::RecordWrite(
+                            e.to_string(),
+                        ))));
+                        return;
+                    }
+                };
+            }
+
+            let records = match AppendRecordBatch::try_from_iter([record]) {
+                Ok(batch) => batch,
+                Err(e) => {
+                    let _ = tx.send(Event::RecordAppended(Err(crate::error::CliError::RecordWrite(
+                        e.to_string(),
+                    ))));
+                    return;
+                }
+            };
+
+            let mut input = AppendInput::new(records);
+
+            // Add match_seq_num if specified
+            if let Some(seq) = match_seq_num {
+                input = input.with_match_seq_num(seq);
+            }
+
+            // Add fencing token if specified
+            if let Some(token_str) = fencing_token {
+                match token_str.parse::<FencingToken>() {
+                    Ok(token) => {
+                        input = input.with_fencing_token(token);
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Event::RecordAppended(Err(crate::error::CliError::RecordWrite(
+                            format!("Invalid fencing token: {}", e),
+                        ))));
+                        return;
+                    }
+                }
+            }
+
+            match stream.append(input).await {
+                Ok(output) => {
+                    let _ = tx.send(Event::RecordAppended(Ok((output.start.seq_num, body_preview, header_count))));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::RecordAppended(Err(crate::error::CliError::op(
+                        crate::error::OpKind::Append,
+                        e,
+                    ))));
+                }
+            }
+        });
+    }
+
+    /// Open fence dialog
+    fn open_fence_dialog(&mut self, basin: BasinName, stream: StreamName) {
+        self.input_mode = InputMode::Fence {
+            basin,
+            stream,
+            new_token: String::new(),
+            current_token: String::new(),
+            selected: 0,
+            editing: false,
+        };
+    }
+
+    /// Open trim dialog
+    fn open_trim_dialog(&mut self, basin: BasinName, stream: StreamName) {
+        self.input_mode = InputMode::Trim {
+            basin,
+            stream,
+            trim_point: String::new(),
+            fencing_token: String::new(),
+            selected: 0,
+            editing: false,
+        };
+    }
+
+    /// Fence a stream
+    fn fence_stream(
+        &self,
+        basin: BasinName,
+        stream: StreamName,
+        new_token: String,
+        current_token: Option<String>,
+        tx: mpsc::UnboundedSender<Event>,
+    ) {
+        let s2 = self.s2.clone();
+        let new_token_clone = new_token.clone();
+
+        tokio::spawn(async move {
+            use s2_sdk::types::{AppendInput, AppendRecordBatch, CommandRecord, FencingToken};
+
+            let stream_client = s2.basin(basin).stream(stream);
+
+            // Parse the new fencing token
+            let new_fencing_token = match new_token.parse::<FencingToken>() {
+                Ok(token) => token,
+                Err(e) => {
+                    let _ = tx.send(Event::StreamFenced(Err(crate::error::CliError::RecordWrite(
+                        format!("Invalid new fencing token: {}", e),
+                    ))));
+                    return;
+                }
+            };
+
+            // Create fence command record
+            let command = CommandRecord::fence(new_fencing_token);
+            let record: s2_sdk::types::AppendRecord = command.into();
+            let records = match AppendRecordBatch::try_from_iter([record]) {
+                Ok(batch) => batch,
+                Err(e) => {
+                    let _ = tx.send(Event::StreamFenced(Err(crate::error::CliError::RecordWrite(
+                        e.to_string(),
+                    ))));
+                    return;
+                }
+            };
+
+            let mut input = AppendInput::new(records);
+
+            // Add current fencing token if specified
+            if let Some(token_str) = current_token {
+                if !token_str.is_empty() {
+                    match token_str.parse::<FencingToken>() {
+                        Ok(token) => {
+                            input = input.with_fencing_token(token);
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Event::StreamFenced(Err(crate::error::CliError::RecordWrite(
+                                format!("Invalid current fencing token: {}", e),
+                            ))));
+                            return;
+                        }
+                    }
+                }
+            }
+
+            match stream_client.append(input).await {
+                Ok(_) => {
+                    let _ = tx.send(Event::StreamFenced(Ok(new_token_clone)));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::StreamFenced(Err(crate::error::CliError::op(
+                        crate::error::OpKind::Fence,
+                        e,
+                    ))));
+                }
+            }
+        });
+    }
+
+    /// Trim a stream
+    fn trim_stream(
+        &self,
+        basin: BasinName,
+        stream: StreamName,
+        trim_point: u64,
+        fencing_token: Option<String>,
+        tx: mpsc::UnboundedSender<Event>,
+    ) {
+        let s2 = self.s2.clone();
+
+        tokio::spawn(async move {
+            use s2_sdk::types::{AppendInput, AppendRecordBatch, CommandRecord, FencingToken};
+
+            let stream_client = s2.basin(basin).stream(stream);
+
+            // Create trim command record
+            let command = CommandRecord::trim(trim_point);
+            let record: s2_sdk::types::AppendRecord = command.into();
+            let records = match AppendRecordBatch::try_from_iter([record]) {
+                Ok(batch) => batch,
+                Err(e) => {
+                    let _ = tx.send(Event::StreamTrimmed(Err(crate::error::CliError::RecordWrite(
+                        e.to_string(),
+                    ))));
+                    return;
+                }
+            };
+
+            let mut input = AppendInput::new(records);
+
+            // Add fencing token if specified
+            if let Some(token_str) = fencing_token {
+                if !token_str.is_empty() {
+                    match token_str.parse::<FencingToken>() {
+                        Ok(token) => {
+                            input = input.with_fencing_token(token);
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Event::StreamTrimmed(Err(crate::error::CliError::RecordWrite(
+                                format!("Invalid fencing token: {}", e),
+                            ))));
+                            return;
+                        }
+                    }
+                }
+            }
+
+            match stream_client.append(input).await {
+                Ok(output) => {
+                    let _ = tx.send(Event::StreamTrimmed(Ok((trim_point, output.tail.seq_num))));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::StreamTrimmed(Err(crate::error::CliError::op(
+                        crate::error::OpKind::Trim,
+                        e,
+                    ))));
                 }
             }
         });
