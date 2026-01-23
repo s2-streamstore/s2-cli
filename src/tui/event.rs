@@ -1,4 +1,4 @@
-use s2_sdk::types::{BasinInfo, SequencedRecord, StreamInfo, StreamPosition};
+use s2_sdk::types::{AccessTokenInfo, BasinInfo, SequencedRecord, StreamInfo, StreamPosition};
 
 use crate::error::CliError;
 use crate::types::{StorageClass, StreamConfig, TimestampingMode};
@@ -77,6 +77,15 @@ pub enum Event {
 
     /// Stream trimmed successfully (trim_point, new_tail_seq_num)
     StreamTrimmed(Result<(u64, u64), CliError>),
+
+    /// Access tokens have been loaded from the API
+    AccessTokensLoaded(Result<Vec<AccessTokenInfo>, CliError>),
+
+    /// Access token issued successfully (token string)
+    AccessTokenIssued(Result<String, CliError>),
+
+    /// Access token revoked successfully (token id)
+    AccessTokenRevoked(Result<String, CliError>),
 
     /// An error occurred in a background task
     Error(CliError),

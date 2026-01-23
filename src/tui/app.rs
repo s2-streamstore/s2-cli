@@ -5,14 +5,14 @@ use base64ct::Encoding;
 use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use futures::StreamExt;
 use ratatui::{Terminal, prelude::Backend};
-use s2_sdk::types::{BasinInfo, BasinName, StreamInfo, StreamName, StreamPosition};
+use s2_sdk::types::{AccessTokenId, AccessTokenInfo, BasinInfo, BasinName, StreamInfo, StreamName, StreamPosition};
 use tokio::sync::mpsc;
 
-use crate::cli::{CreateBasinArgs, CreateStreamArgs, ListBasinsArgs, ListStreamsArgs, ReadArgs, ReconfigureBasinArgs, ReconfigureStreamArgs};
+use crate::cli::{CreateBasinArgs, CreateStreamArgs, IssueAccessTokenArgs, ListAccessTokensArgs, ListBasinsArgs, ListStreamsArgs, ReadArgs, ReconfigureBasinArgs, ReconfigureStreamArgs};
 use crate::error::CliError;
 use crate::ops;
 use crate::record_format::{RecordFormat, RecordsOut};
-use crate::types::{BasinConfig, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass, StreamConfig, TimestampingMode};
+use crate::types::{BasinConfig, Operation, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass, StreamConfig, TimestampingMode};
 
 use super::event::{BasinConfigInfo, Event, StreamConfigInfo};
 use super::ui;
@@ -20,14 +20,24 @@ use super::ui;
 /// Maximum records to keep in read view buffer
 const MAX_RECORDS_BUFFER: usize = 1000;
 
+/// Top-level navigation tabs
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Tab {
+    #[default]
+    Basins,
+    AccessTokens,
+}
+
 /// Current screen being displayed
 #[derive(Debug, Clone)]
 pub enum Screen {
+    Splash,
     Basins(BasinsState),
     Streams(StreamsState),
     StreamDetail(StreamDetailState),
     ReadView(ReadViewState),
     AppendView(AppendViewState),
+    AccessTokens(AccessTokensState),
 }
 
 /// State for the basins list screen
@@ -104,6 +114,16 @@ pub struct AppendResult {
     pub seq_num: u64,
     pub body_preview: String,
     pub header_count: usize,
+}
+
+/// State for the access tokens list screen
+#[derive(Debug, Clone, Default)]
+pub struct AccessTokensState {
+    pub tokens: Vec<AccessTokenInfo>,
+    pub selected: usize,
+    pub loading: bool,
+    pub filter: String,
+    pub filter_active: bool,
 }
 
 /// Status message level
@@ -206,6 +226,36 @@ pub enum InputMode {
         selected: usize,        // 0=trim_point, 1=fencing_token, 2=submit
         editing: bool,
     },
+    /// Issue a new access token
+    IssueAccessToken {
+        // Basic info
+        id: String,
+        expiry: ExpiryOption,
+        expiry_custom: String,  // For custom duration input
+        // Resource scopes
+        basins_scope: ScopeOption,
+        basins_value: String,
+        streams_scope: ScopeOption,
+        streams_value: String,
+        tokens_scope: ScopeOption,
+        tokens_value: String,
+        // Operation permissions (Read/Write for each level)
+        account_read: bool,
+        account_write: bool,
+        basin_read: bool,
+        basin_write: bool,
+        stream_read: bool,
+        stream_write: bool,
+        // Options
+        auto_prefix_streams: bool,
+        // UI state
+        selected: usize,
+        editing: bool,
+    },
+    /// Confirming access token revocation
+    ConfirmRevokeToken { token_id: String },
+    /// Show issued token (one-time display)
+    ShowIssuedToken { token: String },
 }
 
 /// Retention policy option for UI
@@ -218,6 +268,108 @@ pub enum RetentionPolicyOption {
 impl Default for RetentionPolicyOption {
     fn default() -> Self {
         Self::Infinite
+    }
+}
+
+/// Expiry options for access tokens
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ExpiryOption {
+    #[default]
+    Never,
+    OneDay,
+    SevenDays,
+    ThirtyDays,
+    NinetyDays,
+    OneYear,
+    Custom,
+}
+
+impl ExpiryOption {
+    pub fn next(&self) -> Self {
+        match self {
+            ExpiryOption::Never => ExpiryOption::OneDay,
+            ExpiryOption::OneDay => ExpiryOption::SevenDays,
+            ExpiryOption::SevenDays => ExpiryOption::ThirtyDays,
+            ExpiryOption::ThirtyDays => ExpiryOption::NinetyDays,
+            ExpiryOption::NinetyDays => ExpiryOption::OneYear,
+            ExpiryOption::OneYear => ExpiryOption::Custom,
+            ExpiryOption::Custom => ExpiryOption::Never,
+        }
+    }
+
+    pub fn prev(&self) -> Self {
+        match self {
+            ExpiryOption::Never => ExpiryOption::Custom,
+            ExpiryOption::OneDay => ExpiryOption::Never,
+            ExpiryOption::SevenDays => ExpiryOption::OneDay,
+            ExpiryOption::ThirtyDays => ExpiryOption::SevenDays,
+            ExpiryOption::NinetyDays => ExpiryOption::ThirtyDays,
+            ExpiryOption::OneYear => ExpiryOption::NinetyDays,
+            ExpiryOption::Custom => ExpiryOption::OneYear,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ExpiryOption::Never => "Never (permanent)",
+            ExpiryOption::OneDay => "1 day",
+            ExpiryOption::SevenDays => "7 days",
+            ExpiryOption::ThirtyDays => "30 days",
+            ExpiryOption::NinetyDays => "90 days",
+            ExpiryOption::OneYear => "1 year",
+            ExpiryOption::Custom => "Custom",
+        }
+    }
+
+    pub fn to_duration_str(&self) -> Option<&'static str> {
+        match self {
+            ExpiryOption::Never => None,
+            ExpiryOption::OneDay => Some("1d"),
+            ExpiryOption::SevenDays => Some("7d"),
+            ExpiryOption::ThirtyDays => Some("30d"),
+            ExpiryOption::NinetyDays => Some("90d"),
+            ExpiryOption::OneYear => Some("365d"),
+            ExpiryOption::Custom => None, // Use custom value
+        }
+    }
+}
+
+/// Scope options for resource access
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ScopeOption {
+    #[default]
+    All,
+    Prefix,
+    Exact,
+    None,
+}
+
+impl ScopeOption {
+    pub fn next(&self) -> Self {
+        match self {
+            ScopeOption::All => ScopeOption::Prefix,
+            ScopeOption::Prefix => ScopeOption::Exact,
+            ScopeOption::Exact => ScopeOption::None,
+            ScopeOption::None => ScopeOption::All,
+        }
+    }
+
+    pub fn prev(&self) -> Self {
+        match self {
+            ScopeOption::All => ScopeOption::None,
+            ScopeOption::Prefix => ScopeOption::All,
+            ScopeOption::Exact => ScopeOption::Prefix,
+            ScopeOption::None => ScopeOption::Exact,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ScopeOption::All => "All",
+            ScopeOption::Prefix => "Prefix",
+            ScopeOption::Exact => "Exact",
+            ScopeOption::None => "None",
+        }
     }
 }
 
@@ -336,6 +488,7 @@ impl Default for InputMode {
 /// Main application state
 pub struct App {
     pub screen: Screen,
+    pub tab: Tab,
     pub s2: s2_sdk::S2,
     pub message: Option<StatusMessage>,
     pub show_help: bool,
@@ -346,10 +499,8 @@ pub struct App {
 impl App {
     pub fn new(s2: s2_sdk::S2) -> Self {
         Self {
-            screen: Screen::Basins(BasinsState {
-                loading: true,
-                ..Default::default()
-            }),
+            screen: Screen::Splash,
+            tab: Tab::Basins,
             s2,
             message: None,
             show_help: false,
@@ -361,8 +512,15 @@ impl App {
     pub async fn run<B: Backend>(mut self, terminal: &mut Terminal<B>) -> Result<(), CliError> {
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        // Initial data load
+        // Show splash screen briefly
+        let splash_start = std::time::Instant::now();
+        let splash_duration = Duration::from_millis(1200);
+
+        // Start loading basins in background
         self.load_basins(tx.clone());
+
+        // Track loaded basins for transition from splash
+        let mut pending_basins: Option<Result<Vec<BasinInfo>, CliError>> = None;
 
         loop {
             // Render
@@ -370,10 +528,42 @@ impl App {
                 .draw(|f| ui::draw(f, &self))
                 .map_err(|e| CliError::RecordWrite(format!("Failed to draw: {e}")))?;
 
+            // Check if splash screen should end
+            if matches!(self.screen, Screen::Splash) && splash_start.elapsed() >= splash_duration {
+                // Transition to basins
+                let mut basins_state = BasinsState {
+                    loading: pending_basins.is_none(),
+                    ..Default::default()
+                };
+                if let Some(result) = pending_basins.take() {
+                    match result {
+                        Ok(basins) => {
+                            basins_state.basins = basins;
+                            basins_state.loading = false;
+                        }
+                        Err(e) => {
+                            basins_state.loading = false;
+                            self.message = Some(StatusMessage {
+                                text: format!("Failed to load basins: {e}"),
+                                level: MessageLevel::Error,
+                            });
+                        }
+                    }
+                }
+                self.screen = Screen::Basins(basins_state);
+            }
+
             // Handle events
             tokio::select! {
                 // Handle async events from background tasks
                 Some(event) = rx.recv() => {
+                    // If on splash screen, cache the basins result
+                    if matches!(self.screen, Screen::Splash) {
+                        if let Event::BasinsLoaded(result) = event {
+                            pending_basins = Some(result);
+                            continue;
+                        }
+                    }
                     self.handle_event(event);
                 }
 
@@ -385,6 +575,30 @@ impl App {
                         if let CrosstermEvent::Key(key) = event::read()
                             .map_err(|e| CliError::RecordWrite(format!("Failed to read event: {e}")))?
                         {
+                            // Skip to basins on any key during splash
+                            if matches!(self.screen, Screen::Splash) {
+                                let mut basins_state = BasinsState {
+                                    loading: pending_basins.is_none(),
+                                    ..Default::default()
+                                };
+                                if let Some(result) = pending_basins.take() {
+                                    match result {
+                                        Ok(basins) => {
+                                            basins_state.basins = basins;
+                                            basins_state.loading = false;
+                                        }
+                                        Err(e) => {
+                                            basins_state.loading = false;
+                                            self.message = Some(StatusMessage {
+                                                text: format!("Failed to load basins: {e}"),
+                                                level: MessageLevel::Error,
+                                            });
+                                        }
+                                    }
+                                }
+                                self.screen = Screen::Basins(basins_state);
+                                continue;
+                            }
                             self.handle_key(key, tx.clone());
                         }
                     }
@@ -768,6 +982,73 @@ impl App {
                 }
             }
 
+            Event::AccessTokensLoaded(result) => {
+                if let Screen::AccessTokens(state) = &mut self.screen {
+                    state.loading = false;
+                    match result {
+                        Ok(tokens) => {
+                            state.tokens = tokens;
+                            self.message = Some(StatusMessage {
+                                text: format!("Loaded {} access tokens", state.tokens.len()),
+                                level: MessageLevel::Success,
+                            });
+                        }
+                        Err(e) => {
+                            self.message = Some(StatusMessage {
+                                text: format!("Failed to load access tokens: {e}"),
+                                level: MessageLevel::Error,
+                            });
+                        }
+                    }
+                }
+            }
+
+            Event::AccessTokenIssued(result) => {
+                self.input_mode = InputMode::Normal;
+                match result {
+                    Ok(token) => {
+                        // Show the token in a special dialog (one-time display)
+                        self.input_mode = InputMode::ShowIssuedToken { token: token.clone() };
+                        self.message = Some(StatusMessage {
+                            text: "Access token issued - copy it now, it won't be shown again!".to_string(),
+                            level: MessageLevel::Success,
+                        });
+                        // Refresh tokens list
+                        if let Screen::AccessTokens(state) = &mut self.screen {
+                            state.loading = true;
+                        }
+                    }
+                    Err(e) => {
+                        self.message = Some(StatusMessage {
+                            text: format!("Failed to issue access token: {e}"),
+                            level: MessageLevel::Error,
+                        });
+                    }
+                }
+            }
+
+            Event::AccessTokenRevoked(result) => {
+                self.input_mode = InputMode::Normal;
+                match result {
+                    Ok(id) => {
+                        self.message = Some(StatusMessage {
+                            text: format!("Revoked access token '{}'", id),
+                            level: MessageLevel::Success,
+                        });
+                        // Refresh tokens list
+                        if let Screen::AccessTokens(state) = &mut self.screen {
+                            state.loading = true;
+                        }
+                    }
+                    Err(e) => {
+                        self.message = Some(StatusMessage {
+                            text: format!("Failed to revoke access token: {e}"),
+                            level: MessageLevel::Error,
+                        });
+                    }
+                }
+            }
+
             Event::Error(e) => {
                 self.message = Some(StatusMessage {
                     text: e.to_string(),
@@ -815,17 +1096,99 @@ impl App {
             return;
         }
 
+        // Tab key to switch between tabs (only on top-level screens)
+        if key.code == KeyCode::Tab {
+            match &self.screen {
+                Screen::Basins(_) | Screen::AccessTokens(_) => {
+                    self.switch_tab(tx.clone());
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         // Screen-specific keys - handle in place to avoid borrow issues
         match &self.screen {
+            Screen::Splash => {} // Keys handled in run loop
             Screen::Basins(_) => self.handle_basins_key(key, tx),
             Screen::Streams(_) => self.handle_streams_key(key, tx),
             Screen::StreamDetail(_) => self.handle_stream_detail_key(key, tx),
             Screen::ReadView(_) => self.handle_read_view_key(key, tx),
             Screen::AppendView(_) => self.handle_append_view_key(key, tx),
+            Screen::AccessTokens(_) => self.handle_access_tokens_key(key, tx),
         }
     }
 
     fn handle_input_key(&mut self, key: KeyEvent, tx: mpsc::UnboundedSender<Event>) {
+        // Handle IssueAccessToken submit separately to avoid borrow issues.
+        // We need to extract values before calling the method since the match arm
+        // holds borrows that conflict with the method call.
+        if matches!(key.code, KeyCode::Char(' ') | KeyCode::Enter) {
+            if let InputMode::IssueAccessToken {
+                id,
+                expiry,
+                expiry_custom,
+                basins_scope,
+                basins_value,
+                streams_scope,
+                streams_value,
+                tokens_scope,
+                tokens_value,
+                account_read,
+                account_write,
+                basin_read,
+                basin_write,
+                stream_read,
+                stream_write,
+                auto_prefix_streams,
+                selected,
+                editing,
+            } = &self.input_mode
+            {
+                if *selected == 16 && !*editing && !id.is_empty() {
+                    // Clone all values we need
+                    let id = id.clone();
+                    let expiry = *expiry;
+                    let expiry_custom = expiry_custom.clone();
+                    let basins_scope = *basins_scope;
+                    let basins_value = basins_value.clone();
+                    let streams_scope = *streams_scope;
+                    let streams_value = streams_value.clone();
+                    let tokens_scope = *tokens_scope;
+                    let tokens_value = tokens_value.clone();
+                    let account_read = *account_read;
+                    let account_write = *account_write;
+                    let basin_read = *basin_read;
+                    let basin_write = *basin_write;
+                    let stream_read = *stream_read;
+                    let stream_write = *stream_write;
+                    let auto_prefix_streams = *auto_prefix_streams;
+
+                    // Now we can safely call the method
+                    self.issue_access_token_v2(
+                        id,
+                        expiry,
+                        expiry_custom,
+                        basins_scope,
+                        basins_value,
+                        streams_scope,
+                        streams_value,
+                        tokens_scope,
+                        tokens_value,
+                        account_read,
+                        account_write,
+                        basin_read,
+                        basin_write,
+                        stream_read,
+                        stream_write,
+                        auto_prefix_streams,
+                        tx,
+                    );
+                    return;
+                }
+            }
+        }
+
         match &mut self.input_mode {
             InputMode::Normal => {}
 
@@ -1407,6 +1770,170 @@ impl App {
                             }
                             _ => {}
                         }
+                    }
+                    _ => {}
+                }
+            }
+
+            InputMode::IssueAccessToken {
+                id,
+                expiry,
+                expiry_custom,
+                basins_scope,
+                basins_value,
+                streams_scope,
+                streams_value,
+                tokens_scope,
+                tokens_value,
+                account_read,
+                account_write,
+                basin_read,
+                basin_write,
+                stream_read,
+                stream_write,
+                auto_prefix_streams,
+                selected,
+                editing,
+            } => {
+                // Fields: 0=id, 1=expiry, 2=expiry_custom, 3=basins_scope, 4=basins_value,
+                //         5=streams_scope, 6=streams_value, 7=tokens_scope, 8=tokens_value,
+                //         9=account_read, 10=account_write, 11=basin_read, 12=basin_write,
+                //         13=stream_read, 14=stream_write, 15=auto_prefix, 16=submit
+                const MAX_FIELD: usize = 16;
+
+                if *editing {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Enter => {
+                            *editing = false;
+                        }
+                        KeyCode::Backspace => {
+                            match *selected {
+                                0 => { id.pop(); }
+                                2 => { expiry_custom.pop(); }
+                                4 => { basins_value.pop(); }
+                                6 => { streams_value.pop(); }
+                                8 => { tokens_value.pop(); }
+                                _ => {}
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            match *selected {
+                                0 => {
+                                    // Token ID: letters, numbers, hyphens, underscores
+                                    if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                                        id.push(c);
+                                    }
+                                }
+                                2 => {
+                                    // Custom expiry: e.g., "30d", "1w", "24h"
+                                    if c.is_ascii_alphanumeric() {
+                                        expiry_custom.push(c);
+                                    }
+                                }
+                                4 => basins_value.push(c),
+                                6 => streams_value.push(c),
+                                8 => tokens_value.push(c),
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                    return;
+                }
+
+                match key.code {
+                    KeyCode::Esc => {
+                        self.input_mode = InputMode::Normal;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if *selected > 0 {
+                            *selected -= 1;
+                            // Skip value fields if scope doesn't need them
+                            if *selected == 2 && *expiry != ExpiryOption::Custom {
+                                *selected = 1;
+                            }
+                            if *selected == 4 && !matches!(basins_scope, ScopeOption::Prefix | ScopeOption::Exact) {
+                                *selected = 3;
+                            }
+                            if *selected == 6 && !matches!(streams_scope, ScopeOption::Prefix | ScopeOption::Exact) {
+                                *selected = 5;
+                            }
+                            if *selected == 8 && !matches!(tokens_scope, ScopeOption::Prefix | ScopeOption::Exact) {
+                                *selected = 7;
+                            }
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if *selected < MAX_FIELD {
+                            *selected += 1;
+                            // Skip value fields if scope doesn't need them
+                            if *selected == 2 && *expiry != ExpiryOption::Custom {
+                                *selected = 3;
+                            }
+                            if *selected == 4 && !matches!(basins_scope, ScopeOption::Prefix | ScopeOption::Exact) {
+                                *selected = 5;
+                            }
+                            if *selected == 6 && !matches!(streams_scope, ScopeOption::Prefix | ScopeOption::Exact) {
+                                *selected = 7;
+                            }
+                            if *selected == 8 && !matches!(tokens_scope, ScopeOption::Prefix | ScopeOption::Exact) {
+                                *selected = 9;
+                            }
+                        }
+                    }
+                    KeyCode::Left | KeyCode::Right => {
+                        let forward = key.code == KeyCode::Right;
+                        match *selected {
+                            1 => *expiry = if forward { expiry.next() } else { expiry.prev() },
+                            3 => *basins_scope = if forward { basins_scope.next() } else { basins_scope.prev() },
+                            5 => *streams_scope = if forward { streams_scope.next() } else { streams_scope.prev() },
+                            7 => *tokens_scope = if forward { tokens_scope.next() } else { tokens_scope.prev() },
+                            _ => {}
+                        }
+                    }
+                    KeyCode::Char(' ') | KeyCode::Enter => {
+                        match *selected {
+                            // Text inputs
+                            0 | 2 | 4 | 6 | 8 => *editing = true,
+                            // Cycle options
+                            1 => *expiry = expiry.next(),
+                            3 => *basins_scope = basins_scope.next(),
+                            5 => *streams_scope = streams_scope.next(),
+                            7 => *tokens_scope = tokens_scope.next(),
+                            // Toggle checkboxes
+                            9 => *account_read = !*account_read,
+                            10 => *account_write = !*account_write,
+                            11 => *basin_read = !*basin_read,
+                            12 => *basin_write = !*basin_write,
+                            13 => *stream_read = !*stream_read,
+                            14 => *stream_write = !*stream_write,
+                            15 => *auto_prefix_streams = !*auto_prefix_streams,
+                            // Submit case (16) is handled before the match to avoid borrow issues
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            InputMode::ConfirmRevokeToken { token_id } => {
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                        self.input_mode = InputMode::Normal;
+                    }
+                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                        let id = token_id.clone();
+                        self.revoke_access_token(id, tx.clone());
+                    }
+                    _ => {}
+                }
+            }
+
+            InputMode::ShowIssuedToken { .. } => {
+                // Any key dismisses the token display
+                match key.code {
+                    KeyCode::Esc | KeyCode::Enter | KeyCode::Char(_) => {
+                        self.input_mode = InputMode::Normal;
                     }
                     _ => {}
                 }
@@ -2985,6 +3512,366 @@ impl App {
                         crate::error::OpKind::Trim,
                         e,
                     ))));
+                }
+            }
+        });
+    }
+
+    /// Switch between tabs
+    fn switch_tab(&mut self, tx: mpsc::UnboundedSender<Event>) {
+        match self.tab {
+            Tab::Basins => {
+                self.tab = Tab::AccessTokens;
+                self.screen = Screen::AccessTokens(AccessTokensState {
+                    loading: true,
+                    ..Default::default()
+                });
+                self.load_access_tokens(tx);
+            }
+            Tab::AccessTokens => {
+                self.tab = Tab::Basins;
+                self.screen = Screen::Basins(BasinsState {
+                    loading: true,
+                    ..Default::default()
+                });
+                self.load_basins(tx);
+            }
+        }
+    }
+
+    /// Handle keys on access tokens screen
+    fn handle_access_tokens_key(&mut self, key: KeyEvent, tx: mpsc::UnboundedSender<Event>) {
+        let Screen::AccessTokens(state) = &mut self.screen else {
+            return;
+        };
+
+        // Handle filter mode
+        if state.filter_active {
+            match key.code {
+                KeyCode::Esc => {
+                    state.filter_active = false;
+                    state.filter.clear();
+                    state.selected = 0;
+                }
+                KeyCode::Enter => {
+                    state.filter_active = false;
+                }
+                KeyCode::Backspace => {
+                    state.filter.pop();
+                    state.selected = 0;
+                }
+                KeyCode::Char(c) => {
+                    state.filter.push(c);
+                    state.selected = 0;
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Get filtered tokens for navigation
+        let filtered_tokens: Vec<_> = state
+            .tokens
+            .iter()
+            .filter(|t| {
+                state.filter.is_empty()
+                    || t.id.to_string().to_lowercase().contains(&state.filter.to_lowercase())
+            })
+            .collect();
+
+        match key.code {
+            KeyCode::Char('q') => {
+                self.should_quit = true;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if !filtered_tokens.is_empty() && state.selected < filtered_tokens.len() - 1 {
+                    state.selected += 1;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if state.selected > 0 {
+                    state.selected -= 1;
+                }
+            }
+            KeyCode::Char('g') | KeyCode::Home => {
+                state.selected = 0;
+            }
+            KeyCode::Char('G') | KeyCode::End => {
+                if !filtered_tokens.is_empty() {
+                    state.selected = filtered_tokens.len() - 1;
+                }
+            }
+            KeyCode::Char('/') => {
+                state.filter_active = true;
+            }
+            KeyCode::Char('c') => {
+                // Create/Issue new token
+                self.input_mode = InputMode::IssueAccessToken {
+                    id: String::new(),
+                    expiry: ExpiryOption::ThirtyDays,
+                    expiry_custom: String::new(),
+                    basins_scope: ScopeOption::All,
+                    basins_value: String::new(),
+                    streams_scope: ScopeOption::All,
+                    streams_value: String::new(),
+                    tokens_scope: ScopeOption::All,
+                    tokens_value: String::new(),
+                    account_read: true,
+                    account_write: false,
+                    basin_read: true,
+                    basin_write: false,
+                    stream_read: true,
+                    stream_write: false,
+                    auto_prefix_streams: false,
+                    selected: 0,
+                    editing: false,
+                };
+            }
+            KeyCode::Char('d') => {
+                // Delete/Revoke selected token
+                if let Some(token) = filtered_tokens.get(state.selected) {
+                    self.input_mode = InputMode::ConfirmRevokeToken {
+                        token_id: token.id.to_string(),
+                    };
+                }
+            }
+            KeyCode::Char('r') => {
+                // Refresh
+                state.loading = true;
+                self.load_access_tokens(tx);
+            }
+            _ => {}
+        }
+    }
+
+    /// Load access tokens
+    fn load_access_tokens(&self, tx: mpsc::UnboundedSender<Event>) {
+        let s2 = self.s2.clone();
+        tokio::spawn(async move {
+            let args = ListAccessTokensArgs {
+                prefix: None,
+                start_after: None,
+                limit: Some(100),
+                no_auto_paginate: false,
+            };
+            match ops::list_access_tokens(&s2, args).await {
+                Ok(stream) => {
+                    let tokens: Vec<_> = stream
+                        .take(100)
+                        .filter_map(|r| async { r.ok() })
+                        .collect()
+                        .await;
+                    let _ = tx.send(Event::AccessTokensLoaded(Ok(tokens)));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::AccessTokensLoaded(Err(e)));
+                }
+            }
+        });
+    }
+
+    /// Issue a new access token (v2 with full options)
+    #[allow(clippy::too_many_arguments)]
+    fn issue_access_token_v2(
+        &self,
+        id: String,
+        expiry: ExpiryOption,
+        expiry_custom: String,
+        basins_scope: ScopeOption,
+        basins_value: String,
+        streams_scope: ScopeOption,
+        streams_value: String,
+        tokens_scope: ScopeOption,
+        tokens_value: String,
+        account_read: bool,
+        account_write: bool,
+        basin_read: bool,
+        basin_write: bool,
+        stream_read: bool,
+        stream_write: bool,
+        auto_prefix_streams: bool,
+        tx: mpsc::UnboundedSender<Event>,
+    ) {
+        let s2 = self.s2.clone();
+        let tx_refresh = tx.clone();
+
+        tokio::spawn(async move {
+            // Parse token ID
+            let token_id: AccessTokenId = match id.parse() {
+                Ok(id) => id,
+                Err(e) => {
+                    let _ = tx.send(Event::AccessTokenIssued(Err(CliError::InvalidArgs(
+                        miette::miette!("Invalid token ID: {}", e),
+                    ))));
+                    return;
+                }
+            };
+
+            // Build operations list based on read/write checkboxes
+            let mut operations: Vec<Operation> = Vec::new();
+
+            // Account level operations
+            if account_read {
+                operations.push(Operation::ListBasins);
+                operations.push(Operation::GetAccountMetrics);
+            }
+            // (No account-write ops at account level)
+
+            // Basin level operations
+            if basin_read {
+                operations.push(Operation::GetBasinConfig);
+                operations.push(Operation::GetBasinMetrics);
+                operations.push(Operation::ListStreams);
+            }
+            if basin_write {
+                operations.push(Operation::CreateBasin);
+                operations.push(Operation::DeleteBasin);
+                operations.push(Operation::ReconfigureBasin);
+            }
+
+            // Stream level operations
+            if stream_read {
+                operations.push(Operation::GetStreamConfig);
+                operations.push(Operation::GetStreamMetrics);
+                operations.push(Operation::Read);
+                operations.push(Operation::CheckTail);
+            }
+            if stream_write {
+                operations.push(Operation::CreateStream);
+                operations.push(Operation::DeleteStream);
+                operations.push(Operation::ReconfigureStream);
+                operations.push(Operation::Append);
+                operations.push(Operation::Fence);
+                operations.push(Operation::Trim);
+            }
+
+            // Token operations (based on tokens scope)
+            if !matches!(tokens_scope, ScopeOption::None) {
+                if account_read {
+                    operations.push(Operation::ListAccessTokens);
+                }
+                if account_write {
+                    operations.push(Operation::IssueAccessToken);
+                    operations.push(Operation::RevokeAccessToken);
+                }
+            }
+
+            // Build expiration
+            let expires_in_str = match expiry {
+                ExpiryOption::Never => None,
+                ExpiryOption::Custom => {
+                    if expiry_custom.is_empty() { None } else { Some(expiry_custom.clone()) }
+                }
+                _ => expiry.to_duration_str().map(|s| s.to_string()),
+            };
+
+            // Build scope matchers
+            let basins_matcher = match basins_scope {
+                ScopeOption::All => None,
+                ScopeOption::None => Some("".to_string()), // Empty string = no basins
+                ScopeOption::Prefix => Some(basins_value.clone()),
+                ScopeOption::Exact => Some(format!("={}", basins_value)),
+            };
+
+            let streams_matcher = match streams_scope {
+                ScopeOption::All => None,
+                ScopeOption::None => Some("".to_string()),
+                ScopeOption::Prefix => Some(streams_value.clone()),
+                ScopeOption::Exact => Some(format!("={}", streams_value)),
+            };
+
+            let tokens_matcher = match tokens_scope {
+                ScopeOption::All => None,
+                ScopeOption::None => Some("".to_string()),
+                ScopeOption::Prefix => Some(tokens_value.clone()),
+                ScopeOption::Exact => Some(format!("={}", tokens_value)),
+            };
+
+            // Build args
+            let args = IssueAccessTokenArgs {
+                id: token_id,
+                expires_in: expires_in_str.and_then(|s| s.parse().ok()),
+                expires_at: None,
+                auto_prefix_streams,
+                basins: basins_matcher.and_then(|s| if s.is_empty() && matches!(basins_scope, ScopeOption::None) {
+                    // For "None" scope, we don't pass anything (API default is all)
+                    // Actually, to restrict to none, we need special handling
+                    None
+                } else if s.is_empty() {
+                    None
+                } else {
+                    s.parse().ok()
+                }),
+                streams: streams_matcher.and_then(|s| if s.is_empty() { None } else { s.parse().ok() }),
+                access_tokens: tokens_matcher.and_then(|s| if s.is_empty() { None } else { s.parse().ok() }),
+                op_group_perms: None,
+                ops: operations,
+            };
+
+            match ops::issue_access_token(&s2, args).await {
+                Ok(token) => {
+                    let _ = tx.send(Event::AccessTokenIssued(Ok(token)));
+                    // Trigger refresh
+                    let list_args = ListAccessTokensArgs {
+                        prefix: None,
+                        start_after: None,
+                        limit: Some(100),
+                        no_auto_paginate: false,
+                    };
+                    if let Ok(stream) = ops::list_access_tokens(&s2, list_args).await {
+                        let tokens: Vec<_> = stream
+                            .take(100)
+                            .filter_map(|r| async { r.ok() })
+                            .collect()
+                            .await;
+                        let _ = tx_refresh.send(Event::AccessTokensLoaded(Ok(tokens)));
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::AccessTokenIssued(Err(e)));
+                }
+            }
+        });
+    }
+
+    /// Revoke an access token
+    fn revoke_access_token(&self, id: String, tx: mpsc::UnboundedSender<Event>) {
+        let s2 = self.s2.clone();
+        let tx_refresh = tx.clone();
+
+        tokio::spawn(async move {
+            // Parse token ID
+            let token_id: AccessTokenId = match id.parse() {
+                Ok(id) => id,
+                Err(e) => {
+                    let _ = tx.send(Event::AccessTokenRevoked(Err(CliError::InvalidArgs(
+                        miette::miette!("Invalid token ID: {}", e),
+                    ))));
+                    return;
+                }
+            };
+
+            match ops::revoke_access_token(&s2, token_id.clone()).await {
+                Ok(()) => {
+                    let _ = tx.send(Event::AccessTokenRevoked(Ok(id)));
+                    // Trigger refresh
+                    let list_args = ListAccessTokensArgs {
+                        prefix: None,
+                        start_after: None,
+                        limit: Some(100),
+                        no_auto_paginate: false,
+                    };
+                    if let Ok(stream) = ops::list_access_tokens(&s2, list_args).await {
+                        let tokens: Vec<_> = stream
+                            .take(100)
+                            .filter_map(|r| async { r.ok() })
+                            .collect()
+                            .await;
+                        let _ = tx_refresh.send(Event::AccessTokensLoaded(Ok(tokens)));
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::AccessTokenRevoked(Err(e)));
                 }
             }
         });

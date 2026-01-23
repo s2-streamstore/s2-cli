@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::types::{StorageClass, TimestampingMode};
 
-use super::app::{App, AgoUnit, AppendViewState, BasinsState, InputMode, MessageLevel, ReadStartFrom, ReadViewState, RetentionPolicyOption, Screen, StreamDetailState, StreamsState};
+use super::app::{AccessTokensState, App, AgoUnit, AppendViewState, BasinsState, ExpiryOption, InputMode, MessageLevel, ReadStartFrom, ReadViewState, RetentionPolicyOption, ScopeOption, Screen, StreamDetailState, StreamsState, Tab};
 
 // S2 Console dark theme
 const GREEN: Color = Color::Rgb(34, 197, 94);            // Active green
@@ -36,26 +36,55 @@ pub fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
     f.render_widget(Block::default().style(Style::default().bg(BG_DARK)), area);
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .margin(1)
-        .constraints([
-            Constraint::Min(3),    // Main content
-            Constraint::Length(1), // Status bar (slimmer)
-        ])
-        .split(area);
+    // Splash screen uses full area
+    if matches!(app.screen, Screen::Splash) {
+        draw_splash(f, area);
+        return;
+    }
+
+    // Check if we should show tabs (only on top-level screens)
+    let show_tabs = matches!(app.screen, Screen::Basins(_) | Screen::AccessTokens(_));
+
+    let chunks = if show_tabs {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .margin(1)
+            .constraints([
+                Constraint::Length(1), // Tab bar
+                Constraint::Min(3),    // Main content
+                Constraint::Length(1), // Status bar
+            ])
+            .split(area)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .margin(1)
+            .constraints([
+                Constraint::Length(0), // No tab bar
+                Constraint::Min(3),    // Main content
+                Constraint::Length(1), // Status bar
+            ])
+            .split(area)
+    };
+
+    // Draw tab bar if on top-level screen
+    if show_tabs {
+        draw_tab_bar(f, chunks[0], app.tab);
+    }
 
     // Draw main content based on screen
     match &app.screen {
-        Screen::Basins(state) => draw_basins(f, chunks[0], state),
-        Screen::Streams(state) => draw_streams(f, chunks[0], state),
-        Screen::StreamDetail(state) => draw_stream_detail(f, chunks[0], state),
-        Screen::ReadView(state) => draw_read_view(f, chunks[0], state),
-        Screen::AppendView(state) => draw_append_view(f, chunks[0], state),
+        Screen::Splash => unreachable!(),
+        Screen::Basins(state) => draw_basins(f, chunks[1], state),
+        Screen::Streams(state) => draw_streams(f, chunks[1], state),
+        Screen::StreamDetail(state) => draw_stream_detail(f, chunks[1], state),
+        Screen::ReadView(state) => draw_read_view(f, chunks[1], state),
+        Screen::AppendView(state) => draw_append_view(f, chunks[1], state),
+        Screen::AccessTokens(state) => draw_access_tokens(f, chunks[1], state),
     }
 
     // Draw status bar
-    draw_status_bar(f, chunks[1], app);
+    draw_status_bar(f, chunks[2], app);
 
     // Draw help overlay if visible
     if app.show_help {
@@ -66,6 +95,239 @@ pub fn draw(f: &mut Frame, app: &App) {
     if !matches!(app.input_mode, InputMode::Normal) {
         draw_input_dialog(f, &app.input_mode);
     }
+}
+
+fn draw_splash(f: &mut Frame, area: Rect) {
+    // S2 logo
+    let logo = vec![
+        "   █████████████████████████    ",
+        "  ██████████████████████████████ ",
+        " ███████████████████████████████ ",
+        "█████████████████████████████████",
+        "█████████████████████████████████  ",
+        "███████████████                  ",
+        "███████████████                  ",
+        "██████████████   ████████████████",
+        "██████████████   ████████████████",
+        "██████████████   ████████████████",
+        "███████████████           ███████",
+        "██████████████████          █████",
+        "█████████████████████████    ████",
+        "█████████████████████████   █████",
+        "██████                     ██████",
+        "█████                    ████████",
+        " ███    ██████████████████████ ",
+        "  ██    ██████████████████████ ",
+        "         ████████████████████    ",
+    ];
+
+    // Create lines with logo (centered)
+    let mut lines: Vec<Line> = logo
+        .iter()
+        .map(|&line| Line::from(Span::styled(line, Style::default().fg(Color::White))))
+        .collect();
+
+    // Add tagline below logo
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Streams as a cloud",
+        Style::default().fg(Color::White).bold(),
+    )));
+    lines.push(Line::from(Span::styled(
+        "storage primitive",
+        Style::default().fg(Color::White).bold(),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "The serverless API for unlimited, durable, real-time streams.",
+        Style::default().fg(TEXT_MUTED),
+    )));
+
+    let content_height = lines.len() as u16;
+
+    // Center vertically
+    let y = area.y + area.height.saturating_sub(content_height) / 2;
+
+    let centered_area = Rect::new(area.x, y, area.width, content_height);
+    let logo_widget = Paragraph::new(lines).alignment(Alignment::Center);
+    f.render_widget(logo_widget, centered_area);
+}
+
+fn draw_tab_bar(f: &mut Frame, area: Rect, current_tab: Tab) {
+    let basins_style = if current_tab == Tab::Basins {
+        Style::default().fg(GREEN).bold()
+    } else {
+        Style::default().fg(TEXT_MUTED)
+    };
+
+    let tokens_style = if current_tab == Tab::AccessTokens {
+        Style::default().fg(GREEN).bold()
+    } else {
+        Style::default().fg(TEXT_MUTED)
+    };
+
+    let line = Line::from(vec![
+        Span::styled("Basins", basins_style),
+        Span::styled("  │  ", Style::default().fg(BORDER)),
+        Span::styled("Access Tokens", tokens_style),
+        Span::styled("  (Tab to switch)", Style::default().fg(TEXT_MUTED)),
+    ]);
+
+    let paragraph = Paragraph::new(line);
+    f.render_widget(paragraph, area);
+}
+
+fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
+    // Layout: Search bar, Header, Table rows
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Search bar
+            Constraint::Length(2), // Header
+            Constraint::Min(1),    // Table rows
+        ])
+        .split(area);
+
+    // === Search Bar ===
+    let search_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(if state.filter_active { GREEN } else { BORDER }))
+        .style(Style::default().bg(BG_PANEL));
+
+    let search_text = if state.filter_active {
+        Line::from(vec![
+            Span::styled("/ ", Style::default().fg(GREEN)),
+            Span::styled(&state.filter, Style::default().fg(TEXT_PRIMARY)),
+            Span::styled("█", Style::default().fg(GREEN)), // Cursor
+        ])
+    } else if !state.filter.is_empty() {
+        Line::from(vec![
+            Span::styled("Filter: ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(&state.filter, Style::default().fg(TEXT_PRIMARY)),
+        ])
+    } else {
+        Line::from(Span::styled(
+            "Press / to search access tokens...",
+            Style::default().fg(TEXT_MUTED),
+        ))
+    };
+
+    let search_para = Paragraph::new(search_text)
+        .block(search_block)
+        .style(Style::default().bg(BG_PANEL));
+    f.render_widget(search_para, chunks[0]);
+
+    // === Header ===
+    // Column widths: prefix(2) + token_id(30) + expires_at(28) + scope(rest)
+    let header = Line::from(vec![
+        Span::styled("  ", Style::default()),  // Space for selection prefix
+        Span::styled(
+            format!("{:<30}", "TOKEN ID"),
+            Style::default().fg(TEXT_MUTED).bold(),
+        ),
+        Span::styled(
+            format!("{:<28}", "EXPIRES AT"),
+            Style::default().fg(TEXT_MUTED).bold(),
+        ),
+        Span::styled("SCOPE", Style::default().fg(TEXT_MUTED).bold()),
+    ]);
+    let header_para = Paragraph::new(header);
+    f.render_widget(header_para, chunks[1]);
+
+    // === Token List ===
+    // Filter tokens
+    let filtered_tokens: Vec<_> = state
+        .tokens
+        .iter()
+        .filter(|t| {
+            state.filter.is_empty()
+                || t.id.to_string().to_lowercase().contains(&state.filter.to_lowercase())
+        })
+        .collect();
+
+    if state.loading {
+        let loading = Paragraph::new(Line::from(Span::styled(
+            "Loading access tokens...",
+            Style::default().fg(TEXT_MUTED),
+        )));
+        f.render_widget(loading, chunks[2]);
+    } else if filtered_tokens.is_empty() {
+        let empty_msg = if state.tokens.is_empty() {
+            "No access tokens. Press 'c' to issue a new token."
+        } else {
+            "No tokens match filter."
+        };
+        let empty = Paragraph::new(Line::from(Span::styled(
+            empty_msg,
+            Style::default().fg(TEXT_MUTED),
+        )));
+        f.render_widget(empty, chunks[2]);
+    } else {
+        let list_height = chunks[2].height as usize;
+        let start = state.selected.saturating_sub(list_height / 2);
+        let visible_tokens = filtered_tokens.iter().skip(start).take(list_height);
+
+        let lines: Vec<Line> = visible_tokens
+            .enumerate()
+            .map(|(i, token)| {
+                let actual_index = start + i;
+                let is_selected = actual_index == state.selected;
+
+                // Format scope summary
+                let scope_summary = format_scope_summary(token);
+
+                let style = if is_selected {
+                    Style::default().fg(GREEN).bold()
+                } else {
+                    Style::default().fg(TEXT_PRIMARY)
+                };
+
+                let prefix = if is_selected { "▶ " } else { "  " };
+
+                // Truncate token ID if too long (max 28 chars to leave room for padding)
+                let token_id_str = token.id.to_string();
+                let token_id_display = if token_id_str.len() > 28 {
+                    format!("{}…", &token_id_str[..27])
+                } else {
+                    token_id_str
+                };
+
+                // Format expires_at more compactly
+                let expires_str = token.expires_at.to_string();
+                let expires_display = if expires_str.len() > 26 {
+                    format!("{}…", &expires_str[..25])
+                } else {
+                    expires_str
+                };
+
+                Line::from(vec![
+                    Span::styled(prefix, style),
+                    Span::styled(format!("{:<30}", token_id_display), style),
+                    Span::styled(format!("{:<28}", expires_display), Style::default().fg(TEXT_MUTED)),
+                    Span::styled(scope_summary, Style::default().fg(TEXT_MUTED)),
+                ])
+            })
+            .collect();
+
+        let list = Paragraph::new(lines);
+        f.render_widget(list, chunks[2]);
+    }
+}
+
+/// Format a summary of the token scope
+fn format_scope_summary(token: &s2_sdk::types::AccessTokenInfo) -> String {
+    let ops_count = token.scope.ops.len();
+    let has_basins = token.scope.basins.is_some();
+    let has_streams = token.scope.streams.is_some();
+
+    let mut parts = vec![format!("{} ops", ops_count)];
+    if has_basins {
+        parts.push("basins".to_string());
+    }
+    if has_streams {
+        parts.push("streams".to_string());
+    }
+    parts.join(", ")
 }
 
 fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
@@ -528,7 +790,7 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
 
     let actions = vec![
         ("t", "Tail", "Live follow from current position - see new records as they arrive"),
-        ("r", "Custom Read", "Configure start position, limits, and time range"),
+        ("r", "Read", "Configure start position, limits, and time range"),
         ("a", "Append", "Write records to this stream"),
         ("f", "Fence", "Set a fencing token to block other writers"),
         ("m", "Trim", "Delete records before a sequence number"),
@@ -1027,6 +1289,7 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
 
 fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     let hints = match &app.screen {
+        Screen::Splash => "", // Never shown
         Screen::Basins(_) => "/ filter | jk nav | ret open | c new | e cfg | d del | r ref | ? | q",
         Screen::Streams(_) => "/ filter | jk nav | ret open | c new | e cfg | d del | r ref | esc",
         Screen::StreamDetail(_) => "jk | ret | t tail | r read | a append | f fence | m trim | e cfg | esc",
@@ -1050,6 +1313,7 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
                 "jk nav | ⏎ edit/send | d del header | esc back"
             }
         }
+        Screen::AccessTokens(_) => "/ filter | jk nav | c issue | d revoke | r ref | ⇥ switch | ? | q",
     };
 
     let message_span = app
@@ -1082,6 +1346,7 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
     let area = centered_rect(50, 50, f.area());
 
     let help_text = match screen {
+        Screen::Splash => vec![], // Never shown
         Screen::Basins(_) => vec![
             Line::from(""),
             Line::from(vec![
@@ -1115,6 +1380,10 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
             Line::from(vec![
                 Span::styled("    r ", Style::default().fg(GREEN).bold()),
                 Span::styled("Refresh", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("  tab ", Style::default().fg(GREEN).bold()),
+                Span::styled("Switch to Access Tokens", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(vec![
                 Span::styled("    q ", Style::default().fg(GREEN).bold()),
@@ -1174,7 +1443,7 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
             ]),
             Line::from(vec![
                 Span::styled("    r ", Style::default().fg(GREEN).bold()),
-                Span::styled("Custom read", Style::default().fg(TEXT_SECONDARY)),
+                Span::styled("Read records", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(vec![
                 Span::styled("    a ", Style::default().fg(GREEN).bold()),
@@ -1239,6 +1508,42 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
             Line::from(vec![
                 Span::styled("  esc ", Style::default().fg(GREEN).bold()),
                 Span::styled("Stop editing / Back", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(""),
+        ],
+        Screen::AccessTokens(_) => vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  j/k ", Style::default().fg(GREEN).bold()),
+                Span::styled("Navigate", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("  g/G ", Style::default().fg(GREEN).bold()),
+                Span::styled("Top / Bottom", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    / ", Style::default().fg(GREEN).bold()),
+                Span::styled("Filter", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    c ", Style::default().fg(GREEN).bold()),
+                Span::styled("Issue new token", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    d ", Style::default().fg(GREEN).bold()),
+                Span::styled("Revoke token", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    r ", Style::default().fg(GREEN).bold()),
+                Span::styled("Refresh", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("  tab ", Style::default().fg(GREEN).bold()),
+                Span::styled("Switch to Basins", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    q ", Style::default().fg(GREEN).bold()),
+                Span::styled("Quit", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(""),
         ],
@@ -1699,7 +2004,7 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             ]));
 
             (
-                " Custom Read ",
+                " Read ",
                 lines,
                 "↑↓ nav  ⏎ edit  ␣ toggle  ⇥ unit  esc",
             )
@@ -1849,6 +2154,245 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 "↑↓ nav  ⏎ edit/submit  esc",
             )
         }
+
+        InputMode::IssueAccessToken {
+            id,
+            expiry,
+            expiry_custom,
+            basins_scope,
+            basins_value,
+            streams_scope,
+            streams_value,
+            tokens_scope,
+            tokens_value,
+            account_read,
+            account_write,
+            basin_read,
+            basin_write,
+            stream_read,
+            stream_write,
+            auto_prefix_streams,
+            selected,
+            editing,
+        } => {
+            let cursor = |is_editing: bool| if is_editing { "▎" } else { "" };
+            let marker = |sel: bool| if sel { "▸ " } else { "  " };
+            let checkbox = |checked: bool| if checked { "[x]" } else { "[ ]" };
+
+            let mut lines = vec![];
+
+            // Row 0: Token ID
+            let id_editing = *editing && *selected == 0;
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 0), Style::default().fg(GREEN)),
+                Span::styled("Token ID        ", Style::default().fg(if *selected == 0 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(
+                    if id.is_empty() && !id_editing {
+                        "(required)".to_string()
+                    } else {
+                        format!("{}{}", id, cursor(id_editing))
+                    },
+                    Style::default().fg(if id_editing { GREEN } else if id.is_empty() { WARNING } else { TEXT_SECONDARY })
+                ),
+            ]));
+
+            // Row 1: Expiration (cycle)
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 1), Style::default().fg(GREEN)),
+                Span::styled("Expiration      ", Style::default().fg(if *selected == 1 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(format!("< {} >", expiry.as_str()), Style::default().fg(TEXT_SECONDARY)),
+            ]));
+
+            // Row 2: Custom expiration (only if Custom selected)
+            if *expiry == ExpiryOption::Custom {
+                let custom_editing = *editing && *selected == 2;
+                lines.push(Line::from(vec![
+                    Span::styled(marker(*selected == 2), Style::default().fg(GREEN)),
+                    Span::styled("  Custom        ", Style::default().fg(if *selected == 2 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                    Span::styled(
+                        if expiry_custom.is_empty() && !custom_editing {
+                            "(e.g., 30d, 1w)".to_string()
+                        } else {
+                            format!("{}{}", expiry_custom, cursor(custom_editing))
+                        },
+                        Style::default().fg(if custom_editing { GREEN } else { TEXT_SECONDARY })
+                    ),
+                ]));
+            }
+
+            // Resources section header
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled("── Resources ──", Style::default().fg(TEXT_MUTED))));
+
+            // Row 3: Basins scope
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 3), Style::default().fg(GREEN)),
+                Span::styled("Basins          ", Style::default().fg(if *selected == 3 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(format!("< {} >", basins_scope.as_str()), Style::default().fg(TEXT_SECONDARY)),
+            ]));
+
+            // Row 4: Basins value (only if Prefix/Exact)
+            if matches!(basins_scope, ScopeOption::Prefix | ScopeOption::Exact) {
+                let basins_editing = *editing && *selected == 4;
+                lines.push(Line::from(vec![
+                    Span::styled(marker(*selected == 4), Style::default().fg(GREEN)),
+                    Span::styled("  Pattern       ", Style::default().fg(if *selected == 4 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                    Span::styled(
+                        if basins_value.is_empty() && !basins_editing {
+                            "(enter pattern)".to_string()
+                        } else {
+                            format!("{}{}", basins_value, cursor(basins_editing))
+                        },
+                        Style::default().fg(if basins_editing { GREEN } else { TEXT_SECONDARY })
+                    ),
+                ]));
+            }
+
+            // Row 5: Streams scope
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 5), Style::default().fg(GREEN)),
+                Span::styled("Streams         ", Style::default().fg(if *selected == 5 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(format!("< {} >", streams_scope.as_str()), Style::default().fg(TEXT_SECONDARY)),
+            ]));
+
+            // Row 6: Streams value (only if Prefix/Exact)
+            if matches!(streams_scope, ScopeOption::Prefix | ScopeOption::Exact) {
+                let streams_editing = *editing && *selected == 6;
+                lines.push(Line::from(vec![
+                    Span::styled(marker(*selected == 6), Style::default().fg(GREEN)),
+                    Span::styled("  Pattern       ", Style::default().fg(if *selected == 6 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                    Span::styled(
+                        if streams_value.is_empty() && !streams_editing {
+                            "(enter pattern)".to_string()
+                        } else {
+                            format!("{}{}", streams_value, cursor(streams_editing))
+                        },
+                        Style::default().fg(if streams_editing { GREEN } else { TEXT_SECONDARY })
+                    ),
+                ]));
+            }
+
+            // Row 7: Access Tokens scope
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 7), Style::default().fg(GREEN)),
+                Span::styled("Access Tokens   ", Style::default().fg(if *selected == 7 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(format!("< {} >", tokens_scope.as_str()), Style::default().fg(TEXT_SECONDARY)),
+            ]));
+
+            // Row 8: Tokens value (only if Prefix/Exact)
+            if matches!(tokens_scope, ScopeOption::Prefix | ScopeOption::Exact) {
+                let tokens_editing = *editing && *selected == 8;
+                lines.push(Line::from(vec![
+                    Span::styled(marker(*selected == 8), Style::default().fg(GREEN)),
+                    Span::styled("  Pattern       ", Style::default().fg(if *selected == 8 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                    Span::styled(
+                        if tokens_value.is_empty() && !tokens_editing {
+                            "(enter pattern)".to_string()
+                        } else {
+                            format!("{}{}", tokens_value, cursor(tokens_editing))
+                        },
+                        Style::default().fg(if tokens_editing { GREEN } else { TEXT_SECONDARY })
+                    ),
+                ]));
+            }
+
+            // Operations section header
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled("── Operations ──", Style::default().fg(TEXT_MUTED))));
+
+            // Row 9-10: Account operations
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 9), Style::default().fg(GREEN)),
+                Span::styled(format!("{} ", checkbox(*account_read)), Style::default().fg(if *account_read { GREEN } else { TEXT_MUTED })),
+                Span::styled("Account Read   ", Style::default().fg(if *selected == 9 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(marker(*selected == 10), Style::default().fg(GREEN)),
+                Span::styled(format!("{} ", checkbox(*account_write)), Style::default().fg(if *account_write { GREEN } else { TEXT_MUTED })),
+                Span::styled("Write", Style::default().fg(if *selected == 10 { TEXT_PRIMARY } else { TEXT_MUTED })),
+            ]));
+
+            // Row 11-12: Basin operations
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 11), Style::default().fg(GREEN)),
+                Span::styled(format!("{} ", checkbox(*basin_read)), Style::default().fg(if *basin_read { GREEN } else { TEXT_MUTED })),
+                Span::styled("Basin Read     ", Style::default().fg(if *selected == 11 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(marker(*selected == 12), Style::default().fg(GREEN)),
+                Span::styled(format!("{} ", checkbox(*basin_write)), Style::default().fg(if *basin_write { GREEN } else { TEXT_MUTED })),
+                Span::styled("Write", Style::default().fg(if *selected == 12 { TEXT_PRIMARY } else { TEXT_MUTED })),
+            ]));
+
+            // Row 13-14: Stream operations
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 13), Style::default().fg(GREEN)),
+                Span::styled(format!("{} ", checkbox(*stream_read)), Style::default().fg(if *stream_read { GREEN } else { TEXT_MUTED })),
+                Span::styled("Stream Read    ", Style::default().fg(if *selected == 13 { TEXT_PRIMARY } else { TEXT_MUTED })),
+                Span::styled(marker(*selected == 14), Style::default().fg(GREEN)),
+                Span::styled(format!("{} ", checkbox(*stream_write)), Style::default().fg(if *stream_write { GREEN } else { TEXT_MUTED })),
+                Span::styled("Write", Style::default().fg(if *selected == 14 { TEXT_PRIMARY } else { TEXT_MUTED })),
+            ]));
+
+            // Options section
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled("── Options ──", Style::default().fg(TEXT_MUTED))));
+
+            // Row 15: Auto-prefix streams
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 15), Style::default().fg(GREEN)),
+                Span::styled(format!("{} ", checkbox(*auto_prefix_streams)), Style::default().fg(if *auto_prefix_streams { GREEN } else { TEXT_MUTED })),
+                Span::styled("Auto-prefix streams", Style::default().fg(if *selected == 15 { TEXT_PRIMARY } else { TEXT_MUTED })),
+            ]));
+
+            lines.push(Line::from(""));
+
+            // Row 16: Submit button
+            let can_submit = !id.is_empty();
+            let (btn_fg, btn_bg) = if *selected == 16 && can_submit {
+                (BG_DARK, SUCCESS)
+            } else {
+                (if can_submit { SUCCESS } else { TEXT_MUTED }, BG_PANEL)
+            };
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 16), Style::default().fg(GREEN)),
+                Span::styled(" ▶ ISSUE TOKEN ", Style::default().fg(btn_fg).bg(btn_bg).bold()),
+            ]));
+
+            (
+                " Issue Access Token ",
+                lines,
+                "↑↓ nav  ←→ cycle  space toggle  ⏎ edit/submit  esc",
+            )
+        }
+
+        InputMode::ConfirmRevokeToken { token_id } => (
+            " Revoke Access Token ",
+            vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Revoke token ", Style::default().fg(TEXT_SECONDARY)),
+                    Span::styled(token_id, Style::default().fg(ERROR).bold()),
+                    Span::styled("?", Style::default().fg(TEXT_SECONDARY)),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("The token will be immediately invalidated.", Style::default().fg(TEXT_MUTED)),
+                ]),
+                Line::from(vec![
+                    Span::styled("This action cannot be undone.", Style::default().fg(ERROR)),
+                ]),
+            ],
+            "y confirm  n/esc cancel",
+        ),
+
+        InputMode::ShowIssuedToken { token } => (
+            " Access Token Issued ",
+            vec![
+                Line::from(""),
+                Line::from(Span::styled("Copy this token now - it won't be shown again!", Style::default().fg(WARNING).bold())),
+                Line::from(""),
+                Line::from(Span::styled(token, Style::default().fg(GREEN))),
+                Line::from(""),
+            ],
+            "press any key to dismiss",
+        ),
     };
 
     let area = centered_rect(55, 85, f.area());
