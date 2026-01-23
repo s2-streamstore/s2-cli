@@ -12,7 +12,7 @@ use crate::cli::{CreateBasinArgs, CreateStreamArgs, IssueAccessTokenArgs, ListAc
 use crate::error::CliError;
 use crate::ops;
 use crate::record_format::{RecordFormat, RecordsOut};
-use crate::types::{BasinConfig, Operation, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass, StreamConfig, TimestampingMode};
+use crate::types::{BasinConfig, Operation, RetentionPolicy, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass, StreamConfig, TimestampingConfig, TimestampingMode};
 
 use super::event::{BasinConfigInfo, Event, StreamConfigInfo};
 use super::ui;
@@ -208,7 +208,21 @@ pub enum InputMode {
     /// Not in input mode
     Normal,
     /// Creating a new basin
-    CreateBasin { input: String },
+    CreateBasin {
+        name: String,
+        // Basin-level settings
+        create_stream_on_append: bool,
+        create_stream_on_read: bool,
+        // Default stream config
+        storage_class: Option<StorageClass>,
+        retention_policy: RetentionPolicyOption,
+        retention_age_input: String,
+        timestamping_mode: Option<TimestampingMode>,
+        timestamping_uncapped: bool,
+        // UI state
+        selected: usize,
+        editing: bool,
+    },
     /// Creating a new stream
     CreateStream { basin: BasinName, input: String },
     /// Confirming basin deletion
@@ -557,6 +571,48 @@ pub struct App {
     pub show_help: bool,
     pub input_mode: InputMode,
     should_quit: bool,
+}
+
+/// Build a basin config from form values
+fn build_basin_config(
+    create_stream_on_append: bool,
+    create_stream_on_read: bool,
+    storage_class: Option<StorageClass>,
+    retention_policy: RetentionPolicyOption,
+    retention_age_input: String,
+    timestamping_mode: Option<TimestampingMode>,
+    timestamping_uncapped: bool,
+) -> BasinConfig {
+    // Parse retention policy
+    let retention = match retention_policy {
+        RetentionPolicyOption::Infinite => None,
+        RetentionPolicyOption::Age => {
+            humantime::parse_duration(&retention_age_input)
+                .ok()
+                .map(RetentionPolicy::Age)
+        }
+    };
+
+    // Build timestamping config if specified
+    let timestamping = if timestamping_mode.is_some() || timestamping_uncapped {
+        Some(TimestampingConfig {
+            timestamping_mode,
+            timestamping_uncapped: if timestamping_uncapped { Some(true) } else { None },
+        })
+    } else {
+        None
+    };
+
+    BasinConfig {
+        default_stream_config: StreamConfig {
+            storage_class,
+            retention_policy: retention,
+            timestamping,
+            delete_on_empty: None,
+        },
+        create_stream_on_append,
+        create_stream_on_read,
+    }
 }
 
 impl App {
@@ -1290,27 +1346,174 @@ impl App {
         match &mut self.input_mode {
             InputMode::Normal => {}
 
-            InputMode::CreateBasin { input } => {
-                match key.code {
-                    KeyCode::Esc => {
-                        self.input_mode = InputMode::Normal;
-                    }
-                    KeyCode::Enter => {
-                        if !input.is_empty() {
-                            let name = input.clone();
-                            self.create_basin(name, tx.clone());
+            InputMode::CreateBasin {
+                name,
+                create_stream_on_append,
+                create_stream_on_read,
+                storage_class,
+                retention_policy,
+                retention_age_input,
+                timestamping_mode,
+                timestamping_uncapped,
+                selected,
+                editing,
+            } => {
+                // Form fields:
+                // 0: Name (text)
+                // 1: Storage Class (cycle: None/Standard/Express)
+                // 2: Retention Policy (cycle: Infinite/Age)
+                // 3: Retention Age (text, only if Age)
+                // 4: Timestamping Mode (cycle: None/ClientPrefer/ClientRequire/Arrival)
+                // 5: Timestamping Uncapped (toggle)
+                // 6: Create Stream On Append (toggle)
+                // 7: Create Stream On Read (toggle)
+                // 8: Create button
+                const FIELD_COUNT: usize = 9;
+
+                if *editing {
+                    // Text editing mode
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Enter => {
+                            *editing = false;
                         }
-                    }
-                    KeyCode::Backspace => {
-                        input.pop();
-                    }
-                    KeyCode::Char(c) => {
-                        // Basin names: lowercase letters, numbers, hyphens
-                        if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' {
-                            input.push(c);
+                        KeyCode::Backspace => {
+                            if *selected == 0 {
+                                name.pop();
+                            } else if *selected == 3 {
+                                retention_age_input.pop();
+                            }
                         }
+                        KeyCode::Char(c) => {
+                            if *selected == 0 {
+                                // Basin names: lowercase letters, numbers, hyphens
+                                if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' {
+                                    name.push(c);
+                                }
+                            } else if *selected == 3 {
+                                // Retention age: alphanumeric for duration parsing
+                                if c.is_ascii_alphanumeric() {
+                                    retention_age_input.push(c);
+                                }
+                            }
+                        }
+                        _ => {}
                     }
-                    _ => {}
+                } else {
+                    match key.code {
+                        KeyCode::Esc => {
+                            self.input_mode = InputMode::Normal;
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if *selected > 0 {
+                                *selected -= 1;
+                                // Skip retention age if not using Age policy
+                                if *selected == 3 && *retention_policy != RetentionPolicyOption::Age {
+                                    *selected = 2;
+                                }
+                            }
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if *selected < FIELD_COUNT - 1 {
+                                *selected += 1;
+                                // Skip retention age if not using Age policy
+                                if *selected == 3 && *retention_policy != RetentionPolicyOption::Age {
+                                    *selected = 4;
+                                }
+                            }
+                        }
+                        KeyCode::Enter => {
+                            match *selected {
+                                0 => *editing = true, // Edit name
+                                3 => {
+                                    if *retention_policy == RetentionPolicyOption::Age {
+                                        *editing = true; // Edit retention age
+                                    }
+                                }
+                                8 => {
+                                    // Create button - validate and submit
+                                    if name.len() >= 8 {
+                                        // Extract all values to avoid borrow conflict
+                                        let basin_name = name.clone();
+                                        let csoa = *create_stream_on_append;
+                                        let csor = *create_stream_on_read;
+                                        let sc = storage_class.clone();
+                                        let rp = retention_policy.clone();
+                                        let rai = retention_age_input.clone();
+                                        let tm = timestamping_mode.clone();
+                                        let tu = *timestamping_uncapped;
+
+                                        let config = build_basin_config(csoa, csor, sc, rp, rai, tm, tu);
+                                        self.create_basin_with_config(basin_name, config, tx.clone());
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        KeyCode::Char(' ') => {
+                            // Toggle for boolean fields
+                            match *selected {
+                                5 => *timestamping_uncapped = !*timestamping_uncapped,
+                                6 => *create_stream_on_append = !*create_stream_on_append,
+                                7 => *create_stream_on_read = !*create_stream_on_read,
+                                _ => {}
+                            }
+                        }
+                        KeyCode::Left | KeyCode::Char('h') => {
+                            // Cycle left for enum fields
+                            match *selected {
+                                1 => {
+                                    *storage_class = match storage_class {
+                                        None => Some(StorageClass::Express),
+                                        Some(StorageClass::Standard) => None,
+                                        Some(StorageClass::Express) => Some(StorageClass::Standard),
+                                    };
+                                }
+                                2 => {
+                                    *retention_policy = match retention_policy {
+                                        RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
+                                        RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
+                                    };
+                                }
+                                4 => {
+                                    *timestamping_mode = match timestamping_mode {
+                                        None => Some(TimestampingMode::Arrival),
+                                        Some(TimestampingMode::ClientPrefer) => None,
+                                        Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::ClientPrefer),
+                                        Some(TimestampingMode::Arrival) => Some(TimestampingMode::ClientRequire),
+                                    };
+                                }
+                                _ => {}
+                            }
+                        }
+                        KeyCode::Right | KeyCode::Char('l') => {
+                            // Cycle right for enum fields
+                            match *selected {
+                                1 => {
+                                    *storage_class = match storage_class {
+                                        None => Some(StorageClass::Standard),
+                                        Some(StorageClass::Standard) => Some(StorageClass::Express),
+                                        Some(StorageClass::Express) => None,
+                                    };
+                                }
+                                2 => {
+                                    *retention_policy = match retention_policy {
+                                        RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
+                                        RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
+                                    };
+                                }
+                                4 => {
+                                    *timestamping_mode = match timestamping_mode {
+                                        None => Some(TimestampingMode::ClientPrefer),
+                                        Some(TimestampingMode::ClientPrefer) => Some(TimestampingMode::ClientRequire),
+                                        Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::Arrival),
+                                        Some(TimestampingMode::Arrival) => None,
+                                    };
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
 
@@ -2127,7 +2330,18 @@ impl App {
                 self.load_basins(tx);
             }
             KeyCode::Char('c') => {
-                self.input_mode = InputMode::CreateBasin { input: String::new() };
+                self.input_mode = InputMode::CreateBasin {
+                    name: String::new(),
+                    create_stream_on_append: false,
+                    create_stream_on_read: false,
+                    storage_class: None,
+                    retention_policy: RetentionPolicyOption::Infinite,
+                    retention_age_input: "7d".to_string(),
+                    timestamping_mode: None,
+                    timestamping_uncapped: false,
+                    selected: 0,
+                    editing: false,
+                };
             }
             KeyCode::Char('d') => {
                 if let Some(basin) = filtered.get(state.selected) {
@@ -2580,7 +2794,8 @@ impl App {
         });
     }
 
-    fn create_basin(&mut self, name: String, tx: mpsc::UnboundedSender<Event>) {
+    fn create_basin_with_config(&mut self, name: String, config: BasinConfig, tx: mpsc::UnboundedSender<Event>) {
+        self.input_mode = InputMode::Normal;
         let s2 = self.s2.clone();
         let tx_refresh = tx.clone();
         tokio::spawn(async move {
@@ -2594,11 +2809,7 @@ impl App {
             };
             let args = CreateBasinArgs {
                 basin: S2BasinUri(basin_name),
-                config: BasinConfig {
-                    default_stream_config: StreamConfig::default(),
-                    create_stream_on_append: false,
-                    create_stream_on_read: false,
-                },
+                config,
             };
             match ops::create_basin(&s2, args).await {
                 Ok(info) => {

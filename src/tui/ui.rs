@@ -99,6 +99,9 @@ pub fn draw(f: &mut Frame, app: &App) {
 }
 
 fn draw_splash(f: &mut Frame, area: Rect) {
+    // Draw aurora background effect
+    draw_aurora_background(f, area);
+
     // S2 logo
     let logo = vec![
         "   █████████████████████████    ",
@@ -152,6 +155,51 @@ fn draw_splash(f: &mut Frame, area: Rect) {
     let centered_area = Rect::new(area.x, y, area.width, content_height);
     let logo_widget = Paragraph::new(lines).alignment(Alignment::Center);
     f.render_widget(logo_widget, centered_area);
+}
+
+/// Draw a subtle aurora/gradient background effect
+fn draw_aurora_background(f: &mut Frame, area: Rect) {
+    let width = area.width as f64;
+    let height = area.height as f64;
+
+    for row in 0..area.height {
+        let mut spans: Vec<Span> = Vec::new();
+        for col in 0..area.width {
+            // Normalize coordinates
+            let x = col as f64 / width;
+            let y = row as f64 / height;
+
+            // Create aurora effect - subtle glow from bottom-right and center
+            // Distance from bottom-right corner
+            let dist_br = ((x - 0.8).powi(2) + (y - 0.9).powi(2)).sqrt();
+            // Distance from center-bottom
+            let dist_cb = ((x - 0.5).powi(2) + (y - 0.85).powi(2)).sqrt();
+
+            // Aurora intensity (stronger near bottom)
+            let intensity_br = (1.0 - dist_br * 1.5).max(0.0) * 0.4;
+            let intensity_cb = (1.0 - dist_cb * 1.8).max(0.0) * 0.3;
+            let intensity = (intensity_br + intensity_cb).min(1.0);
+
+            // Base dark color with subtle blue/teal tint
+            let base_r = 8;
+            let base_g = 12;
+            let base_b = 18;
+
+            // Aurora colors (teal/cyan)
+            let aurora_r = 0;
+            let aurora_g = 40;
+            let aurora_b = 60;
+
+            let r = base_r + ((aurora_r - base_r as i32) as f64 * intensity) as u8;
+            let g = base_g + ((aurora_g - base_g as i32) as f64 * intensity) as u8;
+            let b = base_b + ((aurora_b - base_b as i32) as f64 * intensity) as u8;
+
+            spans.push(Span::styled(" ", Style::default().bg(Color::Rgb(r, g, b))));
+        }
+        let line = Line::from(spans);
+        let row_area = Rect::new(area.x, area.y + row, area.width, 1);
+        f.render_widget(Paragraph::new(line), row_area);
+    }
 }
 
 fn draw_tab_bar(f: &mut Frame, area: Rect, current_tab: Tab) {
@@ -426,38 +474,23 @@ fn is_token_op(op: &s2_sdk::types::Operation) -> bool {
 fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
     use s2_sdk::types::Metric;
 
-    // Layout: Title, Category tabs, Sparkline, Stats, Bar chart
+    // Layout: Title+tabs, Stats header, Main graph area, Timeline
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Title
-            Constraint::Length(3), // Category tabs or info
-            Constraint::Length(5), // Sparkline graph
-            Constraint::Length(4), // Stats summary
-            Constraint::Min(1),    // Bar chart
+            Constraint::Length(3),  // Title with tabs
+            Constraint::Length(3),  // Stats header row
+            Constraint::Min(12),    // Main graph (area chart)
+            Constraint::Length(6),  // Timeline (scrollable)
         ])
         .split(area);
 
-    // === Title ===
+    // === Title with integrated category tabs ===
     let title = match &state.metrics_type {
-        MetricsType::Basin { basin_name } => format!(" Basin Metrics: {} ", basin_name),
-        MetricsType::Stream { basin_name, stream_name } => format!(" Stream Metrics: {}/{} ", basin_name, stream_name),
+        MetricsType::Basin { basin_name } => basin_name.to_string(),
+        MetricsType::Stream { basin_name, stream_name } => format!("{}/{}", basin_name, stream_name),
     };
 
-    let title_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(GREEN))
-        .style(Style::default().bg(BG_PANEL));
-
-    let title_para = Paragraph::new(Line::from(Span::styled(
-        title,
-        Style::default().fg(TEXT_PRIMARY).bold(),
-    )))
-    .block(title_block)
-    .alignment(Alignment::Center);
-    f.render_widget(title_para, chunks[0]);
-
-    // === Category tabs (only for basin metrics) ===
     if matches!(state.metrics_type, MetricsType::Basin { .. }) {
         let categories = [
             MetricCategory::Storage,
@@ -467,41 +500,49 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
             MetricCategory::ReadThroughput,
         ];
 
-        let mut tabs: Vec<Span> = vec![
-            Span::styled(" ◀ ", Style::default().fg(TEXT_MUTED)),
+        let mut title_spans: Vec<Span> = vec![
+            Span::styled(" [ ", Style::default().fg(BORDER)),
+            Span::styled(&title, Style::default().fg(GREEN).bold()),
+            Span::styled(" ]  ", Style::default().fg(BORDER)),
         ];
-        for cat in &categories {
+
+        for (i, cat) in categories.iter().enumerate() {
+            if i > 0 {
+                title_spans.push(Span::styled(" | ", Style::default().fg(BORDER)));
+            }
             let style = if *cat == state.selected_category {
                 Style::default().fg(BG_DARK).bg(GREEN).bold()
             } else {
                 Style::default().fg(TEXT_MUTED)
             };
-            tabs.push(Span::styled(format!(" {} ", cat.as_str()), style));
+            title_spans.push(Span::styled(format!(" {} ", cat.as_str()), style));
         }
-        tabs.push(Span::styled(" ▶ ", Style::default().fg(TEXT_MUTED)));
 
-        let tab_line = Line::from(tabs);
-        let tabs_block = Block::default()
+        let title_block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(BORDER))
-            .title(Line::from(Span::styled(" ←/→ to switch ", Style::default().fg(TEXT_MUTED))))
+            .border_style(Style::default().fg(GREEN))
+            .title_bottom(Line::from(Span::styled(" ←/→ switch category ", Style::default().fg(TEXT_MUTED))))
             .style(Style::default().bg(BG_PANEL));
 
-        let tabs_para = Paragraph::new(tab_line)
-            .block(tabs_block)
+        let title_para = Paragraph::new(Line::from(title_spans))
+            .block(title_block)
             .alignment(Alignment::Center);
-        f.render_widget(tabs_para, chunks[1]);
+        f.render_widget(title_para, chunks[0]);
     } else {
-        let info = Line::from(vec![
-            Span::styled(" 📈 ", Style::default().fg(GREEN)),
-            Span::styled("Storage over last 24 hours", Style::default().fg(TEXT_PRIMARY)),
-        ]);
-        let info_block = Block::default()
+        let title_block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(BORDER))
+            .border_style(Style::default().fg(GREEN))
             .style(Style::default().bg(BG_PANEL));
-        let info_para = Paragraph::new(info).block(info_block).alignment(Alignment::Center);
-        f.render_widget(info_para, chunks[1]);
+
+        let title_para = Paragraph::new(Line::from(vec![
+            Span::styled(" [ ", Style::default().fg(BORDER)),
+            Span::styled(&title, Style::default().fg(GREEN).bold()),
+            Span::styled(" ]  ", Style::default().fg(BORDER)),
+            Span::styled("Storage (24h)", Style::default().fg(TEXT_PRIMARY)),
+        ]))
+        .block(title_block)
+        .alignment(Alignment::Center);
+        f.render_widget(title_para, chunks[0]);
     }
 
     // === Loading / Empty states ===
@@ -512,16 +553,15 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
             .style(Style::default().bg(BG_DARK));
         let loading = Paragraph::new(vec![
             Line::from(""),
-            Line::from(Span::styled("⏳ Loading metrics...", Style::default().fg(TEXT_MUTED))),
+            Line::from(Span::styled("Loading metrics...", Style::default().fg(TEXT_MUTED))),
         ])
         .block(loading_block)
         .alignment(Alignment::Center);
 
-        // Render loading in remaining chunks
         let remaining = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(1)])
-            .split(chunks[2]);
+            .split(chunks[1]);
         f.render_widget(loading, remaining[0]);
         return;
     }
@@ -533,9 +573,9 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
             .style(Style::default().bg(BG_DARK));
         let empty = Paragraph::new(vec![
             Line::from(""),
-            Line::from(Span::styled("📭 No metrics data available", Style::default().fg(TEXT_MUTED))),
+            Line::from(Span::styled("No metrics data available", Style::default().fg(TEXT_MUTED))),
             Line::from(""),
-            Line::from(Span::styled("Try writing some data to the stream first", Style::default().fg(TEXT_MUTED))),
+            Line::from(Span::styled("Try writing some data first", Style::default().fg(TEXT_MUTED))),
         ])
         .block(empty_block)
         .alignment(Alignment::Center);
@@ -543,7 +583,7 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
         let remaining = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(1)])
-            .split(chunks[2]);
+            .split(chunks[1]);
         f.render_widget(empty, remaining[0]);
         return;
     }
@@ -581,30 +621,7 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
     // Sort by timestamp
     all_values.sort_by_key(|(ts, _)| *ts);
 
-    // === Sparkline graph ===
-    let sparkline_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(BORDER))
-        .title(Line::from(vec![
-            Span::styled(" ", Style::default()),
-            Span::styled("Trend", Style::default().fg(TEXT_PRIMARY).bold()),
-            Span::styled(" ", Style::default()),
-        ]))
-        .style(Style::default().bg(BG_DARK));
-
-    let sparkline_width = chunks[2].width.saturating_sub(4) as usize;
-    let sparkline = render_sparkline(&all_values, sparkline_width);
-
-    let sparkline_para = Paragraph::new(vec![
-        Line::from(""),
-        Line::from(Span::styled(sparkline, Style::default().fg(GREEN))),
-        Line::from(""),
-    ])
-    .block(sparkline_block)
-    .alignment(Alignment::Center);
-    f.render_widget(sparkline_para, chunks[2]);
-
-    // === Stats summary ===
+    // Calculate stats
     let values_only: Vec<f64> = all_values.iter().map(|(_, v)| *v).collect();
     let min_val = values_only.iter().cloned().fold(f64::MAX, f64::min);
     let max_val = values_only.iter().cloned().fold(f64::MIN, f64::max);
@@ -614,99 +631,272 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
         0.0
     };
     let latest_val = values_only.last().cloned().unwrap_or(0.0);
+    let first_val = values_only.first().cloned().unwrap_or(0.0);
 
+    // Calculate change for trend indicator
+    let change = if first_val > 0.0 {
+        ((latest_val - first_val) / first_val) * 100.0
+    } else if latest_val > 0.0 {
+        100.0
+    } else {
+        0.0
+    };
+
+    // Time range
+    let first_ts = all_values.first().map(|(ts, _)| *ts).unwrap_or(0);
+    let last_ts = all_values.last().map(|(ts, _)| *ts).unwrap_or(0);
+
+    // === Stats header row ===
     let stats_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(BORDER))
-        .title(Line::from(vec![
-            Span::styled(" ", Style::default()),
-            Span::styled(&metric_name, Style::default().fg(TEXT_PRIMARY).bold()),
-            Span::styled(" ", Style::default()),
-        ]))
         .style(Style::default().bg(BG_PANEL));
 
-    let stats_lines = vec![
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("  Current: ", Style::default().fg(TEXT_MUTED)),
-            Span::styled(format_metric_value_f64(latest_val, metric_unit), Style::default().fg(GREEN).bold()),
-            Span::styled("    Min: ", Style::default().fg(TEXT_MUTED)),
-            Span::styled(format_metric_value_f64(min_val, metric_unit), Style::default().fg(YELLOW)),
-            Span::styled("    Max: ", Style::default().fg(TEXT_MUTED)),
-            Span::styled(format_metric_value_f64(max_val, metric_unit), Style::default().fg(YELLOW)),
-            Span::styled("    Avg: ", Style::default().fg(TEXT_MUTED)),
-            Span::styled(format_metric_value_f64(avg_val, metric_unit), Style::default().fg(TEXT_SECONDARY)),
-        ]),
-    ];
+    let stats_inner = stats_block.inner(chunks[1]);
+    f.render_widget(stats_block, chunks[1]);
 
-    let stats_para = Paragraph::new(stats_lines).block(stats_block);
-    f.render_widget(stats_para, chunks[3]);
+    // Trend indicator
+    let (trend_arrow, trend_color) = if change > 1.0 {
+        ("^", Color::Rgb(34, 197, 94))
+    } else if change < -1.0 {
+        ("v", Color::Rgb(239, 68, 68))
+    } else {
+        ("=", TEXT_MUTED)
+    };
+    let trend_text = if change.abs() > 0.1 {
+        format!("{:+.1}%", change)
+    } else {
+        "stable".to_string()
+    };
 
-    // === Bar chart ===
+    let stats_line = Line::from(vec![
+        Span::styled(" NOW ", Style::default().fg(BG_DARK).bg(GREEN).bold()),
+        Span::styled(format!(" {} ", format_metric_value_f64(latest_val, metric_unit)), Style::default().fg(GREEN).bold()),
+        Span::styled(trend_arrow, Style::default().fg(trend_color).bold()),
+        Span::styled(format!("{} ", trend_text), Style::default().fg(trend_color)),
+        Span::styled("  |  ", Style::default().fg(BORDER)),
+        Span::styled("min ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(format_metric_value_f64(min_val, metric_unit), Style::default().fg(Color::Rgb(96, 165, 250))),
+        Span::styled("  max ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(format_metric_value_f64(max_val, metric_unit), Style::default().fg(Color::Rgb(251, 191, 36))),
+        Span::styled("  avg ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(format_metric_value_f64(avg_val, metric_unit), Style::default().fg(Color::Rgb(167, 139, 250))),
+        Span::styled(format!("  |  {} pts", all_values.len()), Style::default().fg(TEXT_MUTED)),
+    ]);
+    let stats_para = Paragraph::new(stats_line).alignment(Alignment::Center);
+    f.render_widget(stats_para, stats_inner);
+
+    // === Main Area Chart ===
     let chart_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(BORDER))
+        .border_style(Style::default().fg(GREEN))
         .title(Line::from(vec![
             Span::styled(" ", Style::default()),
-            Span::styled("Timeline (scroll with j/k)", Style::default().fg(TEXT_MUTED)),
+            Span::styled(&metric_name, Style::default().fg(GREEN).bold()),
             Span::styled(" ", Style::default()),
         ]))
         .style(Style::default().bg(BG_DARK));
 
-    let chart_inner = chart_block.inner(chunks[4]);
-    f.render_widget(chart_block, chunks[4]);
+    let chart_inner = chart_block.inner(chunks[2]);
+    f.render_widget(chart_block, chunks[2]);
 
-    // Render bar chart
-    let chart_width = chart_inner.width.saturating_sub(32) as usize;
-    let visible_height = chart_inner.height as usize;
+    // Render the area chart
+    render_area_chart(f, chart_inner, &all_values, min_val, max_val, metric_unit, first_ts, last_ts);
+
+    // === Timeline (scrollable detail) ===
+    let timeline_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![
+            Span::styled(" Data Points ", Style::default().fg(TEXT_PRIMARY)),
+            Span::styled(format!("[{}/{}]", state.scroll + 1, all_values.len()), Style::default().fg(TEXT_MUTED)),
+        ]))
+        .title_bottom(Line::from(Span::styled(" j/k scroll ", Style::default().fg(TEXT_MUTED))))
+        .style(Style::default().bg(BG_DARK));
+
+    let timeline_inner = timeline_block.inner(chunks[3]);
+    f.render_widget(timeline_block, chunks[3]);
+
+    // Compact timeline bars
+    let bar_width = timeline_inner.width.saturating_sub(26) as usize;
+    let visible_rows = timeline_inner.height as usize;
 
     let bars: Vec<Line> = all_values
         .iter()
         .skip(state.scroll)
-        .take(visible_height)
+        .take(visible_rows)
         .map(|(ts, value)| {
             let bar_len = if max_val > 0.0 {
-                ((*value / max_val) * chart_width as f64) as usize
+                ((*value / max_val) * bar_width as f64) as usize
             } else {
                 0
             };
-
-            // Gradient bar with different characters based on value intensity
             let intensity = if max_val > 0.0 { *value / max_val } else { 0.0 };
-            let bar_char = if intensity > 0.8 { "█" } else if intensity > 0.5 { "▓" } else if intensity > 0.2 { "▒" } else { "░" };
-            let bar = bar_char.repeat(bar_len);
+
+            // Gradient color based on intensity
+            let bar_color = intensity_to_color(intensity);
+
+            let bar: String = (0..bar_len).map(|i| {
+                let pos = i as f64 / bar_len.max(1) as f64;
+                if pos > 0.9 { '█' } else if pos > 0.7 { '▓' } else if pos > 0.4 { '▒' } else { '░' }
+            }).collect();
 
             let time_str = format_metric_timestamp_short(*ts);
-            let bar_color = if intensity > 0.8 {
-                GREEN
-            } else if intensity > 0.5 {
-                Color::Rgb(34, 197, 94)  // bright green
-            } else if intensity > 0.2 {
-                Color::Rgb(74, 222, 128) // lighter green
-            } else {
-                Color::Rgb(134, 239, 172) // very light green
-            };
 
             Line::from(vec![
-                Span::styled(format!(" {:>12} │", time_str), Style::default().fg(TEXT_MUTED)),
+                Span::styled(format!(" {:>8} ", time_str), Style::default().fg(TEXT_MUTED)),
                 Span::styled(bar, Style::default().fg(bar_color)),
-                Span::styled(format!(" {}", format_metric_value_f64(*value, metric_unit)), Style::default().fg(TEXT_SECONDARY)),
+                Span::styled(format!(" {:>10}", format_metric_value_f64(*value, metric_unit)), Style::default().fg(TEXT_SECONDARY)),
             ])
         })
         .collect();
 
     let bars_para = Paragraph::new(bars);
-    f.render_widget(bars_para, chart_inner);
+    f.render_widget(bars_para, timeline_inner);
 }
 
-/// Render a sparkline using Unicode block characters
-fn render_sparkline(values: &[(u32, f64)], width: usize) -> String {
+/// Convert intensity (0.0-1.0) to a green gradient color
+fn intensity_to_color(intensity: f64) -> Color {
+    if intensity > 0.8 {
+        Color::Rgb(34, 197, 94)   // bright green
+    } else if intensity > 0.6 {
+        Color::Rgb(74, 222, 128)
+    } else if intensity > 0.4 {
+        Color::Rgb(134, 239, 172)
+    } else if intensity > 0.2 {
+        Color::Rgb(187, 247, 208)
+    } else {
+        Color::Rgb(220, 252, 231) // pale green
+    }
+}
+
+/// Render a beautiful area chart with Y-axis, filled area, and X-axis
+fn render_area_chart(
+    f: &mut Frame,
+    area: Rect,
+    values: &[(u32, f64)],
+    min_val: f64,
+    max_val: f64,
+    unit: s2_sdk::types::MetricUnit,
+    first_ts: u32,
+    last_ts: u32,
+) {
+    let height = area.height.saturating_sub(1) as usize; // Leave room for X-axis
+    let y_axis_width = 10u16;
+    let width = area.width.saturating_sub(y_axis_width + 1) as usize;
+
+    if height < 2 || width < 10 {
+        return;
+    }
+
+    // Calculate value range with some padding
+    let chart_min = if min_val > 0.0 { 0.0 } else { min_val };
+    let chart_max = max_val * 1.1; // 10% headroom
+    let chart_range = chart_max - chart_min;
+
+    // Resample values to fit width
+    let values_only: Vec<f64> = values.iter().map(|(_, v)| *v).collect();
+    let step = values_only.len() as f64 / width as f64;
+
+    // Build the chart row by row (top to bottom)
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Block characters for smooth area fill
+    // Using vertical eighths: ' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'
+    let fill_chars = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+    for row in 0..height {
+        let y_frac_top = 1.0 - (row as f64 / height as f64);
+        let y_frac_bot = 1.0 - ((row + 1) as f64 / height as f64);
+
+        // Y-axis label (only on certain rows)
+        let y_label: String = if row == 0 {
+            format!("{:>9} ", format_metric_value_f64(chart_max, unit))
+        } else if row == height / 2 {
+            format!("{:>9} ", format_metric_value_f64((chart_max + chart_min) / 2.0, unit))
+        } else if row == height - 1 {
+            format!("{:>9} ", format_metric_value_f64(chart_min, unit))
+        } else {
+            "          ".to_string()
+        };
+
+        let mut spans: Vec<Span> = vec![
+            Span::styled(y_label, Style::default().fg(TEXT_MUTED)),
+        ];
+
+        // Draw each column
+        for col in 0..width {
+            let idx = ((col as f64) * step) as usize;
+            let val = values_only.get(idx).cloned().unwrap_or(0.0);
+
+            // Normalize value to chart coordinates
+            let val_norm = (val - chart_min) / chart_range;
+            let val_y = val_norm; // 0.0 = bottom, 1.0 = top
+
+            // Determine what character to draw
+            let char_and_color = if val_y >= y_frac_top {
+                // Value is above this row - full fill
+                ('█', intensity_to_color(val_norm))
+            } else if val_y > y_frac_bot {
+                // Value is within this row - partial fill
+                let fill_frac = (val_y - y_frac_bot) / (y_frac_top - y_frac_bot);
+                let char_idx = (fill_frac * 8.0) as usize;
+                (fill_chars[char_idx.min(8)], intensity_to_color(val_norm))
+            } else {
+                // Value is below this row - empty or grid
+                if col % 10 == 0 {
+                    ('·', Color::Rgb(50, 50, 50))
+                } else {
+                    (' ', BG_DARK)
+                }
+            };
+
+            spans.push(Span::styled(
+                char_and_color.0.to_string(),
+                Style::default().fg(char_and_color.1),
+            ));
+        }
+
+        lines.push(Line::from(spans));
+    }
+
+    // X-axis with time labels
+    let first_time = format_metric_timestamp_short(first_ts);
+    let last_time = format_metric_timestamp_short(last_ts);
+    let mid_ts = first_ts + (last_ts - first_ts) / 2;
+    let mid_time = format_metric_timestamp_short(mid_ts);
+
+    let x_axis_padding = " ".repeat(y_axis_width as usize);
+
+    let mut x_axis_spans = vec![
+        Span::styled(&x_axis_padding, Style::default()),
+        Span::styled(&first_time, Style::default().fg(TEXT_MUTED)),
+    ];
+
+    let remaining_after_first = width.saturating_sub(first_time.len() + mid_time.len() / 2);
+    let padding_to_mid = remaining_after_first / 2;
+    x_axis_spans.push(Span::styled(" ".repeat(padding_to_mid), Style::default()));
+    x_axis_spans.push(Span::styled(&mid_time, Style::default().fg(TEXT_MUTED)));
+
+    let remaining_after_mid = width.saturating_sub(first_time.len() + padding_to_mid + mid_time.len() + last_time.len());
+    x_axis_spans.push(Span::styled(" ".repeat(remaining_after_mid), Style::default()));
+    x_axis_spans.push(Span::styled(&last_time, Style::default().fg(TEXT_MUTED)));
+
+    lines.push(Line::from(x_axis_spans));
+
+    let chart_para = Paragraph::new(lines);
+    f.render_widget(chart_para, area);
+}
+
+/// Render a sparkline with gradient coloring (unused but kept for reference)
+#[allow(dead_code)]
+fn render_sparkline_gradient(values: &[(u32, f64)], width: usize) -> String {
     if values.is_empty() {
-        return "─".repeat(width);
+        return "-".repeat(width);
     }
 
     // Sparkline characters from lowest to highest
-    let spark_chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let spark_chars = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
     let values_only: Vec<f64> = values.iter().map(|(_, v)| *v).collect();
     let min_val = values_only.iter().cloned().fold(f64::MAX, f64::min);
@@ -722,17 +912,17 @@ fn render_sparkline(values: &[(u32, f64)], width: usize) -> String {
         let val = values_only.get(idx).cloned().unwrap_or(0.0);
 
         let normalized = if range > 0.0 {
-            ((val - min_val) / range * 7.0) as usize
+            ((val - min_val) / range).clamp(0.0, 1.0)
         } else {
-            4 // middle if no range
+            0.5
         };
 
-        sparkline.push(spark_chars[normalized.min(7)]);
+        let char_idx = (normalized * (spark_chars.len() - 1) as f64) as usize;
+        sparkline.push(spark_chars[char_idx]);
     }
 
     sparkline
 }
-
 /// Format timestamp in short form for bar chart
 fn format_metric_timestamp_short(ts: u32) -> String {
     use std::time::{Duration, UNIX_EPOCH};
@@ -2076,22 +2266,153 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
     let (title, content, hint) = match mode {
         InputMode::Normal => return,
 
-        InputMode::CreateBasin { input } => (
-            " Create Basin ",
-            vec![
+        InputMode::CreateBasin {
+            name,
+            create_stream_on_append,
+            create_stream_on_read,
+            storage_class,
+            retention_policy,
+            retention_age_input,
+            timestamping_mode,
+            timestamping_uncapped,
+            selected,
+            editing,
+        } => {
+            let cursor = |is_editing: bool| if is_editing { "▎" } else { "" };
+            let marker = |sel: bool| if sel { "▸ " } else { "  " };
+            let check = |on: bool| if on { "x" } else { " " };
+
+            // Storage class display
+            let storage_str = match storage_class {
+                None => "default",
+                Some(StorageClass::Standard) => "Standard",
+                Some(StorageClass::Express) => "Express",
+            };
+
+            // Timestamping mode display
+            let ts_mode_str = match timestamping_mode {
+                None => "default",
+                Some(TimestampingMode::ClientPrefer) => "ClientPrefer",
+                Some(TimestampingMode::ClientRequire) => "ClientRequire",
+                Some(TimestampingMode::Arrival) => "Arrival",
+            };
+
+            let name_valid = name.len() >= 8 && name.len() <= 48;
+            let name_color = if name_valid { GREEN } else if name.is_empty() { TEXT_MUTED } else { ERROR };
+
+            let mut lines = vec![
                 Line::from(""),
+                // Row 0: Name
                 Line::from(vec![
+                    Span::styled(marker(*selected == 0), Style::default().fg(GREEN)),
                     Span::styled("Name: ", Style::default().fg(TEXT_MUTED)),
-                    Span::styled(input, Style::default().fg(TEXT_PRIMARY)),
-                    Span::styled("_", Style::default().fg(GREEN)),
+                    Span::styled(name, Style::default().fg(name_color)),
+                    Span::styled(
+                        if *selected == 0 && *editing { cursor(true) } else { "" },
+                        Style::default().fg(GREEN)
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::styled("    ", Style::default()),
+                    Span::styled(
+                        if name.is_empty() {
+                            "8-48 chars: lowercase, numbers, hyphens".to_string()
+                        } else {
+                            format!("{}/48 chars", name.len())
+                        },
+                        Style::default().fg(TEXT_MUTED)
+                    ),
                 ]),
                 Line::from(""),
                 Line::from(vec![
-                    Span::styled("8-48 chars: lowercase, numbers, hyphens", Style::default().fg(TEXT_MUTED)),
+                    Span::styled("  -- Default Stream Config --", Style::default().fg(TEXT_MUTED)),
                 ]),
-            ],
-            "enter confirm  esc cancel",
-        ),
+                Line::from(""),
+                // Row 1: Storage Class
+                Line::from(vec![
+                    Span::styled(marker(*selected == 1), Style::default().fg(GREEN)),
+                    Span::styled("Storage Class: ", Style::default().fg(TEXT_MUTED)),
+                    Span::styled(format!("< {} >", storage_str), Style::default().fg(YELLOW)),
+                ]),
+                // Row 2: Retention Policy
+                Line::from(vec![
+                    Span::styled(marker(*selected == 2), Style::default().fg(GREEN)),
+                    Span::styled("Retention: ", Style::default().fg(TEXT_MUTED)),
+                    Span::styled(
+                        format!("< {} >", if *retention_policy == RetentionPolicyOption::Infinite { "Infinite" } else { "Age" }),
+                        Style::default().fg(YELLOW)
+                    ),
+                ]),
+            ];
+
+            // Row 3: Retention Age (only if Age policy)
+            if *retention_policy == RetentionPolicyOption::Age {
+                lines.push(Line::from(vec![
+                    Span::styled(marker(*selected == 3), Style::default().fg(GREEN)),
+                    Span::styled("  Age: ", Style::default().fg(TEXT_MUTED)),
+                    Span::styled(retention_age_input, Style::default().fg(TEXT_PRIMARY)),
+                    Span::styled(
+                        if *selected == 3 && *editing { cursor(true) } else { "" },
+                        Style::default().fg(GREEN)
+                    ),
+                    Span::styled("  (e.g. 7d, 30d, 1y)", Style::default().fg(TEXT_MUTED)),
+                ]));
+            }
+
+            // Row 4: Timestamping Mode
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 4), Style::default().fg(GREEN)),
+                Span::styled("Timestamping: ", Style::default().fg(TEXT_MUTED)),
+                Span::styled(format!("< {} >", ts_mode_str), Style::default().fg(YELLOW)),
+            ]));
+
+            // Row 5: Timestamping Uncapped
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 5), Style::default().fg(GREEN)),
+                Span::styled("Uncapped Timestamps: ", Style::default().fg(TEXT_MUTED)),
+                Span::styled(format!("[{}]", check(*timestamping_uncapped)), Style::default().fg(if *timestamping_uncapped { GREEN } else { TEXT_MUTED })),
+            ]));
+
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("  -- Basin Behavior --", Style::default().fg(TEXT_MUTED)),
+            ]));
+            lines.push(Line::from(""));
+
+            // Row 6: Create Stream On Append
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 6), Style::default().fg(GREEN)),
+                Span::styled("Auto-create on Append: ", Style::default().fg(TEXT_MUTED)),
+                Span::styled(format!("[{}]", check(*create_stream_on_append)), Style::default().fg(if *create_stream_on_append { GREEN } else { TEXT_MUTED })),
+            ]));
+
+            // Row 7: Create Stream On Read
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 7), Style::default().fg(GREEN)),
+                Span::styled("Auto-create on Read: ", Style::default().fg(TEXT_MUTED)),
+                Span::styled(format!("[{}]", check(*create_stream_on_read)), Style::default().fg(if *create_stream_on_read { GREEN } else { TEXT_MUTED })),
+            ]));
+
+            lines.push(Line::from(""));
+
+            // Row 8: Create button
+            let can_create = name_valid;
+            let (btn_fg, btn_bg) = if *selected == 8 && can_create {
+                (BG_DARK, GREEN)
+            } else {
+                (if can_create { GREEN } else { TEXT_MUTED }, BG_PANEL)
+            };
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 8), Style::default().fg(GREEN)),
+                Span::styled(" CREATE BASIN ", Style::default().fg(btn_fg).bg(btn_bg).bold()),
+            ]));
+
+            (
+                " Create Basin ",
+                lines,
+                "jk nav  hl cycle  space toggle  Enter edit/submit  esc",
+            )
+        }
 
         InputMode::CreateStream { basin, input } => (
             " Create Stream ",
