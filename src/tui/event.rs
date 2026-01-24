@@ -87,6 +87,9 @@ pub enum Event {
     /// Access token revoked successfully (token id)
     AccessTokenRevoked(Result<String, CliError>),
 
+    /// Account metrics loaded
+    AccountMetricsLoaded(Result<Vec<Metric>, CliError>),
+
     /// Basin metrics loaded
     BasinMetricsLoaded(Result<Vec<Metric>, CliError>),
 

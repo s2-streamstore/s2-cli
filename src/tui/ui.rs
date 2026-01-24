@@ -487,11 +487,47 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
 
     // === Title with integrated category tabs ===
     let title = match &state.metrics_type {
+        MetricsType::Account => "Account".to_string(),
         MetricsType::Basin { basin_name } => basin_name.to_string(),
         MetricsType::Stream { basin_name, stream_name } => format!("{}/{}", basin_name, stream_name),
     };
 
-    if matches!(state.metrics_type, MetricsType::Basin { .. }) {
+    if matches!(state.metrics_type, MetricsType::Account) {
+        // Account metrics have different categories
+        let categories = [
+            MetricCategory::ActiveBasins,
+            MetricCategory::AccountOps,
+        ];
+
+        let mut title_spans: Vec<Span> = vec![
+            Span::styled(" [ ", Style::default().fg(BORDER)),
+            Span::styled(&title, Style::default().fg(GREEN).bold()),
+            Span::styled(" ]  ", Style::default().fg(BORDER)),
+        ];
+
+        for (i, cat) in categories.iter().enumerate() {
+            if i > 0 {
+                title_spans.push(Span::styled(" | ", Style::default().fg(BORDER)));
+            }
+            let style = if *cat == state.selected_category {
+                Style::default().fg(BG_DARK).bg(GREEN).bold()
+            } else {
+                Style::default().fg(TEXT_MUTED)
+            };
+            title_spans.push(Span::styled(format!(" {} ", cat.as_str()), style));
+        }
+
+        let title_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(GREEN))
+            .title_bottom(Line::from(Span::styled(" ←/→ switch category ", Style::default().fg(TEXT_MUTED))))
+            .style(Style::default().bg(BG_PANEL));
+
+        let title_para = Paragraph::new(Line::from(title_spans))
+            .block(title_block)
+            .alignment(Alignment::Center);
+        f.render_widget(title_para, chunks[0]);
+    } else if matches!(state.metrics_type, MetricsType::Basin { .. }) {
         let categories = [
             MetricCategory::Storage,
             MetricCategory::AppendOps,
@@ -1933,40 +1969,10 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
 }
 
 fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
-    let hints = match &app.screen {
-        Screen::Splash => "", // Never shown
-        Screen::Basins(_) => "/ filter | jk nav | ⏎ open | M metrics | c new | e cfg | d del | r ref | ?",
-        Screen::Streams(_) => "/ filter | jk nav | ⏎ open | M metrics | c new | e cfg | d del | esc",
-        Screen::StreamDetail(_) => "t tail | r read | a append | f fence | m trim | M metrics | e cfg | esc",
-        Screen::ReadView(s) => {
-            if s.show_detail {
-                "esc/⏎ close"
-            } else if s.is_tailing {
-                "jk nav | h headers | ⇥ list | space pause | gG top/bot | esc"
-            } else {
-                "jk nav | h headers | ⇥ list | gG top/bot | esc"
-            }
-        }
-        Screen::AppendView(s) => {
-            if s.editing {
-                if s.selected == 1 {
-                    "type | ⇥ key/val | ⏎ add | esc done"
-                } else {
-                    "type | ⏎ done | esc cancel"
-                }
-            } else {
-                "jk nav | ⏎ edit/send | d del header | esc back"
-            }
-        }
-        Screen::AccessTokens(_) => "/ filter | jk nav | c issue | d revoke | r ref | ⇥ switch | ? | q",
-        Screen::MetricsView(state) => {
-            if matches!(state.metrics_type, MetricsType::Basin { .. }) {
-                "←→ category | jk scroll | r refresh | esc back | q quit"
-            } else {
-                "jk scroll | r refresh | esc back | q quit"
-            }
-        }
-    };
+    let width = area.width as usize;
+
+    // Get hints based on available width - full, medium, or compact
+    let hints = get_responsive_hints(&app.screen, width);
 
     let message_span = app
         .message
@@ -1980,18 +1986,127 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(&m.text, Style::default().fg(color))
         });
 
+    // Calculate available width for hints after message
+    let msg_len = app.message.as_ref().map(|m| m.text.len() + 2).unwrap_or(0);
+    let available = width.saturating_sub(msg_len);
+
+    // Truncate hints if needed
+    let display_hints: String = if hints.len() > available && available > 3 {
+        format!("{}...", &hints[..available.saturating_sub(3)])
+    } else {
+        hints
+    };
+
     let line = if let Some(msg) = message_span {
         Line::from(vec![
             msg,
             Span::styled("  ", Style::default()),
-            Span::styled(hints, Style::default().fg(TEXT_MUTED)),
+            Span::styled(display_hints, Style::default().fg(TEXT_MUTED)),
         ])
     } else {
-        Line::from(Span::styled(hints, Style::default().fg(TEXT_MUTED)))
+        Line::from(Span::styled(display_hints, Style::default().fg(TEXT_MUTED)))
     };
 
     let status = Paragraph::new(line);
     f.render_widget(status, area);
+}
+
+/// Get responsive hints based on screen width
+fn get_responsive_hints(screen: &Screen, width: usize) -> String {
+    // Width thresholds
+    let wide = width >= 100;
+    let medium = width >= 60;
+
+    match screen {
+        Screen::Splash => String::new(),
+        Screen::Basins(_) => {
+            if wide {
+                "/ filter | jk nav | ⏎ open | M basin metrics | A acct metrics | c new | e cfg | d del | r ref | ?".to_string()
+            } else if medium {
+                "/ | jk ⏎ | M basin | A acct | c d e r ?".to_string()
+            } else {
+                "jk ⏎ M A c d ?".to_string()
+            }
+        }
+        Screen::Streams(_) => {
+            if wide {
+                "/ filter | jk nav | ⏎ open | M metrics | c new | e cfg | d del | esc".to_string()
+            } else if medium {
+                "/ filter | jk nav | ⏎ open | M c e d | esc".to_string()
+            } else {
+                "jk ⏎ M c d esc".to_string()
+            }
+        }
+        Screen::StreamDetail(_) => {
+            if wide {
+                "t tail | r read | a append | f fence | m trim | M metrics | e cfg | esc".to_string()
+            } else if medium {
+                "t tail | r read | a append | f m M e | esc".to_string()
+            } else {
+                "t r a f m M esc".to_string()
+            }
+        }
+        Screen::ReadView(s) => {
+            if s.show_detail {
+                "esc/⏎ close".to_string()
+            } else if s.is_tailing {
+                if wide {
+                    "jk nav | h headers | ⇥ list | space pause | gG top/bot | esc".to_string()
+                } else if medium {
+                    "jk nav | h hdrs | ⇥ | space | gG | esc".to_string()
+                } else {
+                    "jk h ⇥ space gG esc".to_string()
+                }
+            } else {
+                if wide {
+                    "jk nav | h headers | ⇥ list | gG top/bot | esc".to_string()
+                } else if medium {
+                    "jk nav | h hdrs | ⇥ | gG | esc".to_string()
+                } else {
+                    "jk h ⇥ gG esc".to_string()
+                }
+            }
+        }
+        Screen::AppendView(s) => {
+            if s.editing {
+                if s.selected == 1 {
+                    "type | ⇥ key/val | ⏎ add | esc done".to_string()
+                } else {
+                    "type | ⏎ done | esc cancel".to_string()
+                }
+            } else {
+                if wide {
+                    "jk nav | ⏎ edit/send | d del header | esc back".to_string()
+                } else {
+                    "jk ⏎ edit | d del | esc".to_string()
+                }
+            }
+        }
+        Screen::AccessTokens(_) => {
+            if wide {
+                "/ filter | jk nav | c issue | d revoke | r ref | ⇥ switch | ? | q".to_string()
+            } else if medium {
+                "/ | jk | c issue | d rev | r | ⇥ | ? q".to_string()
+            } else {
+                "jk c d r ⇥ ? q".to_string()
+            }
+        }
+        Screen::MetricsView(state) => {
+            if matches!(state.metrics_type, MetricsType::Basin { .. } | MetricsType::Account) {
+                if wide {
+                    "←→ category | jk scroll | r refresh | esc back | q quit".to_string()
+                } else {
+                    "←→ cat | jk | r | esc q".to_string()
+                }
+            } else {
+                if wide {
+                    "jk scroll | r refresh | esc back | q quit".to_string()
+                } else {
+                    "jk | r | esc q".to_string()
+                }
+            }
+        }
+    }
 }
 
 fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
@@ -2032,6 +2147,14 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
             Line::from(vec![
                 Span::styled("    r ", Style::default().fg(GREEN).bold()),
                 Span::styled("Refresh", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    M ", Style::default().fg(GREEN).bold()),
+                Span::styled("Basin metrics", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    A ", Style::default().fg(GREEN).bold()),
+                Span::styled("Account metrics", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(vec![
                 Span::styled("  tab ", Style::default().fg(GREEN).bold()),
@@ -2112,6 +2235,10 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
             Line::from(vec![
                 Span::styled("    e ", Style::default().fg(GREEN).bold()),
                 Span::styled("Reconfigure stream", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    M ", Style::default().fg(GREEN).bold()),
+                Span::styled("Stream metrics", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(vec![
                 Span::styled("  esc ", Style::default().fg(GREEN).bold()),
@@ -2275,6 +2402,8 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             retention_age_input,
             timestamping_mode,
             timestamping_uncapped,
+            delete_on_empty_enabled,
+            delete_on_empty_min_age,
             selected,
             editing,
         } => {
@@ -2373,37 +2502,58 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 Span::styled(format!("[{}]", check(*timestamping_uncapped)), Style::default().fg(if *timestamping_uncapped { GREEN } else { TEXT_MUTED })),
             ]));
 
+            // Row 6: Delete-on-empty toggle
+            lines.push(Line::from(vec![
+                Span::styled(marker(*selected == 6), Style::default().fg(GREEN)),
+                Span::styled("Delete-on-empty: ", Style::default().fg(TEXT_MUTED)),
+                Span::styled(format!("[{}]", check(*delete_on_empty_enabled)), Style::default().fg(if *delete_on_empty_enabled { GREEN } else { TEXT_MUTED })),
+            ]));
+
+            // Row 7: Delete-on-empty Min Age (only if enabled)
+            if *delete_on_empty_enabled {
+                lines.push(Line::from(vec![
+                    Span::styled(marker(*selected == 7), Style::default().fg(GREEN)),
+                    Span::styled("  Min Age: ", Style::default().fg(TEXT_MUTED)),
+                    Span::styled(delete_on_empty_min_age, Style::default().fg(TEXT_PRIMARY)),
+                    Span::styled(
+                        if *selected == 7 && *editing { cursor(true) } else { "" },
+                        Style::default().fg(GREEN)
+                    ),
+                    Span::styled("  (e.g. 7d, 1h)", Style::default().fg(TEXT_MUTED)),
+                ]));
+            }
+
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
                 Span::styled("  -- Basin Behavior --", Style::default().fg(TEXT_MUTED)),
             ]));
             lines.push(Line::from(""));
 
-            // Row 6: Create Stream On Append
+            // Row 8: Create Stream On Append
             lines.push(Line::from(vec![
-                Span::styled(marker(*selected == 6), Style::default().fg(GREEN)),
+                Span::styled(marker(*selected == 8), Style::default().fg(GREEN)),
                 Span::styled("Auto-create on Append: ", Style::default().fg(TEXT_MUTED)),
                 Span::styled(format!("[{}]", check(*create_stream_on_append)), Style::default().fg(if *create_stream_on_append { GREEN } else { TEXT_MUTED })),
             ]));
 
-            // Row 7: Create Stream On Read
+            // Row 9: Create Stream On Read
             lines.push(Line::from(vec![
-                Span::styled(marker(*selected == 7), Style::default().fg(GREEN)),
+                Span::styled(marker(*selected == 9), Style::default().fg(GREEN)),
                 Span::styled("Auto-create on Read: ", Style::default().fg(TEXT_MUTED)),
                 Span::styled(format!("[{}]", check(*create_stream_on_read)), Style::default().fg(if *create_stream_on_read { GREEN } else { TEXT_MUTED })),
             ]));
 
             lines.push(Line::from(""));
 
-            // Row 8: Create button
+            // Row 10: Create button
             let can_create = name_valid;
-            let (btn_fg, btn_bg) = if *selected == 8 && can_create {
+            let (btn_fg, btn_bg) = if *selected == 10 && can_create {
                 (BG_DARK, GREEN)
             } else {
                 (if can_create { GREEN } else { TEXT_MUTED }, BG_PANEL)
             };
             lines.push(Line::from(vec![
-                Span::styled(marker(*selected == 8), Style::default().fg(GREEN)),
+                Span::styled(marker(*selected == 10), Style::default().fg(GREEN)),
                 Span::styled(" CREATE BASIN ", Style::default().fg(btn_fg).bg(btn_bg).bold()),
             ]));
 

@@ -12,7 +12,7 @@ use crate::cli::{CreateBasinArgs, CreateStreamArgs, IssueAccessTokenArgs, ListAc
 use crate::error::CliError;
 use crate::ops;
 use crate::record_format::{RecordFormat, RecordsOut};
-use crate::types::{BasinConfig, Operation, RetentionPolicy, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass, StreamConfig, TimestampingConfig, TimestampingMode};
+use crate::types::{BasinConfig, DeleteOnEmptyConfig, Operation, RetentionPolicy, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass, StreamConfig, TimestampingConfig, TimestampingMode};
 
 use super::event::{BasinConfigInfo, Event, StreamConfigInfo};
 use super::ui;
@@ -130,11 +130,12 @@ pub struct AccessTokensState {
 /// Type of metrics being viewed
 #[derive(Debug, Clone)]
 pub enum MetricsType {
+    Account,
     Basin { basin_name: BasinName },
     Stream { basin_name: BasinName, stream_name: StreamName },
 }
 
-/// Which metric is currently selected
+/// Which metric is currently selected (for basin/stream)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MetricCategory {
     #[default]
@@ -143,6 +144,9 @@ pub enum MetricCategory {
     ReadOps,
     AppendThroughput,
     ReadThroughput,
+    // Account-level metrics
+    ActiveBasins,
+    AccountOps,
 }
 
 impl MetricCategory {
@@ -153,6 +157,9 @@ impl MetricCategory {
             Self::ReadOps => Self::AppendThroughput,
             Self::AppendThroughput => Self::ReadThroughput,
             Self::ReadThroughput => Self::Storage,
+            // Account metrics cycle
+            Self::ActiveBasins => Self::AccountOps,
+            Self::AccountOps => Self::ActiveBasins,
         }
     }
 
@@ -163,6 +170,9 @@ impl MetricCategory {
             Self::ReadOps => Self::AppendOps,
             Self::AppendThroughput => Self::ReadOps,
             Self::ReadThroughput => Self::AppendThroughput,
+            // Account metrics cycle
+            Self::ActiveBasins => Self::AccountOps,
+            Self::AccountOps => Self::ActiveBasins,
         }
     }
 
@@ -173,6 +183,8 @@ impl MetricCategory {
             Self::ReadOps => "Read Ops",
             Self::AppendThroughput => "Append Throughput",
             Self::ReadThroughput => "Read Throughput",
+            Self::ActiveBasins => "Active Basins",
+            Self::AccountOps => "Account Ops",
         }
     }
 }
@@ -219,6 +231,9 @@ pub enum InputMode {
         retention_age_input: String,
         timestamping_mode: Option<TimestampingMode>,
         timestamping_uncapped: bool,
+        // Delete-on-empty config
+        delete_on_empty_enabled: bool,
+        delete_on_empty_min_age: String,
         // UI state
         selected: usize,
         editing: bool,
@@ -582,6 +597,8 @@ fn build_basin_config(
     retention_age_input: String,
     timestamping_mode: Option<TimestampingMode>,
     timestamping_uncapped: bool,
+    delete_on_empty_enabled: bool,
+    delete_on_empty_min_age: String,
 ) -> BasinConfig {
     // Parse retention policy
     let retention = match retention_policy {
@@ -603,12 +620,21 @@ fn build_basin_config(
         None
     };
 
+    // Build delete-on-empty config if enabled
+    let delete_on_empty = if delete_on_empty_enabled {
+        humantime::parse_duration(&delete_on_empty_min_age)
+            .ok()
+            .map(|d| DeleteOnEmptyConfig { delete_on_empty_min_age: d })
+    } else {
+        None
+    };
+
     BasinConfig {
         default_stream_config: StreamConfig {
             storage_class,
             retention_policy: retention,
             timestamping,
-            delete_on_empty: None,
+            delete_on_empty,
         },
         create_stream_on_append,
         create_stream_on_read,
@@ -1168,6 +1194,23 @@ impl App {
                 }
             }
 
+            Event::AccountMetricsLoaded(result) => {
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    state.loading = false;
+                    match result {
+                        Ok(metrics) => {
+                            state.metrics = metrics;
+                        }
+                        Err(e) => {
+                            self.message = Some(StatusMessage {
+                                text: format!("Failed to load account metrics: {e}"),
+                                level: MessageLevel::Error,
+                            });
+                        }
+                    }
+                }
+            }
+
             Event::BasinMetricsLoaded(result) => {
                 if let Screen::MetricsView(state) = &mut self.screen {
                     state.loading = false;
@@ -1355,6 +1398,8 @@ impl App {
                 retention_age_input,
                 timestamping_mode,
                 timestamping_uncapped,
+                delete_on_empty_enabled,
+                delete_on_empty_min_age,
                 selected,
                 editing,
             } => {
@@ -1365,10 +1410,12 @@ impl App {
                 // 3: Retention Age (text, only if Age)
                 // 4: Timestamping Mode (cycle: None/ClientPrefer/ClientRequire/Arrival)
                 // 5: Timestamping Uncapped (toggle)
-                // 6: Create Stream On Append (toggle)
-                // 7: Create Stream On Read (toggle)
-                // 8: Create button
-                const FIELD_COUNT: usize = 9;
+                // 6: Delete-on-empty (toggle)
+                // 7: Delete-on-empty Min Age (text, only if enabled)
+                // 8: Create Stream On Append (toggle)
+                // 9: Create Stream On Read (toggle)
+                // 10: Create button
+                const FIELD_COUNT: usize = 11;
 
                 if *editing {
                     // Text editing mode
@@ -1381,6 +1428,8 @@ impl App {
                                 name.pop();
                             } else if *selected == 3 {
                                 retention_age_input.pop();
+                            } else if *selected == 7 {
+                                delete_on_empty_min_age.pop();
                             }
                         }
                         KeyCode::Char(c) => {
@@ -1394,6 +1443,11 @@ impl App {
                                 if c.is_ascii_alphanumeric() {
                                     retention_age_input.push(c);
                                 }
+                            } else if *selected == 7 {
+                                // Delete-on-empty min age: alphanumeric for duration parsing
+                                if c.is_ascii_alphanumeric() {
+                                    delete_on_empty_min_age.push(c);
+                                }
                             }
                         }
                         _ => {}
@@ -1406,6 +1460,10 @@ impl App {
                         KeyCode::Up | KeyCode::Char('k') => {
                             if *selected > 0 {
                                 *selected -= 1;
+                                // Skip delete-on-empty min age if not enabled
+                                if *selected == 7 && !*delete_on_empty_enabled {
+                                    *selected = 6;
+                                }
                                 // Skip retention age if not using Age policy
                                 if *selected == 3 && *retention_policy != RetentionPolicyOption::Age {
                                     *selected = 2;
@@ -1419,6 +1477,10 @@ impl App {
                                 if *selected == 3 && *retention_policy != RetentionPolicyOption::Age {
                                     *selected = 4;
                                 }
+                                // Skip delete-on-empty min age if not enabled
+                                if *selected == 7 && !*delete_on_empty_enabled {
+                                    *selected = 8;
+                                }
                             }
                         }
                         KeyCode::Enter => {
@@ -1429,7 +1491,12 @@ impl App {
                                         *editing = true; // Edit retention age
                                     }
                                 }
-                                8 => {
+                                7 => {
+                                    if *delete_on_empty_enabled {
+                                        *editing = true; // Edit delete-on-empty min age
+                                    }
+                                }
+                                10 => {
                                     // Create button - validate and submit
                                     if name.len() >= 8 {
                                         // Extract all values to avoid borrow conflict
@@ -1441,8 +1508,10 @@ impl App {
                                         let rai = retention_age_input.clone();
                                         let tm = timestamping_mode.clone();
                                         let tu = *timestamping_uncapped;
+                                        let doe = *delete_on_empty_enabled;
+                                        let doema = delete_on_empty_min_age.clone();
 
-                                        let config = build_basin_config(csoa, csor, sc, rp, rai, tm, tu);
+                                        let config = build_basin_config(csoa, csor, sc, rp, rai, tm, tu, doe, doema);
                                         self.create_basin_with_config(basin_name, config, tx.clone());
                                     }
                                 }
@@ -1453,8 +1522,9 @@ impl App {
                             // Toggle for boolean fields
                             match *selected {
                                 5 => *timestamping_uncapped = !*timestamping_uncapped,
-                                6 => *create_stream_on_append = !*create_stream_on_append,
-                                7 => *create_stream_on_read = !*create_stream_on_read,
+                                6 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
+                                8 => *create_stream_on_append = !*create_stream_on_append,
+                                9 => *create_stream_on_read = !*create_stream_on_read,
                                 _ => {}
                             }
                         }
@@ -2339,6 +2409,8 @@ impl App {
                     retention_age_input: "7d".to_string(),
                     timestamping_mode: None,
                     timestamping_uncapped: false,
+                    delete_on_empty_enabled: false,
+                    delete_on_empty_min_age: "7d".to_string(),
                     selected: 0,
                     editing: false,
                 };
@@ -2376,6 +2448,10 @@ impl App {
                     let basin_name = basin.name.clone();
                     self.open_basin_metrics(basin_name, tx);
                 }
+            }
+            KeyCode::Char('A') => {
+                // Account Metrics
+                self.open_account_metrics(tx);
             }
             KeyCode::Esc => {
                 if !state.filter.is_empty() {
@@ -4223,6 +4299,18 @@ impl App {
     }
 
     /// Open basin metrics view
+    /// Open account metrics view
+    fn open_account_metrics(&mut self, tx: mpsc::UnboundedSender<Event>) {
+        self.screen = Screen::MetricsView(MetricsViewState {
+            metrics_type: MetricsType::Account,
+            metrics: Vec::new(),
+            selected_category: MetricCategory::ActiveBasins,
+            loading: true,
+            scroll: 0,
+        });
+        self.load_account_metrics(MetricCategory::ActiveBasins, tx);
+    }
+
     fn open_basin_metrics(&mut self, basin_name: BasinName, tx: mpsc::UnboundedSender<Event>) {
         self.screen = Screen::MetricsView(MetricsViewState {
             metrics_type: MetricsType::Basin { basin_name: basin_name.clone() },
@@ -4247,6 +4335,43 @@ impl App {
     }
 
     /// Load basin metrics
+    /// Load account metrics
+    fn load_account_metrics(&self, category: MetricCategory, tx: mpsc::UnboundedSender<Event>) {
+        use s2_sdk::types::AccountMetricSet;
+
+        let s2 = self.s2.clone();
+
+        tokio::spawn(async move {
+            // Get metrics for last 24 hours
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as u32;
+            let day_ago = now.saturating_sub(24 * 60 * 60);
+
+            let set = match category {
+                MetricCategory::ActiveBasins => AccountMetricSet::ActiveBasins(TimeRange::new(day_ago, now)),
+                MetricCategory::AccountOps => AccountMetricSet::AccountOps(
+                    s2_sdk::types::TimeRangeAndInterval::new(day_ago, now)
+                ),
+                _ => return, // Other categories not valid for account
+            };
+
+            let input = s2_sdk::types::GetAccountMetricsInput::new(set);
+            match s2.get_account_metrics(input).await {
+                Ok(metrics) => {
+                    let _ = tx.send(Event::AccountMetricsLoaded(Ok(metrics)));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::AccountMetricsLoaded(Err(CliError::op(
+                        crate::error::OpKind::GetAccountMetrics,
+                        e,
+                    ))));
+                }
+            }
+        });
+    }
+
     fn load_basin_metrics(&self, basin_name: BasinName, category: MetricCategory, tx: mpsc::UnboundedSender<Event>) {
         let s2 = self.s2.clone();
 
@@ -4272,6 +4397,7 @@ impl App {
                 MetricCategory::ReadThroughput => BasinMetricSet::ReadThroughput(
                     s2_sdk::types::TimeRangeAndInterval::new(day_ago, now)
                 ),
+                _ => return, // Account metrics not valid for basin
             };
 
             let input = s2_sdk::types::GetBasinMetricsInput::new(basin_name, set);
@@ -4332,6 +4458,17 @@ impl App {
             KeyCode::Esc | KeyCode::Char('q') => {
                 // Go back to previous screen
                 match &metrics_type {
+                    MetricsType::Account => {
+                        // Go back to basins list
+                        self.screen = Screen::Basins(BasinsState {
+                            basins: Vec::new(),
+                            selected: 0,
+                            loading: true,
+                            filter: String::new(),
+                            filter_active: false,
+                        });
+                        self.load_basins(tx);
+                    }
                     MetricsType::Basin { basin_name } => {
                         let basin_name = basin_name.clone();
                         self.screen = Screen::Streams(StreamsState {
@@ -4360,29 +4497,53 @@ impl App {
                 }
             }
             KeyCode::Left | KeyCode::Char('h') => {
-                // Previous metric category (only for basin metrics)
-                if let MetricsType::Basin { basin_name } = &metrics_type {
-                    let basin_name = basin_name.clone();
-                    let new_category = selected_category.prev();
-                    if let Screen::MetricsView(state) = &mut self.screen {
-                        state.selected_category = new_category;
-                        state.loading = true;
-                        state.metrics.clear();
+                // Previous metric category (for basin or account metrics)
+                match &metrics_type {
+                    MetricsType::Account => {
+                        let new_category = selected_category.prev();
+                        if let Screen::MetricsView(state) = &mut self.screen {
+                            state.selected_category = new_category;
+                            state.loading = true;
+                            state.metrics.clear();
+                        }
+                        self.load_account_metrics(new_category, tx);
                     }
-                    self.load_basin_metrics(basin_name, new_category, tx);
+                    MetricsType::Basin { basin_name } => {
+                        let basin_name = basin_name.clone();
+                        let new_category = selected_category.prev();
+                        if let Screen::MetricsView(state) = &mut self.screen {
+                            state.selected_category = new_category;
+                            state.loading = true;
+                            state.metrics.clear();
+                        }
+                        self.load_basin_metrics(basin_name, new_category, tx);
+                    }
+                    MetricsType::Stream { .. } => {} // No category switching for stream
                 }
             }
             KeyCode::Right | KeyCode::Char('l') => {
-                // Next metric category (only for basin metrics)
-                if let MetricsType::Basin { basin_name } = &metrics_type {
-                    let basin_name = basin_name.clone();
-                    let new_category = selected_category.next();
-                    if let Screen::MetricsView(state) = &mut self.screen {
-                        state.selected_category = new_category;
-                        state.loading = true;
-                        state.metrics.clear();
+                // Next metric category (for basin or account metrics)
+                match &metrics_type {
+                    MetricsType::Account => {
+                        let new_category = selected_category.next();
+                        if let Screen::MetricsView(state) = &mut self.screen {
+                            state.selected_category = new_category;
+                            state.loading = true;
+                            state.metrics.clear();
+                        }
+                        self.load_account_metrics(new_category, tx);
                     }
-                    self.load_basin_metrics(basin_name, new_category, tx);
+                    MetricsType::Basin { basin_name } => {
+                        let basin_name = basin_name.clone();
+                        let new_category = selected_category.next();
+                        if let Screen::MetricsView(state) = &mut self.screen {
+                            state.selected_category = new_category;
+                            state.loading = true;
+                            state.metrics.clear();
+                        }
+                        self.load_basin_metrics(basin_name, new_category, tx);
+                    }
+                    MetricsType::Stream { .. } => {} // No category switching for stream
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
@@ -4404,6 +4565,9 @@ impl App {
                     state.metrics.clear();
                 }
                 match &metrics_type {
+                    MetricsType::Account => {
+                        self.load_account_metrics(selected_category, tx);
+                    }
                     MetricsType::Basin { basin_name } => {
                         self.load_basin_metrics(basin_name.clone(), selected_category, tx);
                     }
