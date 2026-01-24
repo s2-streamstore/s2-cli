@@ -1067,9 +1067,49 @@ impl App {
                 self.screen = Screen::Basins(basins_state);
             }
 
-            // Handle events
+            // Always check keyboard input first (non-blocking) to ensure responsiveness
+            // even when async events are flooding in
+            if event::poll(Duration::from_millis(0))
+                .map_err(|e| CliError::RecordWrite(format!("Failed to poll events: {e}")))?
+            {
+                if let CrosstermEvent::Key(key) = event::read()
+                    .map_err(|e| CliError::RecordWrite(format!("Failed to read event: {e}")))?
+                {
+                    // Skip to basins on any key during splash
+                    if matches!(self.screen, Screen::Splash) {
+                        let mut basins_state = BasinsState {
+                            loading: pending_basins.is_none(),
+                            ..Default::default()
+                        };
+                        if let Some(result) = pending_basins.take() {
+                            match result {
+                                Ok(basins) => {
+                                    basins_state.basins = basins;
+                                    basins_state.loading = false;
+                                }
+                                Err(e) => {
+                                    basins_state.loading = false;
+                                    self.message = Some(StatusMessage {
+                                        text: format!("Failed to load basins: {e}"),
+                                        level: MessageLevel::Error,
+                                    });
+                                }
+                            }
+                        }
+                        self.screen = Screen::Basins(basins_state);
+                        continue;
+                    }
+                    self.handle_key(key, tx.clone());
+                }
+            }
+
+            // Check quit early to avoid unnecessary async processing
+            if self.should_quit {
+                break;
+            }
+
+            // Handle async events from background tasks with a short timeout
             tokio::select! {
-                // Handle async events from background tasks
                 Some(event) = rx.recv() => {
                     // If on splash screen, cache the basins result
                     if matches!(self.screen, Screen::Splash) {
@@ -1081,42 +1121,8 @@ impl App {
                     self.handle_event(event);
                 }
 
-                // Handle keyboard input
-                _ = tokio::time::sleep(Duration::from_millis(50)) => {
-                    if event::poll(Duration::from_millis(0))
-                        .map_err(|e| CliError::RecordWrite(format!("Failed to poll events: {e}")))?
-                    {
-                        if let CrosstermEvent::Key(key) = event::read()
-                            .map_err(|e| CliError::RecordWrite(format!("Failed to read event: {e}")))?
-                        {
-                            // Skip to basins on any key during splash
-                            if matches!(self.screen, Screen::Splash) {
-                                let mut basins_state = BasinsState {
-                                    loading: pending_basins.is_none(),
-                                    ..Default::default()
-                                };
-                                if let Some(result) = pending_basins.take() {
-                                    match result {
-                                        Ok(basins) => {
-                                            basins_state.basins = basins;
-                                            basins_state.loading = false;
-                                        }
-                                        Err(e) => {
-                                            basins_state.loading = false;
-                                            self.message = Some(StatusMessage {
-                                                text: format!("Failed to load basins: {e}"),
-                                                level: MessageLevel::Error,
-                                            });
-                                        }
-                                    }
-                                }
-                                self.screen = Screen::Basins(basins_state);
-                                continue;
-                            }
-                            self.handle_key(key, tx.clone());
-                        }
-                    }
-                }
+                // Small sleep to prevent busy-looping when no events
+                _ = tokio::time::sleep(Duration::from_millis(16)) => {}
             }
 
             if self.should_quit {
