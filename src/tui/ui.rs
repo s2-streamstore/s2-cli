@@ -2689,23 +2689,253 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             )
         }
 
-        InputMode::CreateStream { basin, input } => (
-            " Create Stream ",
-            vec![
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled("Basin: ", Style::default().fg(TEXT_MUTED)),
-                    Span::styled(basin.to_string(), Style::default().fg(TEXT_SECONDARY)),
-                ]),
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled("Stream: ", Style::default().fg(TEXT_MUTED)),
-                    Span::styled(input, Style::default().fg(TEXT_PRIMARY)),
-                    Span::styled("_", Style::default().fg(GREEN)),
-                ]),
-            ],
-            "enter confirm  esc cancel",
-        ),
+        InputMode::CreateStream {
+            basin,
+            name,
+            storage_class,
+            retention_policy,
+            retention_age_input,
+            timestamping_mode,
+            timestamping_uncapped,
+            delete_on_empty_enabled,
+            delete_on_empty_min_age,
+            selected,
+            editing,
+        } => {
+            let cursor = "▎";
+
+            // Modern toggle switch rendering
+            let toggle = |on: bool, is_selected: bool| -> Vec<Span<'static>> {
+                if on {
+                    vec![
+                        Span::styled("", Style::default().fg(if is_selected { GREEN } else { Color::Rgb(60, 60, 60) })),
+                        Span::styled(" ON ", Style::default().fg(BG_DARK).bg(GREEN).bold()),
+                        Span::styled("▁▂▃", Style::default().fg(GREEN)),
+                    ]
+                } else {
+                    vec![
+                        Span::styled("▃▂▁", Style::default().fg(Color::Rgb(80, 80, 80))),
+                        Span::styled(" OFF ", Style::default().fg(TEXT_MUTED).bg(Color::Rgb(50, 50, 50))),
+                        Span::styled("", Style::default().fg(if is_selected { GREEN } else { Color::Rgb(60, 60, 60) })),
+                    ]
+                }
+            };
+
+            // Pill-style option renderer
+            let pill = |label: &str, is_row_selected: bool, is_active: bool| -> Span<'static> {
+                if is_active {
+                    Span::styled(
+                        format!(" {} ", label),
+                        Style::default()
+                            .fg(BG_DARK)
+                            .bg(if is_row_selected { GREEN } else { Color::Rgb(120, 120, 120) })
+                            .bold()
+                    )
+                } else {
+                    Span::styled(
+                        format!(" {} ", label),
+                        Style::default()
+                            .fg(if is_row_selected { TEXT_PRIMARY } else { Color::Rgb(80, 80, 80) })
+                    )
+                }
+            };
+
+            // Field row helper with selection indicator
+            let field_row = |field_idx: usize, label: &str, current_selected: usize| -> (Span<'static>, Span<'static>) {
+                let is_selected = field_idx == current_selected;
+                let indicator = if is_selected {
+                    Span::styled(" > ", Style::default().fg(GREEN).bold())
+                } else {
+                    Span::raw("   ")
+                };
+                let label_span = Span::styled(
+                    format!("{:<15}", label),
+                    Style::default().fg(if is_selected { TEXT_PRIMARY } else { TEXT_MUTED })
+                );
+                (indicator, label_span)
+            };
+
+            // Storage options
+            let storage_opts = [
+                ("Default", storage_class.is_none()),
+                ("Standard", matches!(storage_class, Some(StorageClass::Standard))),
+                ("Express", matches!(storage_class, Some(StorageClass::Express))),
+            ];
+
+            // Timestamping mode options
+            let ts_opts = [
+                ("Default", timestamping_mode.is_none()),
+                ("ClientPrefer", matches!(timestamping_mode, Some(TimestampingMode::ClientPrefer))),
+                ("ClientRequire", matches!(timestamping_mode, Some(TimestampingMode::ClientRequire))),
+                ("Arrival", matches!(timestamping_mode, Some(TimestampingMode::Arrival))),
+            ];
+
+            // Retention options
+            let ret_opts = [
+                ("Infinite", *retention_policy == RetentionPolicyOption::Infinite),
+                ("Age-based", *retention_policy == RetentionPolicyOption::Age),
+            ];
+
+            let mut lines = vec![];
+
+            // ═══════════════════════════════════════════════════════════════
+            // STREAM NAME SECTION
+            // ═══════════════════════════════════════════════════════════════
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("   Stream name ", Style::default().fg(CYAN).bold()),
+                Span::styled("─".repeat(34), Style::default().fg(Color::Rgb(50, 50, 50))),
+            ]));
+            lines.push(Line::from(""));
+
+            // Show which basin this stream will be created in
+            lines.push(Line::from(vec![
+                Span::raw("   "),
+                Span::styled("in basin: ", Style::default().fg(Color::Rgb(80, 80, 80))),
+                Span::styled(basin.to_string(), Style::default().fg(TEXT_SECONDARY)),
+            ]));
+            lines.push(Line::from(""));
+
+            // Stream Name
+            let (ind, lbl) = field_row(0, "Name", *selected);
+            let name_display = if name.is_empty() {
+                Span::styled("enter name...", Style::default().fg(Color::Rgb(80, 80, 80)).italic())
+            } else {
+                Span::styled(name.clone(), Style::default().fg(GREEN))
+            };
+            let cursor_span = if *selected == 0 && *editing {
+                Span::styled(cursor, Style::default().fg(GREEN))
+            } else {
+                Span::raw("")
+            };
+
+            lines.push(Line::from(vec![ind, lbl, Span::raw("  "), name_display, cursor_span]));
+
+            // ═══════════════════════════════════════════════════════════════
+            // STREAM CONFIGURATION SECTION
+            // ═══════════════════════════════════════════════════════════════
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("   Stream configuration ", Style::default().fg(CYAN).bold()),
+                Span::styled("─".repeat(25), Style::default().fg(Color::Rgb(50, 50, 50))),
+            ]));
+            lines.push(Line::from(""));
+
+            // Storage Class
+            let (ind, lbl) = field_row(1, "Storage", *selected);
+            let mut storage_spans = vec![ind, lbl, Span::raw("  ")];
+            for (label, active) in &storage_opts {
+                storage_spans.push(pill(label, *selected == 1, *active));
+                storage_spans.push(Span::raw(" "));
+            }
+            lines.push(Line::from(storage_spans));
+
+            // Retention
+            lines.push(Line::from(""));
+            let (ind, lbl) = field_row(2, "Retention", *selected);
+            let mut ret_spans = vec![ind, lbl, Span::raw("  ")];
+            for (label, active) in &ret_opts {
+                ret_spans.push(pill(label, *selected == 2, *active));
+                ret_spans.push(Span::raw(" "));
+            }
+            lines.push(Line::from(ret_spans));
+
+            // Retention Age (conditional)
+            if *retention_policy == RetentionPolicyOption::Age {
+                let (ind, lbl) = field_row(3, "  Duration", *selected);
+                let age_cursor = if *selected == 3 && *editing { cursor } else { "" };
+                lines.push(Line::from(vec![
+                    ind, lbl, Span::raw("  "),
+                    Span::styled(retention_age_input.clone(), Style::default().fg(YELLOW)),
+                    Span::styled(age_cursor, Style::default().fg(GREEN)),
+                    Span::styled("  e.g. 7d, 30d, 1y", Style::default().fg(Color::Rgb(80, 80, 80)).italic()),
+                ]));
+            }
+
+            // Timestamping Mode
+            lines.push(Line::from(""));
+            let (ind, lbl) = field_row(4, "Timestamps", *selected);
+            let mut ts_spans = vec![ind, lbl, Span::raw("  ")];
+            for (label, active) in &ts_opts {
+                ts_spans.push(pill(label, *selected == 4, *active));
+                ts_spans.push(Span::raw(" "));
+            }
+            lines.push(Line::from(ts_spans));
+
+            // Uncapped Timestamps
+            let (ind, lbl) = field_row(5, "  Uncapped", *selected);
+            let mut uncapped_spans = vec![ind, lbl, Span::raw("  ")];
+            uncapped_spans.extend(toggle(*timestamping_uncapped, *selected == 5));
+            lines.push(Line::from(uncapped_spans));
+
+            // Delete on Empty
+            let delete_opts = [
+                ("Never", !*delete_on_empty_enabled),
+                ("After threshold", *delete_on_empty_enabled),
+            ];
+            lines.push(Line::from(""));
+            let (ind, lbl) = field_row(6, "Delete on empty", *selected);
+            let mut del_spans = vec![ind, lbl, Span::raw("  ")];
+            for (label, active) in &delete_opts {
+                del_spans.push(pill(label, *selected == 6, *active));
+                del_spans.push(Span::raw(" "));
+            }
+            lines.push(Line::from(del_spans));
+
+            // Delete on Empty Threshold (conditional)
+            if *delete_on_empty_enabled {
+                let (ind, lbl) = field_row(7, "  Threshold", *selected);
+                let age_cursor = if *selected == 7 && *editing { cursor } else { "" };
+                lines.push(Line::from(vec![
+                    ind, lbl, Span::raw("  "),
+                    Span::styled(delete_on_empty_min_age.clone(), Style::default().fg(YELLOW)),
+                    Span::styled(age_cursor, Style::default().fg(GREEN)),
+                    Span::styled("  e.g. 1h, 7d", Style::default().fg(Color::Rgb(80, 80, 80)).italic()),
+                ]));
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // CREATE BUTTON
+            // ═══════════════════════════════════════════════════════════════
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("─".repeat(52), Style::default().fg(Color::Rgb(50, 50, 50))),
+            ]));
+            lines.push(Line::from(""));
+
+            let can_create = !name.is_empty();
+            let btn_style = if *selected == 8 && can_create {
+                Style::default().fg(BG_DARK).bg(GREEN).bold()
+            } else if can_create {
+                Style::default().fg(GREEN).bold()
+            } else {
+                Style::default().fg(Color::Rgb(80, 80, 80))
+            };
+
+            let btn_indicator = if *selected == 8 {
+                Span::styled(" > ", Style::default().fg(GREEN).bold())
+            } else {
+                Span::raw("   ")
+            };
+
+            lines.push(Line::from(vec![
+                btn_indicator,
+                Span::styled("  CREATE STREAM  ", btn_style),
+                if !can_create {
+                    Span::styled("  (enter stream name)", Style::default().fg(Color::Rgb(80, 80, 80)).italic())
+                } else {
+                    Span::raw("")
+                },
+            ]));
+
+            lines.push(Line::from(""));
+
+            (
+                " Create Stream ",
+                lines,
+                "j/k navigate | h/l cycle | Space toggle | Enter edit | Esc cancel",
+            )
+        }
 
         InputMode::ConfirmDeleteBasin { basin } => (
             " Delete Basin ",
@@ -2929,6 +3159,8 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             retention_age_secs,
             timestamping_mode,
             timestamping_uncapped,
+            delete_on_empty_enabled,
+            delete_on_empty_min_age,
             selected,
             editing_age,
             age_input,
@@ -2941,26 +3173,33 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                     vec![
                         Span::styled("", Style::default().fg(if is_selected { GREEN } else { Color::Rgb(60, 60, 60) })),
                         Span::styled(" ON ", Style::default().fg(BG_DARK).bg(GREEN).bold()),
-                        Span::styled("", Style::default().fg(GREEN)),
+                        Span::styled("▁▂▃", Style::default().fg(GREEN)),
                     ]
                 } else {
                     vec![
-                        Span::styled("", Style::default().fg(if is_selected { TEXT_MUTED } else { Color::Rgb(60, 60, 60) })),
-                        Span::styled(" OFF ", Style::default().fg(TEXT_MUTED).bg(Color::Rgb(60, 60, 60))),
-                        Span::styled("", Style::default().fg(Color::Rgb(60, 60, 60))),
+                        Span::styled("▃▂▁", Style::default().fg(Color::Rgb(80, 80, 80))),
+                        Span::styled(" OFF ", Style::default().fg(TEXT_MUTED).bg(Color::Rgb(50, 50, 50))),
+                        Span::styled("", Style::default().fg(if is_selected { GREEN } else { Color::Rgb(60, 60, 60) })),
                     ]
                 }
             };
 
             // Pill-style selector
-            let pill = |label: &str, is_selected: bool, is_active: bool| -> Span<'static> {
-                let label = label.to_string();
+            let pill = |label: &str, is_row_selected: bool, is_active: bool| -> Span<'static> {
                 if is_active {
-                    Span::styled(format!(" {} ", label), Style::default().fg(BG_DARK).bg(GREEN).bold())
-                } else if is_selected {
-                    Span::styled(format!(" {} ", label), Style::default().fg(TEXT_PRIMARY).bg(Color::Rgb(50, 50, 50)))
+                    Span::styled(
+                        format!(" {} ", label),
+                        Style::default()
+                            .fg(BG_DARK)
+                            .bg(if is_row_selected { GREEN } else { Color::Rgb(120, 120, 120) })
+                            .bold()
+                    )
                 } else {
-                    Span::styled(format!(" {} ", label), Style::default().fg(TEXT_MUTED))
+                    Span::styled(
+                        format!(" {} ", label),
+                        Style::default()
+                            .fg(if is_row_selected { TEXT_PRIMARY } else { Color::Rgb(80, 80, 80) })
+                    )
                 }
             };
 
@@ -2973,11 +3212,11 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                     Span::styled("   ", Style::default())
                 };
                 let label_style = if is_sel {
-                    Style::default().fg(TEXT_PRIMARY).bold()
+                    Style::default().fg(TEXT_PRIMARY)
                 } else {
                     Style::default().fg(TEXT_MUTED)
                 };
-                (indicator, Span::styled(label.to_string(), label_style))
+                (indicator, Span::styled(format!("{:<15}", label), label_style))
             };
 
             // Options
@@ -3037,7 +3276,7 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             if *retention_policy == RetentionPolicyOption::Age {
                 let (ind, lbl) = field_row(2, "  Duration", *selected);
                 let age_cursor = if *selected == 2 && *editing_age { cursor } else { "" };
-                let age_display = if *editing_age { age_input.clone() } else { format!("{}s", retention_age_secs) };
+                let age_display = if *selected == 2 && *editing_age { age_input.clone() } else { format!("{}s", retention_age_secs) };
                 lines.push(Line::from(vec![
                     ind, lbl, Span::raw("  "),
                     Span::styled(age_display, Style::default().fg(YELLOW)),
@@ -3061,6 +3300,32 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             let mut uncapped_spans = vec![ind, lbl, Span::raw("  ")];
             uncapped_spans.extend(toggle(timestamping_uncapped.unwrap_or(false), *selected == 4));
             lines.push(Line::from(uncapped_spans));
+
+            // Delete on Empty
+            let delete_opts = [
+                ("Never", !*delete_on_empty_enabled),
+                ("After threshold", *delete_on_empty_enabled),
+            ];
+            lines.push(Line::from(""));
+            let (ind, lbl) = field_row(5, "Delete on empty", *selected);
+            let mut del_spans = vec![ind, lbl, Span::raw("  ")];
+            for (label, active) in &delete_opts {
+                del_spans.push(pill(label, *selected == 5, *active));
+                del_spans.push(Span::raw(" "));
+            }
+            lines.push(Line::from(del_spans));
+
+            // Delete on Empty Threshold (conditional)
+            if *delete_on_empty_enabled {
+                let (ind, lbl) = field_row(6, "  Threshold", *selected);
+                let age_cursor = if *selected == 6 && *editing_age { cursor } else { "" };
+                lines.push(Line::from(vec![
+                    ind, lbl, Span::raw("  "),
+                    Span::styled(delete_on_empty_min_age.clone(), Style::default().fg(YELLOW)),
+                    Span::styled(age_cursor, Style::default().fg(GREEN)),
+                    Span::styled("  e.g. 1h, 7d", Style::default().fg(Color::Rgb(80, 80, 80)).italic()),
+                ]));
+            }
 
             lines.push(Line::from(""));
 

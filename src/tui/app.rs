@@ -241,7 +241,22 @@ pub enum InputMode {
         editing: bool,
     },
     /// Creating a new stream
-    CreateStream { basin: BasinName, input: String },
+    CreateStream {
+        basin: BasinName,
+        name: String,
+        // Stream config
+        storage_class: Option<StorageClass>,
+        retention_policy: RetentionPolicyOption,
+        retention_age_input: String,
+        timestamping_mode: Option<TimestampingMode>,
+        timestamping_uncapped: bool,
+        // Delete-on-empty config
+        delete_on_empty_enabled: bool,
+        delete_on_empty_min_age: String,
+        // UI state
+        selected: usize,
+        editing: bool,
+    },
     /// Confirming basin deletion
     ConfirmDeleteBasin { basin: BasinName },
     /// Confirming stream deletion
@@ -272,6 +287,9 @@ pub enum InputMode {
         retention_age_secs: u64,
         timestamping_mode: Option<TimestampingMode>,
         timestamping_uncapped: Option<bool>,
+        // Delete-on-empty config
+        delete_on_empty_enabled: bool,
+        delete_on_empty_min_age: String,
         // UI state
         selected: usize,
         editing_age: bool,
@@ -578,6 +596,8 @@ pub struct StreamReconfigureConfig {
     pub retention_age_secs: u64,
     pub timestamping_mode: Option<TimestampingMode>,
     pub timestamping_uncapped: Option<bool>,
+    pub delete_on_empty_enabled: bool,
+    pub delete_on_empty_min_age: String,
 }
 
 impl Default for InputMode {
@@ -647,6 +667,52 @@ fn build_basin_config(
         },
         create_stream_on_append,
         create_stream_on_read,
+    }
+}
+
+fn build_stream_config(
+    storage_class: Option<StorageClass>,
+    retention_policy: RetentionPolicyOption,
+    retention_age_input: String,
+    timestamping_mode: Option<TimestampingMode>,
+    timestamping_uncapped: bool,
+    delete_on_empty_enabled: bool,
+    delete_on_empty_min_age: String,
+) -> StreamConfig {
+    // Parse retention policy
+    let retention = match retention_policy {
+        RetentionPolicyOption::Infinite => None,
+        RetentionPolicyOption::Age => {
+            humantime::parse_duration(&retention_age_input)
+                .ok()
+                .map(RetentionPolicy::Age)
+        }
+    };
+
+    // Build timestamping config if specified
+    let timestamping = if timestamping_mode.is_some() || timestamping_uncapped {
+        Some(TimestampingConfig {
+            timestamping_mode,
+            timestamping_uncapped: if timestamping_uncapped { Some(true) } else { None },
+        })
+    } else {
+        None
+    };
+
+    // Build delete-on-empty config if enabled
+    let delete_on_empty = if delete_on_empty_enabled {
+        humantime::parse_duration(&delete_on_empty_min_age)
+            .ok()
+            .map(|d| DeleteOnEmptyConfig { delete_on_empty_min_age: d })
+    } else {
+        None
+    };
+
+    StreamConfig {
+        storage_class,
+        retention_policy: retention,
+        timestamping,
+        delete_on_empty,
     }
 }
 
@@ -1020,6 +1086,8 @@ impl App {
                     retention_age_secs,
                     timestamping_mode,
                     timestamping_uncapped,
+                    delete_on_empty_enabled,
+                    delete_on_empty_min_age,
                     age_input,
                     ..
                 } = &mut self.input_mode {
@@ -1035,6 +1103,13 @@ impl App {
                             }
                             *timestamping_mode = info.timestamping_mode;
                             *timestamping_uncapped = Some(info.timestamping_uncapped);
+                            // Delete on empty
+                            if let Some(min_age_secs) = info.delete_on_empty_min_age_secs {
+                                *delete_on_empty_enabled = true;
+                                *delete_on_empty_min_age = format!("{}s", min_age_secs);
+                            } else {
+                                *delete_on_empty_enabled = false;
+                            }
                         }
                         Err(e) => {
                             self.input_mode = InputMode::Normal;
@@ -1612,25 +1687,198 @@ impl App {
                 }
             }
 
-            InputMode::CreateStream { basin, input } => {
-                match key.code {
-                    KeyCode::Esc => {
-                        self.input_mode = InputMode::Normal;
-                    }
-                    KeyCode::Enter => {
-                        if !input.is_empty() {
-                            let name = input.clone();
-                            let basin = basin.clone();
-                            self.create_stream(basin, name, tx.clone());
+            InputMode::CreateStream {
+                basin,
+                name,
+                storage_class,
+                retention_policy,
+                retention_age_input,
+                timestamping_mode,
+                timestamping_uncapped,
+                delete_on_empty_enabled,
+                delete_on_empty_min_age,
+                selected,
+                editing,
+            } => {
+                // Form fields:
+                // 0: Name (text)
+                // 1: Storage Class (cycle: None/Standard/Express)
+                // 2: Retention Policy (cycle: Infinite/Age)
+                // 3: Retention Age (text, only if Age)
+                // 4: Timestamping Mode (cycle: None/ClientPrefer/ClientRequire/Arrival)
+                // 5: Timestamping Uncapped (toggle)
+                // 6: Delete-on-empty (cycle: Never/After threshold)
+                // 7: Delete-on-empty Min Age (text, only if enabled)
+                // 8: Create button
+                const FIELD_COUNT: usize = 9;
+
+                if *editing {
+                    // Text editing mode
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Enter => {
+                            *editing = false;
                         }
+                        KeyCode::Backspace => {
+                            if *selected == 0 {
+                                name.pop();
+                            } else if *selected == 3 {
+                                retention_age_input.pop();
+                            } else if *selected == 7 {
+                                delete_on_empty_min_age.pop();
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            if *selected == 0 {
+                                // Stream names: allow most characters
+                                name.push(c);
+                            } else if *selected == 3 {
+                                // Retention age: alphanumeric for duration parsing
+                                if c.is_ascii_alphanumeric() {
+                                    retention_age_input.push(c);
+                                }
+                            } else if *selected == 7 {
+                                // Delete-on-empty min age: alphanumeric for duration parsing
+                                if c.is_ascii_alphanumeric() {
+                                    delete_on_empty_min_age.push(c);
+                                }
+                            }
+                        }
+                        _ => {}
                     }
-                    KeyCode::Backspace => {
-                        input.pop();
+                } else {
+                    match key.code {
+                        KeyCode::Esc => {
+                            self.input_mode = InputMode::Normal;
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if *selected > 0 {
+                                *selected -= 1;
+                                // Skip delete-on-empty min age if not enabled
+                                if *selected == 7 && !*delete_on_empty_enabled {
+                                    *selected = 6;
+                                }
+                                // Skip retention age if not using Age policy
+                                if *selected == 3 && *retention_policy != RetentionPolicyOption::Age {
+                                    *selected = 2;
+                                }
+                            }
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if *selected < FIELD_COUNT - 1 {
+                                *selected += 1;
+                                // Skip retention age if not using Age policy
+                                if *selected == 3 && *retention_policy != RetentionPolicyOption::Age {
+                                    *selected = 4;
+                                }
+                                // Skip delete-on-empty min age if not enabled
+                                if *selected == 7 && !*delete_on_empty_enabled {
+                                    *selected = 8;
+                                }
+                            }
+                        }
+                        KeyCode::Enter => {
+                            match *selected {
+                                0 => *editing = true, // Edit name
+                                3 => {
+                                    if *retention_policy == RetentionPolicyOption::Age {
+                                        *editing = true; // Edit retention age
+                                    }
+                                }
+                                7 => {
+                                    if *delete_on_empty_enabled {
+                                        *editing = true; // Edit delete-on-empty min age
+                                    }
+                                }
+                                8 => {
+                                    // Create button - validate and submit
+                                    if !name.is_empty() {
+                                        let basin_name = basin.clone();
+                                        let stream_name = name.clone();
+                                        let sc = storage_class.clone();
+                                        let rp = retention_policy.clone();
+                                        let rai = retention_age_input.clone();
+                                        let tm = timestamping_mode.clone();
+                                        let tu = *timestamping_uncapped;
+                                        let doe = *delete_on_empty_enabled;
+                                        let doema = delete_on_empty_min_age.clone();
+
+                                        let config = build_stream_config(sc, rp, rai, tm, tu, doe, doema);
+                                        self.create_stream_with_config(basin_name, stream_name, config, tx.clone());
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        KeyCode::Char(' ') => {
+                            // Toggle for boolean fields
+                            if *selected == 5 {
+                                *timestamping_uncapped = !*timestamping_uncapped;
+                            }
+                        }
+                        KeyCode::Left | KeyCode::Char('h') => {
+                            // Cycle left for enum fields
+                            match *selected {
+                                1 => {
+                                    *storage_class = match storage_class {
+                                        None => Some(StorageClass::Express),
+                                        Some(StorageClass::Standard) => None,
+                                        Some(StorageClass::Express) => Some(StorageClass::Standard),
+                                    };
+                                }
+                                2 => {
+                                    *retention_policy = match retention_policy {
+                                        RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
+                                        RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
+                                    };
+                                }
+                                4 => {
+                                    *timestamping_mode = match timestamping_mode {
+                                        None => Some(TimestampingMode::Arrival),
+                                        Some(TimestampingMode::ClientPrefer) => None,
+                                        Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::ClientPrefer),
+                                        Some(TimestampingMode::Arrival) => Some(TimestampingMode::ClientRequire),
+                                    };
+                                }
+                                6 => {
+                                    // Delete on empty: Never <-> After threshold
+                                    *delete_on_empty_enabled = !*delete_on_empty_enabled;
+                                }
+                                _ => {}
+                            }
+                        }
+                        KeyCode::Right | KeyCode::Char('l') => {
+                            // Cycle right for enum fields
+                            match *selected {
+                                1 => {
+                                    *storage_class = match storage_class {
+                                        None => Some(StorageClass::Standard),
+                                        Some(StorageClass::Standard) => Some(StorageClass::Express),
+                                        Some(StorageClass::Express) => None,
+                                    };
+                                }
+                                2 => {
+                                    *retention_policy = match retention_policy {
+                                        RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
+                                        RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
+                                    };
+                                }
+                                4 => {
+                                    *timestamping_mode = match timestamping_mode {
+                                        None => Some(TimestampingMode::ClientPrefer),
+                                        Some(TimestampingMode::ClientPrefer) => Some(TimestampingMode::ClientRequire),
+                                        Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::Arrival),
+                                        Some(TimestampingMode::Arrival) => None,
+                                    };
+                                }
+                                6 => {
+                                    // Delete on empty: Never <-> After threshold
+                                    *delete_on_empty_enabled = !*delete_on_empty_enabled;
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
                     }
-                    KeyCode::Char(c) => {
-                        input.push(c);
-                    }
-                    _ => {}
                 }
             }
 
@@ -1822,37 +2070,55 @@ impl App {
                 retention_age_secs,
                 timestamping_mode,
                 timestamping_uncapped,
+                delete_on_empty_enabled,
+                delete_on_empty_min_age,
                 selected,
                 editing_age,
                 age_input,
             } => {
-                // If editing age, handle number input
+                // If editing age or delete-on-empty min age, handle text input
                 if *editing_age {
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter => {
-                            if let Ok(secs) = age_input.parse::<u64>() {
-                                *retention_age_secs = secs;
+                            // Check which field we're editing
+                            if *selected == 2 {
+                                // Retention age
+                                if let Ok(secs) = age_input.parse::<u64>() {
+                                    *retention_age_secs = secs;
+                                }
+                            } else if *selected == 6 {
+                                // Delete-on-empty min age - no parsing needed, store as string
                             }
                             *editing_age = false;
                         }
                         KeyCode::Backspace => {
-                            age_input.pop();
+                            if *selected == 2 {
+                                age_input.pop();
+                            } else if *selected == 6 {
+                                delete_on_empty_min_age.pop();
+                            }
                         }
-                        KeyCode::Char(c) if c.is_ascii_digit() => {
-                            age_input.push(c);
+                        KeyCode::Char(c) => {
+                            if *selected == 2 && c.is_ascii_digit() {
+                                age_input.push(c);
+                            } else if *selected == 6 && c.is_ascii_alphanumeric() {
+                                delete_on_empty_min_age.push(c);
+                            }
                         }
                         _ => {}
                     }
                     return;
                 }
 
-                // Stream has 5 rows:
+                // Stream has 7 rows:
                 // 0: Storage class
                 // 1: Retention policy
                 // 2: Retention age (if Age-based)
                 // 3: Timestamping mode
                 // 4: Timestamping uncapped
-                const STREAM_MAX_ROW: usize = 4;
+                // 5: Delete on empty
+                // 6: Delete on empty threshold (if enabled)
+                const STREAM_MAX_ROW: usize = 6;
 
                 match key.code {
                     KeyCode::Esc => {
@@ -1861,6 +2127,10 @@ impl App {
                     KeyCode::Up | KeyCode::Char('k') => {
                         if *selected > 0 {
                             *selected -= 1;
+                            // Skip delete-on-empty threshold if not enabled
+                            if *selected == 6 && !*delete_on_empty_enabled {
+                                *selected = 5;
+                            }
                             // Skip retention age if not using Age policy
                             if *selected == 2 && *retention_policy != RetentionPolicyOption::Age {
                                 *selected = 1;
@@ -1873,6 +2143,11 @@ impl App {
                             // Skip retention age if not using Age policy
                             if *selected == 2 && *retention_policy != RetentionPolicyOption::Age {
                                 *selected = 3;
+                            }
+                            // Skip delete-on-empty threshold if not enabled
+                            if *selected == 6 && !*delete_on_empty_enabled {
+                                // Already at max, stay at 5
+                                *selected = 5;
                             }
                         }
                     }
@@ -1887,6 +2162,8 @@ impl App {
                         if *selected == 2 && *retention_policy == RetentionPolicyOption::Age {
                             *editing_age = true;
                             *age_input = retention_age_secs.to_string();
+                        } else if *selected == 6 && *delete_on_empty_enabled {
+                            *editing_age = true;
                         }
                     }
                     KeyCode::Left | KeyCode::Char('h') => {
@@ -1912,6 +2189,10 @@ impl App {
                                     Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::ClientPrefer),
                                     Some(TimestampingMode::Arrival) => Some(TimestampingMode::ClientRequire),
                                 };
+                            }
+                            5 => {
+                                // Delete on empty: Never <-> After threshold
+                                *delete_on_empty_enabled = !*delete_on_empty_enabled;
                             }
                             _ => {}
                         }
@@ -1940,6 +2221,10 @@ impl App {
                                     Some(TimestampingMode::Arrival) => None,
                                 };
                             }
+                            5 => {
+                                // Delete on empty: Never <-> After threshold
+                                *delete_on_empty_enabled = !*delete_on_empty_enabled;
+                            }
                             _ => {}
                         }
                     }
@@ -1952,6 +2237,8 @@ impl App {
                             retention_age_secs: *retention_age_secs,
                             timestamping_mode: timestamping_mode.clone(),
                             timestamping_uncapped: *timestamping_uncapped,
+                            delete_on_empty_enabled: *delete_on_empty_enabled,
+                            delete_on_empty_min_age: delete_on_empty_min_age.clone(),
                         };
                         self.reconfigure_stream(b, s, config, tx.clone());
                     }
@@ -2683,7 +2970,16 @@ impl App {
             KeyCode::Char('c') => {
                 self.input_mode = InputMode::CreateStream {
                     basin: state.basin_name.clone(),
-                    input: String::new(),
+                    name: String::new(),
+                    storage_class: None,
+                    retention_policy: RetentionPolicyOption::Infinite,
+                    retention_age_input: "7d".to_string(),
+                    timestamping_mode: None,
+                    timestamping_uncapped: false,
+                    delete_on_empty_enabled: false,
+                    delete_on_empty_min_age: "7d".to_string(),
+                    selected: 0,
+                    editing: false,
                 };
             }
             KeyCode::Char('d') => {
@@ -2706,6 +3002,8 @@ impl App {
                         retention_age_secs: 604800,
                         timestamping_mode: None,
                         timestamping_uncapped: None,
+                        delete_on_empty_enabled: false,
+                        delete_on_empty_min_age: "7d".to_string(),
                         selected: 0,
                         editing_age: false,
                         age_input: String::new(),
@@ -2793,6 +3091,8 @@ impl App {
                     retention_age_secs: 604800,
                     timestamping_mode: None,
                     timestamping_uncapped: None,
+                    delete_on_empty_enabled: false,
+                    delete_on_empty_min_age: "7d".to_string(),
                     selected: 0,
                     editing_age: false,
                     age_input: String::new(),
@@ -3068,7 +3368,8 @@ impl App {
         });
     }
 
-    fn create_stream(&mut self, basin: BasinName, name: String, tx: mpsc::UnboundedSender<Event>) {
+    fn create_stream_with_config(&mut self, basin: BasinName, name: String, config: StreamConfig, tx: mpsc::UnboundedSender<Event>) {
+        self.input_mode = InputMode::Normal;
         let s2 = self.s2.clone();
         let tx_refresh = tx.clone();
         let basin_clone = basin.clone();
@@ -3086,7 +3387,7 @@ impl App {
                     basin: basin.clone(),
                     stream: stream_name,
                 },
-                config: StreamConfig::default(),
+                config,
             };
             match ops::create_stream(&s2, args).await {
                 Ok(info) => {
@@ -3492,12 +3793,15 @@ impl App {
                     let timestamping_uncapped = config.timestamping.as_ref()
                         .map(|t| t.uncapped)
                         .unwrap_or(false);
+                    let delete_on_empty_min_age_secs = config.delete_on_empty
+                        .map(|d| d.min_age_secs);
 
                     let info = StreamConfigInfo {
                         storage_class,
                         retention_age_secs,
                         timestamping_mode,
                         timestamping_uncapped,
+                        delete_on_empty_min_age_secs,
                     };
                     let _ = tx.send(Event::StreamConfigForReconfigLoaded(Ok(info)));
                 }
@@ -3596,13 +3900,21 @@ impl App {
                 None
             };
 
+            let delete_on_empty = if config.delete_on_empty_enabled {
+                humantime::parse_duration(&config.delete_on_empty_min_age)
+                    .ok()
+                    .map(|d| crate::types::DeleteOnEmptyConfig { delete_on_empty_min_age: d })
+            } else {
+                None
+            };
+
             let args = ReconfigureStreamArgs {
                 uri: S2BasinAndStreamUri { basin, stream },
                 config: StreamConfig {
                     storage_class: config.storage_class,
                     retention_policy,
                     timestamping,
-                    delete_on_empty: None,
+                    delete_on_empty,
                 },
             };
             match ops::reconfigure_stream(&s2, args).await {

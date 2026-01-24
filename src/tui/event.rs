@@ -22,6 +22,7 @@ pub struct StreamConfigInfo {
     pub retention_age_secs: Option<u64>,  // None = infinite
     pub timestamping_mode: Option<TimestampingMode>,
     pub timestamping_uncapped: bool,
+    pub delete_on_empty_min_age_secs: Option<u64>,  // None = disabled
 }
 
 /// Events that can occur in the TUI
