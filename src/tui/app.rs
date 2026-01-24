@@ -17,7 +17,7 @@ use crate::ops;
 use crate::record_format::{RecordFormat, RecordsOut};
 use crate::types::{BasinConfig, DeleteOnEmptyConfig, Operation, RetentionPolicy, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass, StreamConfig, TimestampingConfig, TimestampingMode};
 
-use super::event::{BasinConfigInfo, Event, StreamConfigInfo};
+use super::event::{BasinConfigInfo, BenchFinalStats, BenchPhase, BenchSample, Event, StreamConfigInfo};
 use super::ui;
 
 /// Maximum records to keep in read view buffer
@@ -45,6 +45,7 @@ pub enum Screen {
     AccessTokens(AccessTokensState),
     MetricsView(MetricsViewState),
     Settings(SettingsState),
+    BenchView(BenchViewState),
 }
 
 /// State for the setup screen (first-time token entry)
@@ -393,6 +394,125 @@ pub struct MetricsViewState {
     pub calendar_start: Option<(i32, u32, u32)>, // Selected start date (year, month, day)
     pub calendar_end: Option<(i32, u32, u32)>,   // Selected end date
     pub calendar_selecting_end: bool, // true if selecting end date
+}
+
+/// Benchmark configuration phase
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BenchConfigField {
+    #[default]
+    RecordSize,
+    TargetMibps,
+    Duration,
+    CatchupDelay,
+    Start,
+}
+
+impl BenchConfigField {
+    pub fn next(&self) -> Self {
+        match self {
+            Self::RecordSize => Self::TargetMibps,
+            Self::TargetMibps => Self::Duration,
+            Self::Duration => Self::CatchupDelay,
+            Self::CatchupDelay => Self::Start,
+            Self::Start => Self::RecordSize,
+        }
+    }
+
+    pub fn prev(&self) -> Self {
+        match self {
+            Self::RecordSize => Self::Start,
+            Self::TargetMibps => Self::RecordSize,
+            Self::Duration => Self::TargetMibps,
+            Self::CatchupDelay => Self::Duration,
+            Self::Start => Self::CatchupDelay,
+        }
+    }
+}
+
+/// State for the benchmark view
+#[derive(Debug, Clone)]
+pub struct BenchViewState {
+    pub basin_name: BasinName,
+    // Configuration (shown before running)
+    pub config_phase: bool,
+    pub config_field: BenchConfigField,
+    pub record_size: u32,           // bytes (default 8KB)
+    pub target_mibps: u64,          // MiB/s (default 1)
+    pub duration_secs: u64,         // seconds (default 60)
+    pub catchup_delay_secs: u64,    // seconds (default 20)
+    pub editing: bool,
+    pub edit_buffer: String,
+    // Runtime state
+    pub stream_name: Option<String>,
+    pub phase: BenchPhase,
+    pub running: bool,
+    pub paused: bool,
+    pub stopping: bool,
+    // Progress
+    pub elapsed_secs: f64,
+    pub progress_pct: f64,
+    // Write stats
+    pub write_mibps: f64,
+    pub write_recps: f64,
+    pub write_bytes: u64,
+    pub write_records: u64,
+    pub write_history: Vec<f64>,    // throughput history for sparkline
+    // Read stats
+    pub read_mibps: f64,
+    pub read_recps: f64,
+    pub read_bytes: u64,
+    pub read_records: u64,
+    pub read_history: Vec<f64>,
+    // Catchup stats
+    pub catchup_mibps: f64,
+    pub catchup_recps: f64,
+    pub catchup_bytes: u64,
+    pub catchup_records: u64,
+    // Latency stats (final)
+    pub ack_latency: Option<crate::types::LatencyStats>,
+    pub e2e_latency: Option<crate::types::LatencyStats>,
+    // Error
+    pub error: Option<String>,
+}
+
+impl BenchViewState {
+    pub fn new(basin_name: BasinName) -> Self {
+        Self {
+            basin_name,
+            config_phase: true,
+            config_field: BenchConfigField::default(),
+            record_size: 8 * 1024,      // 8 KB
+            target_mibps: 1,
+            duration_secs: 60,
+            catchup_delay_secs: 20,
+            editing: false,
+            edit_buffer: String::new(),
+            stream_name: None,
+            phase: BenchPhase::Write,
+            running: false,
+            paused: false,
+            stopping: false,
+            elapsed_secs: 0.0,
+            progress_pct: 0.0,
+            write_mibps: 0.0,
+            write_recps: 0.0,
+            write_bytes: 0,
+            write_records: 0,
+            write_history: Vec::new(),
+            read_mibps: 0.0,
+            read_recps: 0.0,
+            read_bytes: 0,
+            read_records: 0,
+            read_history: Vec::new(),
+            catchup_mibps: 0.0,
+            catchup_recps: 0.0,
+            catchup_bytes: 0,
+            catchup_records: 0,
+            ack_latency: None,
+            e2e_latency: None,
+            error: None,
+        }
+    }
 }
 
 /// Status message level
@@ -1635,6 +1755,94 @@ impl App {
                     level: MessageLevel::Error,
                 });
             }
+
+            Event::BenchStreamCreated(result) => {
+                if let Screen::BenchView(state) = &mut self.screen {
+                    match result {
+                        Ok(stream_name) => {
+                            state.stream_name = Some(stream_name);
+                            state.running = true;
+                            self.message = Some(StatusMessage {
+                                text: "Benchmark started".to_string(),
+                                level: MessageLevel::Info,
+                            });
+                        }
+                        Err(e) => {
+                            state.error = Some(e.to_string());
+                            state.running = false;
+                        }
+                    }
+                }
+            }
+
+            Event::BenchWriteSample(sample) => {
+                if let Screen::BenchView(state) = &mut self.screen {
+                    state.write_mibps = sample.mib_per_sec;
+                    state.write_recps = sample.records_per_sec;
+                    state.write_bytes = sample.bytes;
+                    state.write_records = sample.records;
+                    state.elapsed_secs = sample.elapsed.as_secs_f64();
+                    state.progress_pct = (state.elapsed_secs / state.duration_secs as f64) * 100.0;
+                    // Keep last 60 samples for sparkline
+                    state.write_history.push(sample.mib_per_sec);
+                    if state.write_history.len() > 60 {
+                        state.write_history.remove(0);
+                    }
+                }
+            }
+
+            Event::BenchReadSample(sample) => {
+                if let Screen::BenchView(state) = &mut self.screen {
+                    state.read_mibps = sample.mib_per_sec;
+                    state.read_recps = sample.records_per_sec;
+                    state.read_bytes = sample.bytes;
+                    state.read_records = sample.records;
+                    // Keep last 60 samples for sparkline
+                    state.read_history.push(sample.mib_per_sec);
+                    if state.read_history.len() > 60 {
+                        state.read_history.remove(0);
+                    }
+                }
+            }
+
+            Event::BenchCatchupSample(sample) => {
+                if let Screen::BenchView(state) = &mut self.screen {
+                    state.catchup_mibps = sample.mib_per_sec;
+                    state.catchup_recps = sample.records_per_sec;
+                    state.catchup_bytes = sample.bytes;
+                    state.catchup_records = sample.records;
+                }
+            }
+
+            Event::BenchPhaseComplete(phase) => {
+                if let Screen::BenchView(state) = &mut self.screen {
+                    state.phase = match phase {
+                        BenchPhase::Write => BenchPhase::Read,
+                        BenchPhase::Read => BenchPhase::CatchupWait,
+                        BenchPhase::CatchupWait => BenchPhase::Catchup,
+                        BenchPhase::Catchup => BenchPhase::Catchup, // Final
+                    };
+                }
+            }
+
+            Event::BenchComplete(result) => {
+                if let Screen::BenchView(state) = &mut self.screen {
+                    state.running = false;
+                    match result {
+                        Ok(stats) => {
+                            state.ack_latency = stats.ack_latency;
+                            state.e2e_latency = stats.e2e_latency;
+                            self.message = Some(StatusMessage {
+                                text: "Benchmark complete!".to_string(),
+                                level: MessageLevel::Success,
+                            });
+                        }
+                        Err(e) => {
+                            state.error = Some(e.to_string());
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1699,6 +1907,7 @@ impl App {
             Screen::AccessTokens(_) => self.handle_access_tokens_key(key, tx),
             Screen::MetricsView(_) => self.handle_metrics_view_key(key, tx),
             Screen::Settings(_) => self.handle_settings_key(key, tx),
+            Screen::BenchView(_) => self.handle_bench_view_key(key, tx),
         }
     }
 
@@ -3160,6 +3369,13 @@ impl App {
             KeyCode::Char('A') => {
                 // Account Metrics
                 self.open_account_metrics(tx);
+            }
+            KeyCode::Char('B') => {
+                // Benchmark on selected basin
+                if let Some(basin) = filtered.get(state.selected) {
+                    let basin_name = basin.name.clone();
+                    self.screen = Screen::BenchView(BenchViewState::new(basin_name));
+                }
             }
             KeyCode::Esc => {
                 if !state.filter.is_empty() {
@@ -5876,4 +6092,459 @@ impl App {
         };
         dt.timestamp() as u32
     }
+
+    fn handle_bench_view_key(&mut self, key: KeyEvent, tx: mpsc::UnboundedSender<Event>) {
+        let Screen::BenchView(state) = &mut self.screen else {
+            return;
+        };
+
+        // If running, only allow stop/pause
+        if state.running {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    state.stopping = true;
+                    self.message = Some(StatusMessage {
+                        text: "Stopping benchmark...".to_string(),
+                        level: MessageLevel::Info,
+                    });
+                }
+                KeyCode::Char(' ') => {
+                    state.paused = !state.paused;
+                    self.message = Some(StatusMessage {
+                        text: if state.paused { "Paused".to_string() } else { "Resumed".to_string() },
+                        level: MessageLevel::Info,
+                    });
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // If showing results, allow going back
+        if !state.config_phase && !state.running {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    // Go back to basins
+                    self.screen = Screen::Basins(BasinsState::default());
+                    self.load_basins(tx);
+                }
+                KeyCode::Char('r') => {
+                    // Reset to config phase
+                    let basin_name = state.basin_name.clone();
+                    self.screen = Screen::BenchView(BenchViewState::new(basin_name));
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Config phase
+        if state.editing {
+            match key.code {
+                KeyCode::Esc => {
+                    state.editing = false;
+                    state.edit_buffer.clear();
+                }
+                KeyCode::Enter => {
+                    // Apply the edit
+                    if let Ok(val) = state.edit_buffer.parse::<u64>() {
+                        match state.config_field {
+                            BenchConfigField::RecordSize => {
+                                let val = val.clamp(128, 1024 * 1024) as u32;
+                                state.record_size = val;
+                            }
+                            BenchConfigField::TargetMibps => {
+                                state.target_mibps = val.max(1);
+                            }
+                            BenchConfigField::Duration => {
+                                state.duration_secs = val.max(1);
+                            }
+                            BenchConfigField::CatchupDelay => {
+                                state.catchup_delay_secs = val;
+                            }
+                            BenchConfigField::Start => {}
+                        }
+                    }
+                    state.editing = false;
+                    state.edit_buffer.clear();
+                }
+                KeyCode::Char(c) if c.is_ascii_digit() => {
+                    state.edit_buffer.push(c);
+                }
+                KeyCode::Backspace => {
+                    state.edit_buffer.pop();
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                // Go back to basins
+                self.screen = Screen::Basins(BasinsState::default());
+                self.load_basins(tx);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                state.config_field = state.config_field.prev();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                state.config_field = state.config_field.next();
+            }
+            KeyCode::Enter => {
+                if state.config_field == BenchConfigField::Start {
+                    // Start the benchmark
+                    let basin_name = state.basin_name.clone();
+                    let record_size = state.record_size;
+                    let target_mibps = state.target_mibps;
+                    let duration_secs = state.duration_secs;
+                    let catchup_delay_secs = state.catchup_delay_secs;
+                    state.config_phase = false;
+                    self.start_benchmark(basin_name, record_size, target_mibps, duration_secs, catchup_delay_secs, tx);
+                } else {
+                    // Edit the field
+                    state.editing = true;
+                    state.edit_buffer = match state.config_field {
+                        BenchConfigField::RecordSize => state.record_size.to_string(),
+                        BenchConfigField::TargetMibps => state.target_mibps.to_string(),
+                        BenchConfigField::Duration => state.duration_secs.to_string(),
+                        BenchConfigField::CatchupDelay => state.catchup_delay_secs.to_string(),
+                        BenchConfigField::Start => String::new(),
+                    };
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                // Decrease value
+                match state.config_field {
+                    BenchConfigField::RecordSize => {
+                        state.record_size = (state.record_size / 2).max(128);
+                    }
+                    BenchConfigField::TargetMibps => {
+                        state.target_mibps = (state.target_mibps.saturating_sub(1)).max(1);
+                    }
+                    BenchConfigField::Duration => {
+                        state.duration_secs = (state.duration_secs.saturating_sub(10)).max(10);
+                    }
+                    BenchConfigField::CatchupDelay => {
+                        state.catchup_delay_secs = state.catchup_delay_secs.saturating_sub(5);
+                    }
+                    BenchConfigField::Start => {}
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                // Increase value
+                match state.config_field {
+                    BenchConfigField::RecordSize => {
+                        state.record_size = (state.record_size * 2).min(1024 * 1024);
+                    }
+                    BenchConfigField::TargetMibps => {
+                        state.target_mibps = state.target_mibps.saturating_add(1).min(100);
+                    }
+                    BenchConfigField::Duration => {
+                        state.duration_secs = state.duration_secs.saturating_add(10).min(600);
+                    }
+                    BenchConfigField::CatchupDelay => {
+                        state.catchup_delay_secs = state.catchup_delay_secs.saturating_add(5).min(120);
+                    }
+                    BenchConfigField::Start => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn start_benchmark(
+        &self,
+        basin_name: BasinName,
+        record_size: u32,
+        target_mibps: u64,
+        duration_secs: u64,
+        catchup_delay_secs: u64,
+        tx: mpsc::UnboundedSender<Event>,
+    ) {
+        let Some(s2) = self.s2.clone() else {
+            let _ = tx.send(Event::BenchStreamCreated(Err(CliError::Config(
+                crate::error::CliConfigError::MissingAccessToken,
+            ))));
+            return;
+        };
+
+        tokio::spawn(async move {
+            use s2_sdk::types::{CreateStreamInput, DeleteStreamInput, StreamName};
+            use std::num::NonZeroU64;
+            use std::time::Duration;
+
+            // Create a temporary stream for the benchmark
+            let stream_name: StreamName = format!("_bench_{}", uuid::Uuid::new_v4())
+                .parse()
+                .expect("valid stream name");
+            let stream_name_str = stream_name.to_string();
+
+            // Get basin client
+            let basin = s2.basin(basin_name.clone());
+
+            // Create the stream
+            if let Err(e) = basin
+                .create_stream(CreateStreamInput::new(stream_name.clone()))
+                .await
+            {
+                let _ = tx.send(Event::BenchStreamCreated(Err(CliError::op(
+                    crate::error::OpKind::Bench,
+                    e,
+                ))));
+                return;
+            }
+
+            let _ = tx.send(Event::BenchStreamCreated(Ok(stream_name_str)));
+
+            // Get stream handle
+            let stream = basin.stream(stream_name.clone());
+
+            // Run the benchmark with events
+            let result = run_bench_with_events(
+                stream,
+                record_size as usize,
+                NonZeroU64::new(target_mibps).unwrap_or(NonZeroU64::new(1).unwrap()),
+                Duration::from_secs(duration_secs),
+                Duration::from_secs(catchup_delay_secs),
+                tx.clone(),
+            )
+            .await;
+
+            // Clean up the stream
+            let _ = basin.delete_stream(DeleteStreamInput::new(stream_name)).await;
+
+            let _ = tx.send(Event::BenchComplete(result));
+        });
+    }
+}
+
+/// Run the benchmark and send events to the TUI
+async fn run_bench_with_events(
+    stream: s2_sdk::S2Stream,
+    record_size: usize,
+    target_mibps: std::num::NonZeroU64,
+    duration: std::time::Duration,
+    catchup_delay: std::time::Duration,
+    tx: mpsc::UnboundedSender<Event>,
+) -> Result<BenchFinalStats, CliError> {
+    use crate::bench::*;
+    use crate::types::LatencyStats;
+    use futures::StreamExt;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::time::Instant;
+
+    const WRITE_DONE_SENTINEL: u64 = u64::MAX;
+
+    let bench_start = Instant::now();
+    let stop = Arc::new(AtomicBool::new(false));
+    let write_done_records = Arc::new(AtomicU64::new(WRITE_DONE_SENTINEL));
+
+    // We need to re-implement the bench logic here to send events
+    // For now, let's use a simplified version that calls into bench.rs
+    // and extracts the stats
+
+    // Actually, let's just run the benchmark and send periodic updates
+    // The bench module already has the core logic, we just need to wrap it
+
+    let mut write_bytes: u64 = 0;
+    let mut write_records: u64 = 0;
+    let mut write_elapsed = Duration::ZERO;
+    let mut read_bytes: u64 = 0;
+    let mut read_records: u64 = 0;
+    let mut read_elapsed = Duration::ZERO;
+    let mut catchup_bytes: u64 = 0;
+    let mut catchup_records: u64 = 0;
+    let mut catchup_elapsed = Duration::ZERO;
+    let mut all_ack_latencies: Vec<Duration> = Vec::new();
+    let mut all_e2e_latencies: Vec<Duration> = Vec::new();
+
+    // Run write and read streams concurrently
+    let write_stream = bench_write(
+        stream.clone(),
+        record_size,
+        target_mibps,
+        stop.clone(),
+        write_done_records.clone(),
+        bench_start,
+    );
+
+    let read_stream = bench_read(
+        stream.clone(),
+        record_size,
+        write_done_records.clone(),
+        bench_start,
+    );
+
+    enum BenchEvent {
+        Write(Result<BenchWriteSample, CliError>),
+        Read(Result<BenchReadSample, CliError>),
+        WriteDone,
+        ReadDone,
+    }
+
+    let (btx, mut brx) = tokio::sync::mpsc::unbounded_channel();
+    let write_tx = btx.clone();
+    let write_handle = tokio::spawn(async move {
+        let mut write_stream = std::pin::pin!(write_stream);
+        while let Some(sample) = write_stream.next().await {
+            if write_tx.send(BenchEvent::Write(sample)).is_err() {
+                return;
+            }
+        }
+        let _ = write_tx.send(BenchEvent::WriteDone);
+    });
+    let read_tx = btx.clone();
+    let read_handle = tokio::spawn(async move {
+        let mut read_stream = std::pin::pin!(read_stream);
+        while let Some(sample) = read_stream.next().await {
+            if read_tx.send(BenchEvent::Read(sample)).is_err() {
+                return;
+            }
+        }
+        let _ = read_tx.send(BenchEvent::ReadDone);
+    });
+    drop(btx);
+
+    let deadline = bench_start + duration;
+    let mut write_done = false;
+    let mut read_done = false;
+
+    loop {
+        if write_done && read_done {
+            break;
+        }
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline), if !stop.load(Ordering::Relaxed) => {
+                stop.store(true, Ordering::Relaxed);
+                let _ = tx.send(Event::BenchPhaseComplete(BenchPhase::Write));
+            }
+            event = brx.recv() => {
+                match event {
+                    Some(BenchEvent::Write(Ok(sample))) => {
+                        all_ack_latencies.extend(sample.ack_latencies.iter().copied());
+                        write_bytes = sample.bytes;
+                        write_records = sample.records;
+                        write_elapsed = sample.elapsed;
+                        let mibps = sample.bytes as f64 / (1024.0 * 1024.0) / sample.elapsed.as_secs_f64().max(0.001);
+                        let recps = sample.records as f64 / sample.elapsed.as_secs_f64().max(0.001);
+                        let _ = tx.send(Event::BenchWriteSample(BenchSample {
+                            bytes: sample.bytes,
+                            records: sample.records,
+                            elapsed: sample.elapsed,
+                            mib_per_sec: mibps,
+                            records_per_sec: recps,
+                        }));
+                    }
+                    Some(BenchEvent::Write(Err(e))) => {
+                        stop.store(true, Ordering::Relaxed);
+                        write_handle.abort();
+                        read_handle.abort();
+                        return Err(e);
+                    }
+                    Some(BenchEvent::WriteDone) => {
+                        write_done = true;
+                    }
+                    Some(BenchEvent::Read(Ok(sample))) => {
+                        all_e2e_latencies.extend(sample.e2e_latencies.iter().copied());
+                        read_bytes = sample.bytes;
+                        read_records = sample.records;
+                        read_elapsed = sample.elapsed;
+                        let mibps = sample.bytes as f64 / (1024.0 * 1024.0) / sample.elapsed.as_secs_f64().max(0.001);
+                        let recps = sample.records as f64 / sample.elapsed.as_secs_f64().max(0.001);
+                        let _ = tx.send(Event::BenchReadSample(BenchSample {
+                            bytes: sample.bytes,
+                            records: sample.records,
+                            elapsed: sample.elapsed,
+                            mib_per_sec: mibps,
+                            records_per_sec: recps,
+                        }));
+                    }
+                    Some(BenchEvent::Read(Err(e))) => {
+                        stop.store(true, Ordering::Relaxed);
+                        write_handle.abort();
+                        read_handle.abort();
+                        return Err(e);
+                    }
+                    Some(BenchEvent::ReadDone) => {
+                        read_done = true;
+                        let _ = tx.send(Event::BenchPhaseComplete(BenchPhase::Read));
+                    }
+                    None => {
+                        write_done = true;
+                        read_done = true;
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = write_handle.await;
+    let _ = read_handle.await;
+
+    // Catchup phase
+    let _ = tx.send(Event::BenchPhaseComplete(BenchPhase::CatchupWait));
+    tokio::time::sleep(catchup_delay).await;
+
+    let catchup_stream = bench_read_catchup(stream.clone(), record_size, bench_start);
+    let mut catchup_stream = std::pin::pin!(catchup_stream);
+    while let Some(result) = catchup_stream.next().await {
+        match result {
+            Ok(sample) => {
+                catchup_bytes = sample.bytes;
+                catchup_records = sample.records;
+                catchup_elapsed = sample.elapsed;
+                let mibps = sample.bytes as f64 / (1024.0 * 1024.0) / sample.elapsed.as_secs_f64().max(0.001);
+                let recps = sample.records as f64 / sample.elapsed.as_secs_f64().max(0.001);
+                let _ = tx.send(Event::BenchCatchupSample(BenchSample {
+                    bytes: sample.bytes,
+                    records: sample.records,
+                    elapsed: sample.elapsed,
+                    mib_per_sec: mibps,
+                    records_per_sec: recps,
+                }));
+            }
+            Err(e) => {
+                return Err(e);
+            }
+        }
+    }
+    let _ = tx.send(Event::BenchPhaseComplete(BenchPhase::Catchup));
+
+    let write_mibps = write_bytes as f64 / (1024.0 * 1024.0) / write_elapsed.as_secs_f64().max(0.001);
+    let write_recps = write_records as f64 / write_elapsed.as_secs_f64().max(0.001);
+    let read_mibps = read_bytes as f64 / (1024.0 * 1024.0) / read_elapsed.as_secs_f64().max(0.001);
+    let read_recps = read_records as f64 / read_elapsed.as_secs_f64().max(0.001);
+    let catchup_mibps = catchup_bytes as f64 / (1024.0 * 1024.0) / catchup_elapsed.as_secs_f64().max(0.001);
+    let catchup_recps = catchup_records as f64 / catchup_elapsed.as_secs_f64().max(0.001);
+
+    Ok(BenchFinalStats {
+        write_mibps,
+        write_recps,
+        write_bytes,
+        write_records,
+        write_elapsed,
+        read_mibps,
+        read_recps,
+        read_bytes,
+        read_records,
+        read_elapsed,
+        catchup_mibps,
+        catchup_recps,
+        catchup_bytes,
+        catchup_records,
+        catchup_elapsed,
+        ack_latency: if all_ack_latencies.is_empty() {
+            None
+        } else {
+            Some(LatencyStats::compute(all_ack_latencies))
+        },
+        e2e_latency: if all_e2e_latencies.is_empty() {
+            None
+        } else {
+            Some(LatencyStats::compute(all_e2e_latencies))
+        },
+    })
 }

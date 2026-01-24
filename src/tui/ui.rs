@@ -8,13 +8,14 @@ use ratatui::{
 
 use crate::types::{StorageClass, TimestampingMode};
 
-use super::app::{AccessTokensState, App, AgoUnit, AppendViewState, BasinsState, CompressionOption, ExpiryOption, InputMode, MessageLevel, MetricCategory, MetricsType, MetricsViewState, ReadStartFrom, ReadViewState, RetentionPolicyOption, ScopeOption, Screen, SettingsState, SetupState, StreamDetailState, StreamsState, Tab};
+use super::app::{AccessTokensState, App, AgoUnit, AppendViewState, BasinsState, BenchViewState, CompressionOption, ExpiryOption, InputMode, MessageLevel, MetricCategory, MetricsType, MetricsViewState, ReadStartFrom, ReadViewState, RetentionPolicyOption, ScopeOption, Screen, SettingsState, SetupState, StreamDetailState, StreamsState, Tab};
 
 // S2 Console dark theme
 const GREEN: Color = Color::Rgb(34, 197, 94);            // Active green
 const YELLOW: Color = Color::Rgb(250, 204, 21);          // Warning yellow
 const RED: Color = Color::Rgb(239, 68, 68);              // Error red
 const CYAN: Color = Color::Rgb(34, 211, 238);            // Cyan accent
+const BLUE: Color = Color::Rgb(59, 130, 246);            // Blue accent
 const WHITE: Color = Color::Rgb(255, 255, 255);          // Pure white
 const GRAY_100: Color = Color::Rgb(243, 244, 246);       // Near white
 const GRAY_500: Color = Color::Rgb(107, 114, 128);       // Muted gray
@@ -92,6 +93,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Screen::AccessTokens(state) => draw_access_tokens(f, chunks[1], state),
         Screen::MetricsView(state) => draw_metrics_view(f, chunks[1], state),
         Screen::Settings(state) => draw_settings(f, chunks[1], state),
+        Screen::BenchView(state) => draw_bench_view(f, chunks[1], state),
     }
 
     // Draw time picker popup if open
@@ -3113,11 +3115,11 @@ fn get_responsive_hints(screen: &Screen, width: usize) -> String {
         }
         Screen::Basins(_) => {
             if wide {
-                "/ filter | jk nav | ⏎ open | M basin metrics | A acct metrics | c new | e cfg | d del | r ref | ?".to_string()
+                "/ filter | jk nav | ⏎ open | B bench | M metrics | A acct | c new | e cfg | d del | r ref | ?".to_string()
             } else if medium {
-                "/ | jk ⏎ | M basin | A acct | c d e r ?".to_string()
+                "/ | jk ⏎ | B bench | M A | c d e r ?".to_string()
             } else {
-                "jk ⏎ M A c d ?".to_string()
+                "jk ⏎ B M A c d ?".to_string()
             }
         }
         Screen::Streams(_) => {
@@ -3198,6 +3200,27 @@ fn get_responsive_hints(screen: &Screen, width: usize) -> String {
                 }
             }
         }
+        Screen::BenchView(state) => {
+            if state.config_phase {
+                if wide {
+                    "jk nav | ←→ adjust | ⏎ edit/start | esc back | q quit".to_string()
+                } else {
+                    "jk ←→ ⏎ esc q".to_string()
+                }
+            } else if state.running {
+                if wide {
+                    "space pause | q stop".to_string()
+                } else {
+                    "space q".to_string()
+                }
+            } else {
+                if wide {
+                    "r restart | esc back | q quit".to_string()
+                } else {
+                    "r esc q".to_string()
+                }
+            }
+        }
     }
 }
 
@@ -3275,6 +3298,10 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
             Line::from(vec![
                 Span::styled("    r ", Style::default().fg(GREEN).bold()),
                 Span::styled("Refresh", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    B ", Style::default().fg(GREEN).bold()),
+                Span::styled("Benchmark", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(vec![
                 Span::styled("    M ", Style::default().fg(GREEN).bold()),
@@ -3482,6 +3509,56 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
             ]));
             lines.push(Line::from(""));
             lines
+        },
+        Screen::BenchView(state) => {
+            if state.config_phase {
+                vec![
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("  j/k ", Style::default().fg(GREEN).bold()),
+                        Span::styled("Navigate", Style::default().fg(TEXT_SECONDARY)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  h/l ", Style::default().fg(GREEN).bold()),
+                        Span::styled("Adjust value", Style::default().fg(TEXT_SECONDARY)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("enter ", Style::default().fg(GREEN).bold()),
+                        Span::styled("Edit / Start", Style::default().fg(TEXT_SECONDARY)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  esc ", Style::default().fg(GREEN).bold()),
+                        Span::styled("Back", Style::default().fg(TEXT_SECONDARY)),
+                    ]),
+                    Line::from(""),
+                ]
+            } else if state.running {
+                vec![
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("space ", Style::default().fg(GREEN).bold()),
+                        Span::styled("Pause / Resume", Style::default().fg(TEXT_SECONDARY)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("    q ", Style::default().fg(GREEN).bold()),
+                        Span::styled("Stop benchmark", Style::default().fg(TEXT_SECONDARY)),
+                    ]),
+                    Line::from(""),
+                ]
+            } else {
+                vec![
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("    r ", Style::default().fg(GREEN).bold()),
+                        Span::styled("Restart benchmark", Style::default().fg(TEXT_SECONDARY)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  esc ", Style::default().fg(GREEN).bold()),
+                        Span::styled("Back", Style::default().fg(TEXT_SECONDARY)),
+                    ]),
+                    Line::from(""),
+                ]
+            }
         },
     };
 
@@ -5166,4 +5243,456 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
     let hint_line = Line::from(Span::styled(hint, Style::default().fg(TEXT_MUTED)));
     let hint_para = Paragraph::new(hint_line).alignment(Alignment::Center);
     f.render_widget(hint_para, chunks[1]);
+}
+
+fn draw_bench_view(f: &mut Frame, area: Rect, state: &BenchViewState) {
+    let block = Block::default()
+        .title(Line::from(vec![
+            Span::styled(" Benchmark ", Style::default().fg(TEXT_PRIMARY).bold()),
+            Span::styled(
+                format!("• {} ", state.basin_name),
+                Style::default().fg(ACCENT),
+            ),
+        ]))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER))
+        .style(Style::default().bg(BG_DARK));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if state.config_phase {
+        draw_bench_config(f, inner, state);
+    } else {
+        draw_bench_running(f, inner, state);
+    }
+}
+
+fn draw_bench_config(f: &mut Frame, area: Rect, state: &BenchViewState) {
+    use crate::tui::app::BenchConfigField;
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Title
+            Constraint::Length(3), // Record size
+            Constraint::Length(3), // Target MiB/s
+            Constraint::Length(3), // Duration
+            Constraint::Length(3), // Catchup delay
+            Constraint::Length(3), // Start button
+            Constraint::Min(1),    // Spacer
+        ])
+        .margin(1)
+        .split(area);
+
+    // Title
+    let title = Paragraph::new(Line::from(vec![
+        Span::styled("Configure Benchmark", Style::default().fg(TEXT_PRIMARY).bold()),
+    ]))
+    .alignment(Alignment::Center);
+    f.render_widget(title, chunks[0]);
+
+    // Helper to draw a config field
+    let draw_field = |f: &mut Frame, area: Rect, label: &str, value: &str, selected: bool, editing: bool| {
+        let style = if selected {
+            Style::default().fg(if editing { YELLOW } else { GREEN }).bold()
+        } else {
+            Style::default().fg(TEXT_SECONDARY)
+        };
+
+        let prefix = if selected { "▸ " } else { "  " };
+        let suffix = if selected && !editing { " ◂" } else { "" };
+
+        let line = Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(format!("{}: ", label), Style::default().fg(TEXT_MUTED)),
+            Span::styled(value, style),
+            Span::styled(suffix, style),
+        ]);
+        f.render_widget(Paragraph::new(line), area);
+    };
+
+    // Record size
+    let record_size_str = if state.editing && state.config_field == BenchConfigField::RecordSize {
+        format!("{}_", state.edit_buffer)
+    } else {
+        format_bytes(state.record_size as u64)
+    };
+    draw_field(
+        f,
+        chunks[1],
+        "Record Size",
+        &record_size_str,
+        state.config_field == BenchConfigField::RecordSize,
+        state.editing,
+    );
+
+    // Target MiB/s
+    let target_str = if state.editing && state.config_field == BenchConfigField::TargetMibps {
+        format!("{}_", state.edit_buffer)
+    } else {
+        format!("{} MiB/s", state.target_mibps)
+    };
+    draw_field(
+        f,
+        chunks[2],
+        "Target Throughput",
+        &target_str,
+        state.config_field == BenchConfigField::TargetMibps,
+        state.editing,
+    );
+
+    // Duration
+    let duration_str = if state.editing && state.config_field == BenchConfigField::Duration {
+        format!("{}_", state.edit_buffer)
+    } else {
+        format!("{}s", state.duration_secs)
+    };
+    draw_field(
+        f,
+        chunks[3],
+        "Duration",
+        &duration_str,
+        state.config_field == BenchConfigField::Duration,
+        state.editing,
+    );
+
+    // Catchup delay
+    let catchup_str = if state.editing && state.config_field == BenchConfigField::CatchupDelay {
+        format!("{}_", state.edit_buffer)
+    } else {
+        format!("{}s", state.catchup_delay_secs)
+    };
+    draw_field(
+        f,
+        chunks[4],
+        "Catchup Delay",
+        &catchup_str,
+        state.config_field == BenchConfigField::CatchupDelay,
+        state.editing,
+    );
+
+    // Start button
+    let start_style = if state.config_field == BenchConfigField::Start {
+        Style::default().fg(BG_DARK).bg(GREEN).bold()
+    } else {
+        Style::default().fg(GREEN)
+    };
+    let start = Paragraph::new(Line::from(Span::styled(" ▶ Start Benchmark ", start_style)))
+        .alignment(Alignment::Center);
+    f.render_widget(start, chunks[5]);
+}
+
+fn draw_bench_running(f: &mut Frame, area: Rect, state: &BenchViewState) {
+    use crate::tui::event::BenchPhase;
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),  // Progress bar
+            Constraint::Length(5),  // Write stats
+            Constraint::Length(5),  // Read stats
+            Constraint::Length(5),  // Catchup stats (or waiting)
+            Constraint::Min(3),     // Latency stats or chart
+        ])
+        .margin(1)
+        .split(area);
+
+    // Progress bar
+    let progress_pct = state.progress_pct.min(100.0);
+    let phase_text = match state.phase {
+        BenchPhase::Write => "Writing",
+        BenchPhase::Read => "Reading",
+        BenchPhase::CatchupWait => "Waiting for catchup",
+        BenchPhase::Catchup => "Catchup read",
+    };
+
+    let progress_block = Block::default()
+        .title(Line::from(vec![
+            Span::styled(" Progress ", Style::default().fg(TEXT_PRIMARY).bold()),
+            Span::styled(
+                format!("• {} ", phase_text),
+                Style::default().fg(YELLOW),
+            ),
+        ]))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER));
+
+    let progress_inner = progress_block.inner(chunks[0]);
+    f.render_widget(progress_block, chunks[0]);
+
+    // Progress bar using block characters
+    let bar_width = progress_inner.width.saturating_sub(20) as usize;
+    let filled = ((progress_pct / 100.0) * bar_width as f64) as usize;
+    let empty = bar_width.saturating_sub(filled);
+
+    let progress_line = Line::from(vec![
+        Span::styled(format!("{:>5.1}% ", progress_pct), Style::default().fg(TEXT_PRIMARY)),
+        Span::styled("█".repeat(filled), Style::default().fg(GREEN)),
+        Span::styled("░".repeat(empty), Style::default().fg(TEXT_MUTED)),
+        Span::styled(
+            format!(" {:.1}s / {}s", state.elapsed_secs, state.duration_secs),
+            Style::default().fg(TEXT_SECONDARY),
+        ),
+    ]);
+    f.render_widget(Paragraph::new(progress_line), progress_inner);
+
+    // Write stats
+    draw_bench_stat_box(
+        f,
+        chunks[1],
+        "Write",
+        BLUE,
+        state.write_mibps,
+        state.write_recps,
+        state.write_bytes,
+        state.write_records,
+        &state.write_history,
+    );
+
+    // Read stats
+    draw_bench_stat_box(
+        f,
+        chunks[2],
+        "Read",
+        GREEN,
+        state.read_mibps,
+        state.read_recps,
+        state.read_bytes,
+        state.read_records,
+        &state.read_history,
+    );
+
+    // Catchup stats or waiting message
+    if matches!(state.phase, BenchPhase::CatchupWait) {
+        let wait_block = Block::default()
+            .title(Line::from(Span::styled(" Catchup ", Style::default().fg(TEXT_PRIMARY).bold())))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(BORDER));
+        let wait_inner = wait_block.inner(chunks[3]);
+        f.render_widget(wait_block, chunks[3]);
+
+        let wait_text = Paragraph::new(Line::from(vec![
+            Span::styled("Waiting ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(
+                format!("{}s", state.catchup_delay_secs),
+                Style::default().fg(CYAN),
+            ),
+            Span::styled(" before catchup read...", Style::default().fg(TEXT_MUTED)),
+        ]))
+        .alignment(Alignment::Center);
+        f.render_widget(wait_text, wait_inner);
+    } else {
+        draw_bench_stat_box(
+            f,
+            chunks[3],
+            "Catchup",
+            CYAN,
+            state.catchup_mibps,
+            state.catchup_recps,
+            state.catchup_bytes,
+            state.catchup_records,
+            &[],
+        );
+    }
+
+    // Latency stats (only show after completion)
+    if !state.running && (state.ack_latency.is_some() || state.e2e_latency.is_some()) {
+        draw_latency_stats(f, chunks[4], &state.ack_latency, &state.e2e_latency);
+    } else if let Some(error) = &state.error {
+        let error_block = Block::default()
+            .title(Line::from(Span::styled(" Error ", Style::default().fg(RED).bold())))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(RED));
+        let error_inner = error_block.inner(chunks[4]);
+        f.render_widget(error_block, chunks[4]);
+
+        let error_text = Paragraph::new(error.as_str())
+            .style(Style::default().fg(RED))
+            .wrap(ratatui::widgets::Wrap { trim: true });
+        f.render_widget(error_text, error_inner);
+    } else {
+        // Show sparkline area for throughput history
+        draw_throughput_sparklines(f, chunks[4], &state.write_history, &state.read_history);
+    }
+}
+
+fn draw_bench_stat_box(
+    f: &mut Frame,
+    area: Rect,
+    label: &str,
+    color: Color,
+    mibps: f64,
+    recps: f64,
+    bytes: u64,
+    records: u64,
+    history: &[f64],
+) {
+    let block = Block::default()
+        .title(Line::from(Span::styled(
+            format!(" {} ", label),
+            Style::default().fg(color).bold(),
+        )))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    // Layout: stats on left, sparkline on right
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(30), Constraint::Length(25)])
+        .split(inner);
+
+    // Stats
+    let stats = vec![
+        Line::from(vec![
+            Span::styled(format!("{:>8.2}", mibps), Style::default().fg(color).bold()),
+            Span::styled(" MiB/s  ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(format!("{:>8.0}", recps), Style::default().fg(color).bold()),
+            Span::styled(" rec/s", Style::default().fg(TEXT_MUTED)),
+        ]),
+        Line::from(vec![
+            Span::styled(format!("{:>8}", format_bytes(bytes)), Style::default().fg(TEXT_SECONDARY)),
+            Span::styled(" total  ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(format!("{:>8}", format_number(records)), Style::default().fg(TEXT_SECONDARY)),
+            Span::styled(" records", Style::default().fg(TEXT_MUTED)),
+        ]),
+    ];
+    f.render_widget(Paragraph::new(stats), chunks[0]);
+
+    // Sparkline
+    if !history.is_empty() {
+        let sparkline_data: Vec<u64> = history.iter().map(|v| (*v * 100.0) as u64).collect();
+        let sparkline = ratatui::widgets::Sparkline::default()
+            .data(&sparkline_data)
+            .style(Style::default().fg(color));
+        f.render_widget(sparkline, chunks[1]);
+    }
+}
+
+fn draw_throughput_sparklines(f: &mut Frame, area: Rect, write_history: &[f64], read_history: &[f64]) {
+    let block = Block::default()
+        .title(Line::from(Span::styled(" Throughput ", Style::default().fg(TEXT_PRIMARY).bold())))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if write_history.is_empty() && read_history.is_empty() {
+        let waiting = Paragraph::new("Collecting data...")
+            .style(Style::default().fg(TEXT_MUTED))
+            .alignment(Alignment::Center);
+        f.render_widget(waiting, inner);
+        return;
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(inner);
+
+    // Write sparkline
+    if !write_history.is_empty() {
+        let write_data: Vec<u64> = write_history.iter().map(|v| (*v * 100.0) as u64).collect();
+        let write_spark = ratatui::widgets::Sparkline::default()
+            .block(Block::default().title(Span::styled("Write", Style::default().fg(BLUE))))
+            .data(&write_data)
+            .style(Style::default().fg(BLUE));
+        f.render_widget(write_spark, chunks[0]);
+    }
+
+    // Read sparkline
+    if !read_history.is_empty() {
+        let read_data: Vec<u64> = read_history.iter().map(|v| (*v * 100.0) as u64).collect();
+        let read_spark = ratatui::widgets::Sparkline::default()
+            .block(Block::default().title(Span::styled("Read", Style::default().fg(GREEN))))
+            .data(&read_data)
+            .style(Style::default().fg(GREEN));
+        f.render_widget(read_spark, chunks[1]);
+    }
+}
+
+fn draw_latency_stats(
+    f: &mut Frame,
+    area: Rect,
+    ack_latency: &Option<crate::types::LatencyStats>,
+    e2e_latency: &Option<crate::types::LatencyStats>,
+) {
+    let block = Block::default()
+        .title(Line::from(Span::styled(" Latency Statistics ", Style::default().fg(TEXT_PRIMARY).bold())))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(inner);
+
+    // Ack latency
+    if let Some(stats) = ack_latency {
+        draw_latency_box(f, chunks[0], "Ack Latency", BLUE, stats);
+    }
+
+    // E2E latency
+    if let Some(stats) = e2e_latency {
+        draw_latency_box(f, chunks[1], "E2E Latency", GREEN, stats);
+    }
+}
+
+fn draw_latency_box(
+    f: &mut Frame,
+    area: Rect,
+    title: &str,
+    color: Color,
+    stats: &crate::types::LatencyStats,
+) {
+    let block = Block::default()
+        .title(Line::from(Span::styled(title, Style::default().fg(color).bold())))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let stats_vec = stats.clone().into_vec();
+    let max_val = stats_vec
+        .iter()
+        .map(|(_, d)| d.as_millis())
+        .max()
+        .unwrap_or(1) as f64;
+
+    let bar_width = inner.width.saturating_sub(20) as f64;
+
+    let lines: Vec<Line> = stats_vec
+        .iter()
+        .map(|(name, duration)| {
+            let ms = duration.as_millis();
+            let bar_len = ((ms as f64 / max_val) * bar_width).round() as usize;
+            Line::from(vec![
+                Span::styled(format!("{:>5}: ", name), Style::default().fg(TEXT_MUTED)),
+                Span::styled(format!("{:>4}ms ", ms), Style::default().fg(color).bold()),
+                Span::styled("█".repeat(bar_len), Style::default().fg(color)),
+            ])
+        })
+        .collect();
+
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+fn format_number(n: u64) -> String {
+    if n >= 1_000_000_000 {
+        format!("{:.2}B", n as f64 / 1_000_000_000.0)
+    } else if n >= 1_000_000 {
+        format!("{:.2}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.2}K", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
 }

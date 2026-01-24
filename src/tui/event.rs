@@ -1,7 +1,9 @@
+use std::time::Duration;
+
 use s2_sdk::types::{AccessTokenInfo, BasinInfo, Metric, SequencedRecord, StreamInfo, StreamPosition};
 
 use crate::error::CliError;
-use crate::types::{StorageClass, StreamConfig, TimestampingMode};
+use crate::types::{LatencyStats, StorageClass, StreamConfig, TimestampingMode};
 
 /// Basin config info for reconfiguration
 #[derive(Debug, Clone)]
@@ -99,4 +101,63 @@ pub enum Event {
 
     /// An error occurred in a background task
     Error(CliError),
+
+    /// Benchmark stream created
+    BenchStreamCreated(Result<String, CliError>),
+
+    /// Benchmark write sample received
+    BenchWriteSample(BenchSample),
+
+    /// Benchmark read sample received
+    BenchReadSample(BenchSample),
+
+    /// Benchmark catchup sample received
+    BenchCatchupSample(BenchSample),
+
+    /// Benchmark phase completed
+    BenchPhaseComplete(BenchPhase),
+
+    /// Benchmark finished with final stats
+    BenchComplete(Result<BenchFinalStats, CliError>),
+}
+
+/// A sample from the benchmark (write, read, or catchup)
+#[derive(Debug, Clone)]
+pub struct BenchSample {
+    pub bytes: u64,
+    pub records: u64,
+    pub elapsed: Duration,
+    pub mib_per_sec: f64,
+    pub records_per_sec: f64,
+}
+
+/// Which phase of the benchmark
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BenchPhase {
+    Write,
+    Read,
+    CatchupWait,
+    Catchup,
+}
+
+/// Final benchmark statistics
+#[derive(Debug, Clone)]
+pub struct BenchFinalStats {
+    pub write_mibps: f64,
+    pub write_recps: f64,
+    pub write_bytes: u64,
+    pub write_records: u64,
+    pub write_elapsed: Duration,
+    pub read_mibps: f64,
+    pub read_recps: f64,
+    pub read_bytes: u64,
+    pub read_records: u64,
+    pub read_elapsed: Duration,
+    pub catchup_mibps: f64,
+    pub catchup_recps: f64,
+    pub catchup_bytes: u64,
+    pub catchup_records: u64,
+    pub catchup_elapsed: Duration,
+    pub ack_latency: Option<LatencyStats>,
+    pub e2e_latency: Option<LatencyStats>,
 }

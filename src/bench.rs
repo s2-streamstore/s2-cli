@@ -34,20 +34,20 @@ const WRITE_DONE_SENTINEL: u64 = u64::MAX;
 type PendingAck =
     Pin<Box<dyn Future<Output = (Instant, Result<IndexedAppendAck, S2Error>)> + Send>>;
 
-struct BenchWriteSample {
-    bytes: u64,
-    records: u64,
-    elapsed: Duration,
-    ack_latencies: Vec<Duration>,
-    chain_hash: Option<u64>,
+pub struct BenchWriteSample {
+    pub bytes: u64,
+    pub records: u64,
+    pub elapsed: Duration,
+    pub ack_latencies: Vec<Duration>,
+    pub chain_hash: Option<u64>,
 }
 
-struct BenchReadSample {
-    bytes: u64,
-    records: u64,
-    elapsed: Duration,
-    e2e_latencies: Vec<Duration>,
-    chain_hash: Option<u64>,
+pub struct BenchReadSample {
+    pub bytes: u64,
+    pub records: u64,
+    pub elapsed: Duration,
+    pub e2e_latencies: Vec<Duration>,
+    pub chain_hash: Option<u64>,
 }
 
 trait BenchSample {
@@ -136,7 +136,7 @@ fn chain_hash(prev_hash: u64, body: &[u8]) -> u64 {
     hasher.digest()
 }
 
-fn bench_write(
+pub fn bench_write(
     stream: S2Stream,
     record_size: usize,
     target_mibps: NonZeroU64,
@@ -258,7 +258,7 @@ fn bench_write(
     }
 }
 
-fn bench_read(
+pub fn bench_read(
     stream: S2Stream,
     record_size: usize,
     write_done_records: Arc<AtomicU64>,
@@ -273,7 +273,7 @@ fn bench_read(
     )
 }
 
-fn bench_read_catchup(
+pub fn bench_read_catchup(
     stream: S2Stream,
     record_size: usize,
     bench_start: Instant,

@@ -799,6 +799,7 @@ impl From<Interval> for TimeseriesInterval {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct LatencyStats {
     pub min: std::time::Duration,
     pub median: std::time::Duration,
