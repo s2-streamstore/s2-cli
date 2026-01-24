@@ -8,7 +8,7 @@ use ratatui::{Terminal, prelude::Backend};
 use s2_sdk::types::{AccessTokenId, AccessTokenInfo, BasinInfo, BasinMetricSet, BasinName, StreamInfo, StreamMetricSet, StreamName, StreamPosition, TimeRange};
 use tokio::sync::mpsc;
 
-use crate::cli::{CreateBasinArgs, CreateStreamArgs, IssueAccessTokenArgs, ListAccessTokensArgs, ListBasinsArgs, ListStreamsArgs, ReadArgs, ReconfigureBasinArgs, ReconfigureStreamArgs};
+use crate::cli::{CreateStreamArgs, IssueAccessTokenArgs, ListAccessTokensArgs, ListBasinsArgs, ListStreamsArgs, ReadArgs, ReconfigureBasinArgs, ReconfigureStreamArgs};
 use crate::error::CliError;
 use crate::ops;
 use crate::record_format::{RecordFormat, RecordsOut};
@@ -222,6 +222,8 @@ pub enum InputMode {
     /// Creating a new basin
     CreateBasin {
         name: String,
+        // Basin scope (cloud provider/region)
+        scope: BasinScopeOption,
         // Basin-level settings
         create_stream_on_append: bool,
         create_stream_on_read: bool,
@@ -361,6 +363,13 @@ impl Default for RetentionPolicyOption {
     fn default() -> Self {
         Self::Infinite
     }
+}
+
+/// Basin scope option for UI (cloud provider/region)
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum BasinScopeOption {
+    #[default]
+    AwsUsEast1,
 }
 
 /// Expiry options for access tokens
@@ -1391,6 +1400,7 @@ impl App {
 
             InputMode::CreateBasin {
                 name,
+                scope,
                 create_stream_on_append,
                 create_stream_on_read,
                 storage_class,
@@ -1405,17 +1415,18 @@ impl App {
             } => {
                 // Form fields:
                 // 0: Name (text)
-                // 1: Storage Class (cycle: None/Standard/Express)
-                // 2: Retention Policy (cycle: Infinite/Age)
-                // 3: Retention Age (text, only if Age)
-                // 4: Timestamping Mode (cycle: None/ClientPrefer/ClientRequire/Arrival)
-                // 5: Timestamping Uncapped (toggle)
-                // 6: Delete-on-empty (toggle)
-                // 7: Delete-on-empty Min Age (text, only if enabled)
-                // 8: Create Stream On Append (toggle)
-                // 9: Create Stream On Read (toggle)
-                // 10: Create button
-                const FIELD_COUNT: usize = 11;
+                // 1: Scope (cycle: AWS us-east-1)
+                // 2: Storage Class (cycle: None/Standard/Express)
+                // 3: Retention Policy (cycle: Infinite/Age)
+                // 4: Retention Age (text, only if Age)
+                // 5: Timestamping Mode (cycle: None/ClientPrefer/ClientRequire/Arrival)
+                // 6: Timestamping Uncapped (toggle)
+                // 7: Delete-on-empty (toggle)
+                // 8: Delete-on-empty Min Age (text, only if enabled)
+                // 9: Create Stream On Append (toggle)
+                // 10: Create Stream On Read (toggle)
+                // 11: Create button
+                const FIELD_COUNT: usize = 12;
 
                 if *editing {
                     // Text editing mode
@@ -1426,9 +1437,9 @@ impl App {
                         KeyCode::Backspace => {
                             if *selected == 0 {
                                 name.pop();
-                            } else if *selected == 3 {
+                            } else if *selected == 4 {
                                 retention_age_input.pop();
-                            } else if *selected == 7 {
+                            } else if *selected == 8 {
                                 delete_on_empty_min_age.pop();
                             }
                         }
@@ -1438,12 +1449,12 @@ impl App {
                                 if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' {
                                     name.push(c);
                                 }
-                            } else if *selected == 3 {
+                            } else if *selected == 4 {
                                 // Retention age: alphanumeric for duration parsing
                                 if c.is_ascii_alphanumeric() {
                                     retention_age_input.push(c);
                                 }
-                            } else if *selected == 7 {
+                            } else if *selected == 8 {
                                 // Delete-on-empty min age: alphanumeric for duration parsing
                                 if c.is_ascii_alphanumeric() {
                                     delete_on_empty_min_age.push(c);
@@ -1461,12 +1472,12 @@ impl App {
                             if *selected > 0 {
                                 *selected -= 1;
                                 // Skip delete-on-empty min age if not enabled
-                                if *selected == 7 && !*delete_on_empty_enabled {
-                                    *selected = 6;
+                                if *selected == 8 && !*delete_on_empty_enabled {
+                                    *selected = 7;
                                 }
                                 // Skip retention age if not using Age policy
-                                if *selected == 3 && *retention_policy != RetentionPolicyOption::Age {
-                                    *selected = 2;
+                                if *selected == 4 && *retention_policy != RetentionPolicyOption::Age {
+                                    *selected = 3;
                                 }
                             }
                         }
@@ -1474,33 +1485,34 @@ impl App {
                             if *selected < FIELD_COUNT - 1 {
                                 *selected += 1;
                                 // Skip retention age if not using Age policy
-                                if *selected == 3 && *retention_policy != RetentionPolicyOption::Age {
-                                    *selected = 4;
+                                if *selected == 4 && *retention_policy != RetentionPolicyOption::Age {
+                                    *selected = 5;
                                 }
                                 // Skip delete-on-empty min age if not enabled
-                                if *selected == 7 && !*delete_on_empty_enabled {
-                                    *selected = 8;
+                                if *selected == 8 && !*delete_on_empty_enabled {
+                                    *selected = 9;
                                 }
                             }
                         }
                         KeyCode::Enter => {
                             match *selected {
                                 0 => *editing = true, // Edit name
-                                3 => {
+                                4 => {
                                     if *retention_policy == RetentionPolicyOption::Age {
                                         *editing = true; // Edit retention age
                                     }
                                 }
-                                7 => {
+                                8 => {
                                     if *delete_on_empty_enabled {
                                         *editing = true; // Edit delete-on-empty min age
                                     }
                                 }
-                                10 => {
+                                11 => {
                                     // Create button - validate and submit
                                     if name.len() >= 8 {
                                         // Extract all values to avoid borrow conflict
                                         let basin_name = name.clone();
+                                        let basin_scope = *scope;
                                         let csoa = *create_stream_on_append;
                                         let csor = *create_stream_on_read;
                                         let sc = storage_class.clone();
@@ -1512,7 +1524,7 @@ impl App {
                                         let doema = delete_on_empty_min_age.clone();
 
                                         let config = build_basin_config(csoa, csor, sc, rp, rai, tm, tu, doe, doema);
-                                        self.create_basin_with_config(basin_name, config, tx.clone());
+                                        self.create_basin_with_config(basin_name, basin_scope, config, tx.clone());
                                     }
                                 }
                                 _ => {}
@@ -1521,10 +1533,9 @@ impl App {
                         KeyCode::Char(' ') => {
                             // Toggle for boolean fields
                             match *selected {
-                                5 => *timestamping_uncapped = !*timestamping_uncapped,
-                                6 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
-                                8 => *create_stream_on_append = !*create_stream_on_append,
-                                9 => *create_stream_on_read = !*create_stream_on_read,
+                                6 => *timestamping_uncapped = !*timestamping_uncapped,
+                                9 => *create_stream_on_append = !*create_stream_on_append,
+                                10 => *create_stream_on_read = !*create_stream_on_read,
                                 _ => {}
                             }
                         }
@@ -1532,25 +1543,32 @@ impl App {
                             // Cycle left for enum fields
                             match *selected {
                                 1 => {
+                                    // Scope: currently only AWS us-east-1, so no cycling
+                                }
+                                2 => {
                                     *storage_class = match storage_class {
                                         None => Some(StorageClass::Express),
                                         Some(StorageClass::Standard) => None,
                                         Some(StorageClass::Express) => Some(StorageClass::Standard),
                                     };
                                 }
-                                2 => {
+                                3 => {
                                     *retention_policy = match retention_policy {
                                         RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
                                         RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
                                     };
                                 }
-                                4 => {
+                                5 => {
                                     *timestamping_mode = match timestamping_mode {
                                         None => Some(TimestampingMode::Arrival),
                                         Some(TimestampingMode::ClientPrefer) => None,
                                         Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::ClientPrefer),
                                         Some(TimestampingMode::Arrival) => Some(TimestampingMode::ClientRequire),
                                     };
+                                }
+                                7 => {
+                                    // Delete on empty: Never <-> After threshold
+                                    *delete_on_empty_enabled = !*delete_on_empty_enabled;
                                 }
                                 _ => {}
                             }
@@ -1559,25 +1577,32 @@ impl App {
                             // Cycle right for enum fields
                             match *selected {
                                 1 => {
+                                    // Scope: currently only AWS us-east-1, so no cycling
+                                }
+                                2 => {
                                     *storage_class = match storage_class {
                                         None => Some(StorageClass::Standard),
                                         Some(StorageClass::Standard) => Some(StorageClass::Express),
                                         Some(StorageClass::Express) => None,
                                     };
                                 }
-                                2 => {
+                                3 => {
                                     *retention_policy = match retention_policy {
                                         RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
                                         RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
                                     };
                                 }
-                                4 => {
+                                5 => {
                                     *timestamping_mode = match timestamping_mode {
                                         None => Some(TimestampingMode::ClientPrefer),
                                         Some(TimestampingMode::ClientPrefer) => Some(TimestampingMode::ClientRequire),
                                         Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::Arrival),
                                         Some(TimestampingMode::Arrival) => None,
                                     };
+                                }
+                                7 => {
+                                    // Delete on empty: Never <-> After threshold
+                                    *delete_on_empty_enabled = !*delete_on_empty_enabled;
                                 }
                                 _ => {}
                             }
@@ -2402,6 +2427,7 @@ impl App {
             KeyCode::Char('c') => {
                 self.input_mode = InputMode::CreateBasin {
                     name: String::new(),
+                    scope: BasinScopeOption::AwsUsEast1,
                     create_stream_on_append: false,
                     create_stream_on_read: false,
                     storage_class: None,
@@ -2870,7 +2896,7 @@ impl App {
         });
     }
 
-    fn create_basin_with_config(&mut self, name: String, config: BasinConfig, tx: mpsc::UnboundedSender<Event>) {
+    fn create_basin_with_config(&mut self, name: String, scope: BasinScopeOption, config: BasinConfig, tx: mpsc::UnboundedSender<Event>) {
         self.input_mode = InputMode::Normal;
         let s2 = self.s2.clone();
         let tx_refresh = tx.clone();
@@ -2883,11 +2909,16 @@ impl App {
                     return;
                 }
             };
-            let args = CreateBasinArgs {
-                basin: S2BasinUri(basin_name),
-                config,
+
+            // Build CreateBasinInput with scope
+            let sdk_scope = match scope {
+                BasinScopeOption::AwsUsEast1 => s2_sdk::types::BasinScope::AwsUsEast1,
             };
-            match ops::create_basin(&s2, args).await {
+            let input = s2_sdk::types::CreateBasinInput::new(basin_name)
+                .with_config(config.into())
+                .with_scope(sdk_scope);
+
+            match s2.create_basin(input).await.map_err(|e| CliError::op(crate::error::OpKind::CreateBasin, e)) {
                 Ok(info) => {
                     let _ = tx.send(Event::BasinCreated(Ok(info)));
                     // Trigger refresh
