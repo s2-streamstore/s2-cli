@@ -1037,7 +1037,18 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
         return;
     }
 
-    // Collect all time-series values for rendering
+    // Check if we have multiple Accumulation metrics (like Account Ops)
+    let accumulation_metrics: Vec<_> = state.metrics.iter()
+        .filter_map(|m| if let Metric::Accumulation(a) = m { Some(a) } else { None })
+        .collect();
+
+    if accumulation_metrics.len() > 1 {
+        // Multiple metrics - render as operations breakdown
+        render_multi_metric(f, chunks, &accumulation_metrics, state);
+        return;
+    }
+
+    // Collect all time-series values for rendering (single metric)
     let mut all_values: Vec<(u32, f64)> = Vec::new();
     let mut metric_name = String::new();
     let mut metric_unit = s2_sdk::types::MetricUnit::Bytes;
@@ -1217,6 +1228,191 @@ fn intensity_to_color(intensity: f64) -> Color {
     } else {
         Color::Rgb(220, 252, 231) // pale green
     }
+}
+
+/// Render multiple accumulation metrics (like Account Ops breakdown)
+fn render_multi_metric(
+    f: &mut Frame,
+    chunks: std::rc::Rc<[Rect]>,
+    metrics: &[&s2_sdk::types::AccumulationMetric],
+    state: &MetricsViewState,
+) {
+    use std::collections::BTreeMap;
+
+    // Color palette for different operation types (purple/blue gradient like web console)
+    let colors = [
+        Color::Rgb(139, 92, 246),   // Purple (primary)
+        Color::Rgb(124, 58, 237),   // Violet
+        Color::Rgb(99, 102, 241),   // Indigo
+        Color::Rgb(79, 70, 229),    // Deep indigo
+        Color::Rgb(59, 130, 246),   // Blue
+        Color::Rgb(37, 99, 235),    // Royal blue
+        Color::Rgb(96, 165, 250),   // Light blue
+        Color::Rgb(147, 197, 253),  // Pale blue
+        Color::Rgb(250, 204, 21),   // Yellow (for highlights)
+        Color::Rgb(251, 146, 60),   // Orange
+    ];
+
+    // Calculate totals for each metric and sort by total
+    let mut metric_totals: Vec<(String, f64, usize)> = metrics
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let total: f64 = m.values.iter().map(|(_, v)| v).sum();
+            (m.name.clone(), total, i)
+        })
+        .collect();
+    metric_totals.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Aggregate all values by timestamp for the area chart (sum of all operation types)
+    let mut time_buckets: BTreeMap<u32, f64> = BTreeMap::new();
+    for metric in metrics.iter() {
+        for (ts, val) in &metric.values {
+            *time_buckets.entry(*ts).or_default() += val;
+        }
+    }
+
+    let all_values: Vec<(u32, f64)> = time_buckets.into_iter().collect();
+    let values_only: Vec<f64> = all_values.iter().map(|(_, v)| *v).collect();
+
+    let grand_total: f64 = values_only.iter().sum();
+    let min_val = values_only.iter().cloned().fold(f64::MAX, f64::min);
+    let max_val = values_only.iter().cloned().fold(f64::MIN, f64::max);
+    let avg_val = if !values_only.is_empty() {
+        grand_total / values_only.len() as f64
+    } else {
+        0.0
+    };
+    let latest_val = values_only.last().cloned().unwrap_or(0.0);
+    let first_val = values_only.first().cloned().unwrap_or(0.0);
+    let first_ts = all_values.first().map(|(ts, _)| *ts).unwrap_or(0);
+    let last_ts = all_values.last().map(|(ts, _)| *ts).unwrap_or(0);
+
+    // Calculate change for trend indicator
+    let change = if first_val > 0.0 {
+        ((latest_val - first_val) / first_val) * 100.0
+    } else if latest_val > 0.0 {
+        100.0
+    } else {
+        0.0
+    };
+
+    // === Stats header row (nerdy style) ===
+    let stats_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER))
+        .style(Style::default().bg(BG_PANEL));
+
+    let stats_inner = stats_block.inner(chunks[1]);
+    f.render_widget(stats_block, chunks[1]);
+
+    let (trend_arrow, trend_color) = if change > 1.0 {
+        ("↑", Color::Rgb(34, 197, 94))
+    } else if change < -1.0 {
+        ("↓", Color::Rgb(239, 68, 68))
+    } else {
+        ("→", TEXT_MUTED)
+    };
+    let trend_text = if change.abs() > 0.1 {
+        format!("{:+.1}%", change)
+    } else {
+        "stable".to_string()
+    };
+
+    let stats_line = Line::from(vec![
+        Span::styled(" NOW ", Style::default().fg(BG_DARK).bg(GREEN).bold()),
+        Span::styled(format!(" {} ", format_count(latest_val as u64)), Style::default().fg(GREEN).bold()),
+        Span::styled(trend_arrow, Style::default().fg(trend_color).bold()),
+        Span::styled(format!("{} ", trend_text), Style::default().fg(trend_color)),
+        Span::styled("  |  ", Style::default().fg(BORDER)),
+        Span::styled("min ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(format_count(min_val as u64), Style::default().fg(Color::Rgb(96, 165, 250))),
+        Span::styled("  max ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(format_count(max_val as u64), Style::default().fg(Color::Rgb(251, 191, 36))),
+        Span::styled("  avg ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(format_count(avg_val as u64), Style::default().fg(Color::Rgb(167, 139, 250))),
+        Span::styled(format!("  |  {} pts", all_values.len()), Style::default().fg(TEXT_MUTED)),
+    ]);
+    let stats_para = Paragraph::new(stats_line).alignment(Alignment::Center);
+    f.render_widget(stats_para, stats_inner);
+
+    // === Main Area Chart (total operations over time) ===
+    let chart_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(GREEN))
+        .title(Line::from(vec![
+            Span::styled(" ", Style::default()),
+            Span::styled("Total Operations", Style::default().fg(GREEN).bold()),
+            Span::styled(" ", Style::default()),
+        ]))
+        .style(Style::default().bg(BG_DARK));
+
+    let chart_inner = chart_block.inner(chunks[2]);
+    f.render_widget(chart_block, chunks[2]);
+
+    if !all_values.is_empty() {
+        render_area_chart(f, chart_inner, &all_values, min_val, max_val, s2_sdk::types::MetricUnit::Operations, first_ts, last_ts);
+    }
+
+    // === Timeline/Legend area - show breakdown by operation type ===
+    let timeline_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![
+            Span::styled(" Breakdown ", Style::default().fg(TEXT_PRIMARY)),
+            Span::styled(format!("({} operation types)", metrics.len()), Style::default().fg(TEXT_MUTED)),
+        ]))
+        .title_bottom(Line::from(Span::styled(" j/k scroll ", Style::default().fg(TEXT_MUTED))))
+        .style(Style::default().bg(BG_DARK));
+
+    let timeline_inner = timeline_block.inner(chunks[3]);
+    f.render_widget(timeline_block, chunks[3]);
+
+    // Render breakdown as horizontal bars
+    let visible_rows = timeline_inner.height as usize;
+    let bar_width = timeline_inner.width.saturating_sub(28) as usize;
+    let max_total = metric_totals.iter().map(|(_, t, _)| *t).fold(0.0, f64::max);
+
+    let lines: Vec<Line> = metric_totals
+        .iter()
+        .enumerate()
+        .skip(state.scroll)
+        .take(visible_rows)
+        .map(|(_i, (name, total, orig_idx))| {
+            let color = colors[*orig_idx % colors.len()];
+            let bar_len = if max_total > 0.0 {
+                ((total / max_total) * bar_width as f64) as usize
+            } else {
+                0
+            };
+
+            let bar: String = "█".repeat(bar_len);
+            let percentage = if grand_total > 0.0 {
+                (total / grand_total) * 100.0
+            } else {
+                0.0
+            };
+
+            let display_name = name.replace('_', " ");
+            let display_name = if display_name.len() > 14 {
+                format!("{}…", &display_name[..13])
+            } else {
+                display_name
+            };
+
+            Line::from(vec![
+                Span::styled(format!(" {:>14} ", display_name), Style::default().fg(TEXT_PRIMARY)),
+                Span::styled(bar, Style::default().fg(color)),
+                Span::styled(
+                    format!(" {:>6} ({:>4.1}%)", format_count(*total as u64), percentage),
+                    Style::default().fg(TEXT_SECONDARY)
+                ),
+            ])
+        })
+        .collect();
+
+    let bars_para = Paragraph::new(lines);
+    f.render_widget(bars_para, timeline_inner);
 }
 
 /// Render a label metric (list of string values, like Active Basins)
