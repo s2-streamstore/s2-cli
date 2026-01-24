@@ -1674,6 +1674,16 @@ impl App {
                 editing_age,
                 age_input,
             } => {
+                // Field indices:
+                // 0: Storage class
+                // 1: Retention policy
+                // 2: Retention age (if Age-based)
+                // 3: Timestamping mode
+                // 4: Timestamping uncapped
+                // 5: Create on append
+                // 6: Create on read
+                const BASIN_MAX_ROW: usize = 6;
+
                 // If editing age, handle number input
                 if *editing_age {
                     match key.code {
@@ -1695,9 +1705,6 @@ impl App {
                     return;
                 }
 
-                // Basin has 7 rows: append, read, storage, retention_type, retention_age, ts_mode, ts_uncapped
-                const BASIN_MAX_ROW: usize = 6;
-
                 match key.code {
                     KeyCode::Esc => {
                         self.input_mode = InputMode::Normal;
@@ -1705,41 +1712,81 @@ impl App {
                     KeyCode::Up | KeyCode::Char('k') => {
                         if *selected > 0 {
                             *selected -= 1;
+                            // Skip retention age if not using Age policy
+                            if *selected == 2 && *retention_policy != RetentionPolicyOption::Age {
+                                *selected = 1;
+                            }
                         }
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
                         if *selected < BASIN_MAX_ROW {
                             *selected += 1;
+                            // Skip retention age if not using Age policy
+                            if *selected == 2 && *retention_policy != RetentionPolicyOption::Age {
+                                *selected = 3;
+                            }
                         }
                     }
-                    KeyCode::Char(' ') | KeyCode::Enter => {
+                    KeyCode::Char(' ') => {
+                        // Toggle for boolean fields
                         match *selected {
-                            0 => *create_stream_on_append = Some(!create_stream_on_append.unwrap_or(false)),
-                            1 => *create_stream_on_read = Some(!create_stream_on_read.unwrap_or(false)),
-                            2 => {
-                                // Cycle storage class
+                            4 => *timestamping_uncapped = Some(!timestamping_uncapped.unwrap_or(false)),
+                            5 => *create_stream_on_append = Some(!create_stream_on_append.unwrap_or(false)),
+                            6 => *create_stream_on_read = Some(!create_stream_on_read.unwrap_or(false)),
+                            _ => {}
+                        }
+                    }
+                    KeyCode::Enter => {
+                        // Edit text fields
+                        if *selected == 2 && *retention_policy == RetentionPolicyOption::Age {
+                            *editing_age = true;
+                            *age_input = retention_age_secs.to_string();
+                        }
+                    }
+                    KeyCode::Left | KeyCode::Char('h') => {
+                        // Cycle left for enum fields
+                        match *selected {
+                            0 => {
                                 *storage_class = match storage_class {
                                     None => Some(StorageClass::Express),
-                                    Some(StorageClass::Express) => Some(StorageClass::Standard),
                                     Some(StorageClass::Standard) => None,
+                                    Some(StorageClass::Express) => Some(StorageClass::Standard),
                                 };
                             }
-                            3 => {
-                                // Toggle retention policy
+                            1 => {
                                 *retention_policy = match retention_policy {
                                     RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
                                     RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
                                 };
                             }
-                            4 => {
-                                // Edit retention age
-                                if *retention_policy == RetentionPolicyOption::Age {
-                                    *editing_age = true;
-                                    *age_input = retention_age_secs.to_string();
-                                }
+                            3 => {
+                                *timestamping_mode = match timestamping_mode {
+                                    None => Some(TimestampingMode::Arrival),
+                                    Some(TimestampingMode::ClientPrefer) => None,
+                                    Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::ClientPrefer),
+                                    Some(TimestampingMode::Arrival) => Some(TimestampingMode::ClientRequire),
+                                };
                             }
-                            5 => {
-                                // Cycle timestamping mode
+                            _ => {}
+                        }
+                    }
+                    KeyCode::Right | KeyCode::Char('l') => {
+                        // Cycle right for enum fields
+                        match *selected {
+                            0 => {
+                                *storage_class = match storage_class {
+                                    None => Some(StorageClass::Standard),
+                                    Some(StorageClass::Standard) => Some(StorageClass::Express),
+                                    Some(StorageClass::Express) => None,
+                                };
+                            }
+                            1 => {
+                                *retention_policy = match retention_policy {
+                                    RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
+                                    RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
+                                };
+                            }
+                            3 => {
                                 *timestamping_mode = match timestamping_mode {
                                     None => Some(TimestampingMode::ClientPrefer),
                                     Some(TimestampingMode::ClientPrefer) => Some(TimestampingMode::ClientRequire),
@@ -1747,7 +1794,6 @@ impl App {
                                     Some(TimestampingMode::Arrival) => None,
                                 };
                             }
-                            6 => *timestamping_uncapped = Some(!timestamping_uncapped.unwrap_or(false)),
                             _ => {}
                         }
                     }
@@ -1800,7 +1846,12 @@ impl App {
                     return;
                 }
 
-                // Stream has 5 rows: storage, retention_type, retention_age, ts_mode, ts_uncapped
+                // Stream has 5 rows:
+                // 0: Storage class
+                // 1: Retention policy
+                // 2: Retention age (if Age-based)
+                // 3: Timestamping mode
+                // 4: Timestamping uncapped
                 const STREAM_MAX_ROW: usize = 4;
 
                 match key.code {
@@ -1810,20 +1861,42 @@ impl App {
                     KeyCode::Up | KeyCode::Char('k') => {
                         if *selected > 0 {
                             *selected -= 1;
+                            // Skip retention age if not using Age policy
+                            if *selected == 2 && *retention_policy != RetentionPolicyOption::Age {
+                                *selected = 1;
+                            }
                         }
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
                         if *selected < STREAM_MAX_ROW {
                             *selected += 1;
+                            // Skip retention age if not using Age policy
+                            if *selected == 2 && *retention_policy != RetentionPolicyOption::Age {
+                                *selected = 3;
+                            }
                         }
                     }
-                    KeyCode::Char(' ') | KeyCode::Enter => {
+                    KeyCode::Char(' ') => {
+                        // Toggle for boolean fields
+                        if *selected == 4 {
+                            *timestamping_uncapped = Some(!timestamping_uncapped.unwrap_or(false));
+                        }
+                    }
+                    KeyCode::Enter => {
+                        // Edit text fields
+                        if *selected == 2 && *retention_policy == RetentionPolicyOption::Age {
+                            *editing_age = true;
+                            *age_input = retention_age_secs.to_string();
+                        }
+                    }
+                    KeyCode::Left | KeyCode::Char('h') => {
+                        // Cycle left for enum fields
                         match *selected {
                             0 => {
                                 *storage_class = match storage_class {
                                     None => Some(StorageClass::Express),
-                                    Some(StorageClass::Express) => Some(StorageClass::Standard),
                                     Some(StorageClass::Standard) => None,
+                                    Some(StorageClass::Express) => Some(StorageClass::Standard),
                                 };
                             }
                             1 => {
@@ -1832,11 +1905,32 @@ impl App {
                                     RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
                                 };
                             }
-                            2 => {
-                                if *retention_policy == RetentionPolicyOption::Age {
-                                    *editing_age = true;
-                                    *age_input = retention_age_secs.to_string();
-                                }
+                            3 => {
+                                *timestamping_mode = match timestamping_mode {
+                                    None => Some(TimestampingMode::Arrival),
+                                    Some(TimestampingMode::ClientPrefer) => None,
+                                    Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::ClientPrefer),
+                                    Some(TimestampingMode::Arrival) => Some(TimestampingMode::ClientRequire),
+                                };
+                            }
+                            _ => {}
+                        }
+                    }
+                    KeyCode::Right | KeyCode::Char('l') => {
+                        // Cycle right for enum fields
+                        match *selected {
+                            0 => {
+                                *storage_class = match storage_class {
+                                    None => Some(StorageClass::Standard),
+                                    Some(StorageClass::Standard) => Some(StorageClass::Express),
+                                    Some(StorageClass::Express) => None,
+                                };
+                            }
+                            1 => {
+                                *retention_policy = match retention_policy {
+                                    RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
+                                    RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
+                                };
                             }
                             3 => {
                                 *timestamping_mode = match timestamping_mode {
@@ -1846,7 +1940,6 @@ impl App {
                                     Some(TimestampingMode::Arrival) => None,
                                 };
                             }
-                            4 => *timestamping_uncapped = Some(!timestamping_uncapped.unwrap_or(false)),
                             _ => {}
                         }
                     }
