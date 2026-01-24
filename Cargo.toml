@@ -45,6 +45,7 @@ xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 # TUI
 ratatui = "0.29"
 crossterm = "0.28"
+chrono = "0.4"
 
 [dev-dependencies]
 assert_cmd = "2.1"

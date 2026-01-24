@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
+use chrono::{Datelike, NaiveDate};
+
 use base64ct::Encoding;
 use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use futures::StreamExt;
@@ -266,14 +268,131 @@ impl MetricCategory {
     }
 }
 
+/// Time range options for metrics
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimeRangeOption {
+    OneHour,
+    SixHours,
+    TwelveHours,
+    #[default]
+    TwentyFourHours,
+    ThreeDays,
+    SevenDays,
+    ThirtyDays,
+    Custom { start: u32, end: u32 }, // Unix timestamps
+}
+
+impl TimeRangeOption {
+    pub const PRESETS: &'static [TimeRangeOption] = &[
+        TimeRangeOption::OneHour,
+        TimeRangeOption::SixHours,
+        TimeRangeOption::TwelveHours,
+        TimeRangeOption::TwentyFourHours,
+        TimeRangeOption::ThreeDays,
+        TimeRangeOption::SevenDays,
+        TimeRangeOption::ThirtyDays,
+    ];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TimeRangeOption::OneHour => "1h",
+            TimeRangeOption::SixHours => "6h",
+            TimeRangeOption::TwelveHours => "12h",
+            TimeRangeOption::TwentyFourHours => "24h",
+            TimeRangeOption::ThreeDays => "3d",
+            TimeRangeOption::SevenDays => "7d",
+            TimeRangeOption::ThirtyDays => "30d",
+            TimeRangeOption::Custom { .. } => "Custom",
+        }
+    }
+
+    pub fn as_label(&self) -> &'static str {
+        match self {
+            TimeRangeOption::OneHour => "Last hour",
+            TimeRangeOption::SixHours => "Last 6 hours",
+            TimeRangeOption::TwelveHours => "Last 12 hours",
+            TimeRangeOption::TwentyFourHours => "Last 24 hours",
+            TimeRangeOption::ThreeDays => "Last 3 days",
+            TimeRangeOption::SevenDays => "Last 7 days",
+            TimeRangeOption::ThirtyDays => "Last 30 days",
+            TimeRangeOption::Custom { .. } => "Custom range",
+        }
+    }
+
+    pub fn as_duration(&self) -> Duration {
+        match self {
+            TimeRangeOption::OneHour => Duration::from_secs(60 * 60),
+            TimeRangeOption::SixHours => Duration::from_secs(6 * 60 * 60),
+            TimeRangeOption::TwelveHours => Duration::from_secs(12 * 60 * 60),
+            TimeRangeOption::TwentyFourHours => Duration::from_secs(24 * 60 * 60),
+            TimeRangeOption::ThreeDays => Duration::from_secs(3 * 24 * 60 * 60),
+            TimeRangeOption::SevenDays => Duration::from_secs(7 * 24 * 60 * 60),
+            TimeRangeOption::ThirtyDays => Duration::from_secs(30 * 24 * 60 * 60),
+            TimeRangeOption::Custom { start, end } => Duration::from_secs((end - start) as u64),
+        }
+    }
+
+    pub fn get_range(&self) -> (u32, u32) {
+        match self {
+            TimeRangeOption::Custom { start, end } => (*start, *end),
+            _ => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as u32;
+                let range_secs = self.as_duration().as_secs() as u32;
+                (now.saturating_sub(range_secs), now)
+            }
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        match self {
+            TimeRangeOption::OneHour => TimeRangeOption::SixHours,
+            TimeRangeOption::SixHours => TimeRangeOption::TwelveHours,
+            TimeRangeOption::TwelveHours => TimeRangeOption::TwentyFourHours,
+            TimeRangeOption::TwentyFourHours => TimeRangeOption::ThreeDays,
+            TimeRangeOption::ThreeDays => TimeRangeOption::SevenDays,
+            TimeRangeOption::SevenDays => TimeRangeOption::ThirtyDays,
+            TimeRangeOption::ThirtyDays => TimeRangeOption::OneHour,
+            TimeRangeOption::Custom { .. } => TimeRangeOption::OneHour,
+        }
+    }
+
+    pub fn prev(&self) -> Self {
+        match self {
+            TimeRangeOption::OneHour => TimeRangeOption::ThirtyDays,
+            TimeRangeOption::SixHours => TimeRangeOption::OneHour,
+            TimeRangeOption::TwelveHours => TimeRangeOption::SixHours,
+            TimeRangeOption::TwentyFourHours => TimeRangeOption::TwelveHours,
+            TimeRangeOption::ThreeDays => TimeRangeOption::TwentyFourHours,
+            TimeRangeOption::SevenDays => TimeRangeOption::ThreeDays,
+            TimeRangeOption::ThirtyDays => TimeRangeOption::SevenDays,
+            TimeRangeOption::Custom { .. } => TimeRangeOption::ThirtyDays,
+        }
+    }
+}
+
 /// State for the metrics view
 #[derive(Debug, Clone)]
 pub struct MetricsViewState {
     pub metrics_type: MetricsType,
     pub metrics: Vec<s2_sdk::types::Metric>,
     pub selected_category: MetricCategory,
+    pub time_range: TimeRangeOption,
     pub loading: bool,
     pub scroll: usize,
+    // Time picker popup state
+    pub time_picker_open: bool,
+    pub time_picker_selected: usize,
+    // Calendar picker state
+    pub calendar_open: bool,
+    pub calendar_year: i32,
+    pub calendar_month: u32,
+    pub calendar_day: u32,         // Currently highlighted day
+    pub calendar_start: Option<(i32, u32, u32)>, // Selected start date (year, month, day)
+    pub calendar_end: Option<(i32, u32, u32)>,   // Selected end date
+    pub calendar_selecting_end: bool, // true if selecting end date
 }
 
 /// Status message level
@@ -5091,58 +5210,92 @@ impl App {
     /// Open basin metrics view
     /// Open account metrics view
     fn open_account_metrics(&mut self, tx: mpsc::UnboundedSender<Event>) {
+        let (year, month, day) = Self::today();
         self.screen = Screen::MetricsView(MetricsViewState {
             metrics_type: MetricsType::Account,
             metrics: Vec::new(),
             selected_category: MetricCategory::ActiveBasins,
+            time_range: TimeRangeOption::default(),
             loading: true,
             scroll: 0,
+            time_picker_open: false,
+            time_picker_selected: 3, // Default to 24h (index 3)
+            calendar_open: false,
+            calendar_year: year,
+            calendar_month: month,
+            calendar_day: day,
+            calendar_start: None,
+            calendar_end: None,
+            calendar_selecting_end: false,
         });
-        self.load_account_metrics(MetricCategory::ActiveBasins, tx);
+        self.load_account_metrics(MetricCategory::ActiveBasins, TimeRangeOption::default(), tx);
     }
 
     fn open_basin_metrics(&mut self, basin_name: BasinName, tx: mpsc::UnboundedSender<Event>) {
+        let (year, month, day) = Self::today();
         self.screen = Screen::MetricsView(MetricsViewState {
             metrics_type: MetricsType::Basin { basin_name: basin_name.clone() },
             metrics: Vec::new(),
             selected_category: MetricCategory::Storage,
+            time_range: TimeRangeOption::default(),
             loading: true,
             scroll: 0,
+            time_picker_open: false,
+            time_picker_selected: 3,
+            calendar_open: false,
+            calendar_year: year,
+            calendar_month: month,
+            calendar_day: day,
+            calendar_start: None,
+            calendar_end: None,
+            calendar_selecting_end: false,
         });
-        self.load_basin_metrics(basin_name, MetricCategory::Storage, tx);
+        self.load_basin_metrics(basin_name, MetricCategory::Storage, TimeRangeOption::default(), tx);
     }
 
     /// Open stream metrics view
     fn open_stream_metrics(&mut self, basin_name: BasinName, stream_name: StreamName, tx: mpsc::UnboundedSender<Event>) {
+        let (year, month, day) = Self::today();
         self.screen = Screen::MetricsView(MetricsViewState {
             metrics_type: MetricsType::Stream { basin_name: basin_name.clone(), stream_name: stream_name.clone() },
             metrics: Vec::new(),
             selected_category: MetricCategory::Storage,
+            time_range: TimeRangeOption::default(),
             loading: true,
             scroll: 0,
+            time_picker_open: false,
+            time_picker_selected: 3,
+            calendar_open: false,
+            calendar_year: year,
+            calendar_month: month,
+            calendar_day: day,
+            calendar_start: None,
+            calendar_end: None,
+            calendar_selecting_end: false,
         });
-        self.load_stream_metrics(basin_name, stream_name, tx);
+        self.load_stream_metrics(basin_name, stream_name, TimeRangeOption::default(), tx);
+    }
+
+    /// Get today's date as (year, month, day)
+    fn today() -> (i32, u32, u32) {
+        use chrono::{Datelike, Local};
+        let today = Local::now();
+        (today.year(), today.month(), today.day())
     }
 
     /// Load basin metrics
     /// Load account metrics
-    fn load_account_metrics(&self, category: MetricCategory, tx: mpsc::UnboundedSender<Event>) {
+    fn load_account_metrics(&self, category: MetricCategory, time_range: TimeRangeOption, tx: mpsc::UnboundedSender<Event>) {
         use s2_sdk::types::AccountMetricSet;
 
         let s2 = self.s2.clone().expect("S2 client not initialized");
+        let (start, end) = time_range.get_range();
 
         tokio::spawn(async move {
-            // Get metrics for last 24 hours
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as u32;
-            let day_ago = now.saturating_sub(24 * 60 * 60);
-
             let set = match category {
-                MetricCategory::ActiveBasins => AccountMetricSet::ActiveBasins(TimeRange::new(day_ago, now)),
+                MetricCategory::ActiveBasins => AccountMetricSet::ActiveBasins(TimeRange::new(start, end)),
                 MetricCategory::AccountOps => AccountMetricSet::AccountOps(
-                    s2_sdk::types::TimeRangeAndInterval::new(day_ago, now)
+                    s2_sdk::types::TimeRangeAndInterval::new(start, end)
                 ),
                 _ => return, // Other categories not valid for account
             };
@@ -5162,30 +5315,24 @@ impl App {
         });
     }
 
-    fn load_basin_metrics(&self, basin_name: BasinName, category: MetricCategory, tx: mpsc::UnboundedSender<Event>) {
+    fn load_basin_metrics(&self, basin_name: BasinName, category: MetricCategory, time_range: TimeRangeOption, tx: mpsc::UnboundedSender<Event>) {
         let s2 = self.s2.clone().expect("S2 client not initialized");
+        let (start, end) = time_range.get_range();
 
         tokio::spawn(async move {
-            // Get metrics for last 24 hours
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as u32;
-            let day_ago = now.saturating_sub(24 * 60 * 60);
-
             let set = match category {
-                MetricCategory::Storage => BasinMetricSet::Storage(TimeRange::new(day_ago, now)),
+                MetricCategory::Storage => BasinMetricSet::Storage(TimeRange::new(start, end)),
                 MetricCategory::AppendOps => BasinMetricSet::AppendOps(
-                    s2_sdk::types::TimeRangeAndInterval::new(day_ago, now)
+                    s2_sdk::types::TimeRangeAndInterval::new(start, end)
                 ),
                 MetricCategory::ReadOps => BasinMetricSet::ReadOps(
-                    s2_sdk::types::TimeRangeAndInterval::new(day_ago, now)
+                    s2_sdk::types::TimeRangeAndInterval::new(start, end)
                 ),
                 MetricCategory::AppendThroughput => BasinMetricSet::AppendThroughput(
-                    s2_sdk::types::TimeRangeAndInterval::new(day_ago, now)
+                    s2_sdk::types::TimeRangeAndInterval::new(start, end)
                 ),
                 MetricCategory::ReadThroughput => BasinMetricSet::ReadThroughput(
-                    s2_sdk::types::TimeRangeAndInterval::new(day_ago, now)
+                    s2_sdk::types::TimeRangeAndInterval::new(start, end)
                 ),
                 _ => return, // Account metrics not valid for basin
             };
@@ -5206,18 +5353,12 @@ impl App {
     }
 
     /// Load stream metrics
-    fn load_stream_metrics(&self, basin_name: BasinName, stream_name: StreamName, tx: mpsc::UnboundedSender<Event>) {
+    fn load_stream_metrics(&self, basin_name: BasinName, stream_name: StreamName, time_range: TimeRangeOption, tx: mpsc::UnboundedSender<Event>) {
         let s2 = self.s2.clone().expect("S2 client not initialized");
+        let (start, end) = time_range.get_range();
 
         tokio::spawn(async move {
-            // Get metrics for last 24 hours
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as u32;
-            let day_ago = now.saturating_sub(24 * 60 * 60);
-
-            let set = StreamMetricSet::Storage(TimeRange::new(day_ago, now));
+            let set = StreamMetricSet::Storage(TimeRange::new(start, end));
 
             let input = s2_sdk::types::GetStreamMetricsInput::new(basin_name, stream_name, set);
             match s2.get_stream_metrics(input).await {
@@ -5236,12 +5377,30 @@ impl App {
 
     /// Handle keys in metrics view
     fn handle_metrics_view_key(&mut self, key: KeyEvent, tx: mpsc::UnboundedSender<Event>) {
-        // Extract data from state first to avoid borrow issues
-        let (metrics_type, selected_category) = {
+        // Check if time picker or calendar is open first
+        let (time_picker_open, calendar_open) = {
             let Screen::MetricsView(state) = &self.screen else {
                 return;
             };
-            (state.metrics_type.clone(), state.selected_category)
+            (state.time_picker_open, state.calendar_open)
+        };
+
+        if time_picker_open {
+            self.handle_time_picker_key(key, tx);
+            return;
+        }
+
+        if calendar_open {
+            self.handle_calendar_key(key, tx);
+            return;
+        }
+
+        // Extract data from state first to avoid borrow issues
+        let (metrics_type, selected_category, time_range) = {
+            let Screen::MetricsView(state) = &self.screen else {
+                return;
+            };
+            (state.metrics_type.clone(), state.selected_category, state.time_range.clone())
         };
 
         match key.code {
@@ -5286,6 +5445,17 @@ impl App {
                     }
                 }
             }
+            KeyCode::Char('t') => {
+                // Open time picker
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    state.time_picker_open = true;
+                    // Set picker selection to current time range
+                    state.time_picker_selected = TimeRangeOption::PRESETS
+                        .iter()
+                        .position(|p| std::mem::discriminant(p) == std::mem::discriminant(&state.time_range))
+                        .unwrap_or(3);
+                }
+            }
             KeyCode::Left | KeyCode::Char('h') => {
                 // Previous metric category (for basin or account metrics)
                 match &metrics_type {
@@ -5296,7 +5466,7 @@ impl App {
                             state.loading = true;
                             state.metrics.clear();
                         }
-                        self.load_account_metrics(new_category, tx);
+                        self.load_account_metrics(new_category, time_range, tx);
                     }
                     MetricsType::Basin { basin_name } => {
                         let basin_name = basin_name.clone();
@@ -5306,7 +5476,7 @@ impl App {
                             state.loading = true;
                             state.metrics.clear();
                         }
-                        self.load_basin_metrics(basin_name, new_category, tx);
+                        self.load_basin_metrics(basin_name, new_category, time_range, tx);
                     }
                     MetricsType::Stream { .. } => {} // No category switching for stream
                 }
@@ -5321,7 +5491,7 @@ impl App {
                             state.loading = true;
                             state.metrics.clear();
                         }
-                        self.load_account_metrics(new_category, tx);
+                        self.load_account_metrics(new_category, time_range, tx);
                     }
                     MetricsType::Basin { basin_name } => {
                         let basin_name = basin_name.clone();
@@ -5331,7 +5501,7 @@ impl App {
                             state.loading = true;
                             state.metrics.clear();
                         }
-                        self.load_basin_metrics(basin_name, new_category, tx);
+                        self.load_basin_metrics(basin_name, new_category, time_range, tx);
                     }
                     MetricsType::Stream { .. } => {} // No category switching for stream
                 }
@@ -5356,17 +5526,348 @@ impl App {
                 }
                 match &metrics_type {
                     MetricsType::Account => {
-                        self.load_account_metrics(selected_category, tx);
+                        self.load_account_metrics(selected_category, time_range, tx);
                     }
                     MetricsType::Basin { basin_name } => {
-                        self.load_basin_metrics(basin_name.clone(), selected_category, tx);
+                        self.load_basin_metrics(basin_name.clone(), selected_category, time_range, tx);
                     }
                     MetricsType::Stream { basin_name, stream_name } => {
-                        self.load_stream_metrics(basin_name.clone(), stream_name.clone(), tx);
+                        self.load_stream_metrics(basin_name.clone(), stream_name.clone(), time_range, tx);
+                    }
+                }
+            }
+            KeyCode::Char('[') => {
+                // Previous time range
+                let new_time_range = time_range.prev();
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    state.time_range = new_time_range.clone();
+                    state.loading = true;
+                    state.metrics.clear();
+                }
+                match &metrics_type {
+                    MetricsType::Account => {
+                        self.load_account_metrics(selected_category, new_time_range, tx);
+                    }
+                    MetricsType::Basin { basin_name } => {
+                        self.load_basin_metrics(basin_name.clone(), selected_category, new_time_range, tx);
+                    }
+                    MetricsType::Stream { basin_name, stream_name } => {
+                        self.load_stream_metrics(basin_name.clone(), stream_name.clone(), new_time_range, tx);
+                    }
+                }
+            }
+            KeyCode::Char(']') => {
+                // Next time range
+                let new_time_range = time_range.next();
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    state.time_range = new_time_range.clone();
+                    state.loading = true;
+                    state.metrics.clear();
+                }
+                match &metrics_type {
+                    MetricsType::Account => {
+                        self.load_account_metrics(selected_category, new_time_range, tx);
+                    }
+                    MetricsType::Basin { basin_name } => {
+                        self.load_basin_metrics(basin_name.clone(), selected_category, new_time_range, tx);
+                    }
+                    MetricsType::Stream { basin_name, stream_name } => {
+                        self.load_stream_metrics(basin_name.clone(), stream_name.clone(), new_time_range, tx);
                     }
                 }
             }
             _ => {}
         }
+    }
+
+    /// Handle keys when time picker popup is open
+    fn handle_time_picker_key(&mut self, key: KeyEvent, tx: mpsc::UnboundedSender<Event>) {
+        // PRESETS.len() is 7 (indices 0-6), index 7 is "Custom"
+        const CUSTOM_INDEX: usize = 7;
+
+        let (metrics_type, selected_category) = {
+            let Screen::MetricsView(state) = &self.screen else {
+                return;
+            };
+            (state.metrics_type.clone(), state.selected_category)
+        };
+
+        match key.code {
+            KeyCode::Esc => {
+                // Close picker without changing
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    state.time_picker_open = false;
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    if state.time_picker_selected > 0 {
+                        state.time_picker_selected -= 1;
+                    }
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    if state.time_picker_selected < CUSTOM_INDEX {
+                        state.time_picker_selected += 1;
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let time_picker_selected = {
+                    let Screen::MetricsView(state) = &self.screen else {
+                        return;
+                    };
+                    state.time_picker_selected
+                };
+
+                if time_picker_selected == CUSTOM_INDEX {
+                    // Open calendar picker
+                    if let Screen::MetricsView(state) = &mut self.screen {
+                        state.time_picker_open = false;
+                        state.calendar_open = true;
+                        state.calendar_start = None;
+                        state.calendar_end = None;
+                        state.calendar_selecting_end = false;
+                    }
+                } else {
+                    // Select preset time range and close picker
+                    let new_time_range = {
+                        let Screen::MetricsView(state) = &mut self.screen else {
+                            return;
+                        };
+                        let selected = TimeRangeOption::PRESETS
+                            .get(state.time_picker_selected)
+                            .cloned()
+                            .unwrap_or_default();
+                        state.time_range = selected.clone();
+                        state.time_picker_open = false;
+                        state.loading = true;
+                        state.metrics.clear();
+                        selected
+                    };
+
+                    // Reload metrics with new time range
+                    match &metrics_type {
+                        MetricsType::Account => {
+                            self.load_account_metrics(selected_category, new_time_range, tx);
+                        }
+                        MetricsType::Basin { basin_name } => {
+                            self.load_basin_metrics(basin_name.clone(), selected_category, new_time_range, tx);
+                        }
+                        MetricsType::Stream { basin_name, stream_name } => {
+                            self.load_stream_metrics(basin_name.clone(), stream_name.clone(), new_time_range, tx);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Handle keys when calendar picker is open
+    fn handle_calendar_key(&mut self, key: KeyEvent, tx: mpsc::UnboundedSender<Event>) {
+        let (metrics_type, selected_category) = {
+            let Screen::MetricsView(state) = &self.screen else {
+                return;
+            };
+            (state.metrics_type.clone(), state.selected_category)
+        };
+
+        match key.code {
+            KeyCode::Esc => {
+                // Close calendar without changing
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    state.calendar_open = false;
+                    state.calendar_start = None;
+                    state.calendar_end = None;
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    // Move to previous day
+                    if state.calendar_day > 1 {
+                        state.calendar_day -= 1;
+                    } else {
+                        // Go to previous month
+                        if state.calendar_month > 1 {
+                            state.calendar_month -= 1;
+                        } else {
+                            state.calendar_month = 12;
+                            state.calendar_year -= 1;
+                        }
+                        state.calendar_day = Self::days_in_month(state.calendar_year, state.calendar_month);
+                    }
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    let max_day = Self::days_in_month(state.calendar_year, state.calendar_month);
+                    if state.calendar_day < max_day {
+                        state.calendar_day += 1;
+                    } else {
+                        // Go to next month
+                        if state.calendar_month < 12 {
+                            state.calendar_month += 1;
+                        } else {
+                            state.calendar_month = 1;
+                            state.calendar_year += 1;
+                        }
+                        state.calendar_day = 1;
+                    }
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    // Move up one week (7 days)
+                    if state.calendar_day > 7 {
+                        state.calendar_day -= 7;
+                    } else {
+                        // Go to previous month
+                        if state.calendar_month > 1 {
+                            state.calendar_month -= 1;
+                        } else {
+                            state.calendar_month = 12;
+                            state.calendar_year -= 1;
+                        }
+                        let prev_month_days = Self::days_in_month(state.calendar_year, state.calendar_month);
+                        state.calendar_day = prev_month_days.saturating_sub(7 - state.calendar_day);
+                    }
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    let max_day = Self::days_in_month(state.calendar_year, state.calendar_month);
+                    if state.calendar_day + 7 <= max_day {
+                        state.calendar_day += 7;
+                    } else {
+                        let overflow = state.calendar_day + 7 - max_day;
+                        // Go to next month
+                        if state.calendar_month < 12 {
+                            state.calendar_month += 1;
+                        } else {
+                            state.calendar_month = 1;
+                            state.calendar_year += 1;
+                        }
+                        state.calendar_day = overflow.min(Self::days_in_month(state.calendar_year, state.calendar_month));
+                    }
+                }
+            }
+            KeyCode::Char('[') => {
+                // Previous month
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    if state.calendar_month > 1 {
+                        state.calendar_month -= 1;
+                    } else {
+                        state.calendar_month = 12;
+                        state.calendar_year -= 1;
+                    }
+                    let max_day = Self::days_in_month(state.calendar_year, state.calendar_month);
+                    state.calendar_day = state.calendar_day.min(max_day);
+                }
+            }
+            KeyCode::Char(']') => {
+                // Next month
+                if let Screen::MetricsView(state) = &mut self.screen {
+                    if state.calendar_month < 12 {
+                        state.calendar_month += 1;
+                    } else {
+                        state.calendar_month = 1;
+                        state.calendar_year += 1;
+                    }
+                    let max_day = Self::days_in_month(state.calendar_year, state.calendar_month);
+                    state.calendar_day = state.calendar_day.min(max_day);
+                }
+            }
+            KeyCode::Enter => {
+                // Select date
+                let should_apply = {
+                    let Screen::MetricsView(state) = &mut self.screen else {
+                        return;
+                    };
+                    let selected_date = (state.calendar_year, state.calendar_month, state.calendar_day);
+
+                    if state.calendar_start.is_none() {
+                        // First selection: set start date
+                        state.calendar_start = Some(selected_date);
+                        state.calendar_selecting_end = true;
+                        false
+                    } else if !state.calendar_selecting_end {
+                        // Start date already set, selecting again resets
+                        state.calendar_start = Some(selected_date);
+                        state.calendar_selecting_end = true;
+                        false
+                    } else {
+                        // Second selection: set end date and apply
+                        state.calendar_end = Some(selected_date);
+                        true
+                    }
+                };
+
+                if should_apply {
+                    // Apply custom date range
+                    let new_time_range = {
+                        let Screen::MetricsView(state) = &mut self.screen else {
+                            return;
+                        };
+
+                        let start_date = state.calendar_start.unwrap();
+                        let end_date = state.calendar_end.unwrap();
+
+                        // Ensure start <= end
+                        let (start, end) = if start_date <= end_date {
+                            (start_date, end_date)
+                        } else {
+                            (end_date, start_date)
+                        };
+
+                        // Convert to unix timestamps (start of day for start, end of day for end)
+                        let start_ts = Self::date_to_timestamp(start.0, start.1, start.2, true);
+                        let end_ts = Self::date_to_timestamp(end.0, end.1, end.2, false);
+
+                        let time_range = TimeRangeOption::Custom { start: start_ts, end: end_ts };
+                        state.time_range = time_range.clone();
+                        state.calendar_open = false;
+                        state.loading = true;
+                        state.metrics.clear();
+                        time_range
+                    };
+
+                    // Reload metrics
+                    match &metrics_type {
+                        MetricsType::Account => {
+                            self.load_account_metrics(selected_category, new_time_range, tx);
+                        }
+                        MetricsType::Basin { basin_name } => {
+                            self.load_basin_metrics(basin_name.clone(), selected_category, new_time_range, tx);
+                        }
+                        MetricsType::Stream { basin_name, stream_name } => {
+                            self.load_stream_metrics(basin_name.clone(), stream_name.clone(), new_time_range, tx);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Get the number of days in a month
+    fn days_in_month(year: i32, month: u32) -> u32 {
+        NaiveDate::from_ymd_opt(year, month + 1, 1)
+            .unwrap_or_else(|| NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap())
+            .pred_opt()
+            .map(|d| d.day())
+            .unwrap_or(28)
+    }
+
+    /// Convert a date to unix timestamp
+    fn date_to_timestamp(year: i32, month: u32, day: u32, start_of_day: bool) -> u32 {
+        use chrono::{TimeZone, Utc};
+        let dt = if start_of_day {
+            Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).unwrap()
+        } else {
+            Utc.with_ymd_and_hms(year, month, day, 23, 59, 59).unwrap()
+        };
+        dt.timestamp() as u32
     }
 }

@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Padding, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, Padding, Paragraph},
 };
 
 use crate::types::{StorageClass, TimestampingMode};
@@ -92,6 +92,16 @@ pub fn draw(f: &mut Frame, app: &App) {
         Screen::AccessTokens(state) => draw_access_tokens(f, chunks[1], state),
         Screen::MetricsView(state) => draw_metrics_view(f, chunks[1], state),
         Screen::Settings(state) => draw_settings(f, chunks[1], state),
+    }
+
+    // Draw time picker popup if open
+    if let Screen::MetricsView(state) = &app.screen {
+        if state.time_picker_open {
+            draw_time_picker(f, state);
+        }
+        if state.calendar_open {
+            draw_calendar_picker(f, state);
+        }
     }
 
     // Draw status bar
@@ -896,10 +906,14 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
             title_spans.push(Span::styled(format!(" {} ", cat.as_str()), style));
         }
 
+        // Add time range to title
+        title_spans.push(Span::styled("  ", Style::default()));
+        title_spans.push(Span::styled(format!("[{}]", state.time_range.as_str()), Style::default().fg(CYAN)));
+
         let title_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(GREEN))
-            .title_bottom(Line::from(Span::styled(" ←/→ switch category ", Style::default().fg(TEXT_MUTED))))
+            .title_bottom(Line::from(Span::styled(" ←/→ category  t time picker ", Style::default().fg(TEXT_MUTED))))
             .style(Style::default().bg(BG_PANEL));
 
         let title_para = Paragraph::new(Line::from(title_spans))
@@ -933,10 +947,14 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
             title_spans.push(Span::styled(format!(" {} ", cat.as_str()), style));
         }
 
+        // Add time range to title
+        title_spans.push(Span::styled("  ", Style::default()));
+        title_spans.push(Span::styled(format!("[{}]", state.time_range.as_str()), Style::default().fg(CYAN)));
+
         let title_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(GREEN))
-            .title_bottom(Line::from(Span::styled(" ←/→ switch category ", Style::default().fg(TEXT_MUTED))))
+            .title_bottom(Line::from(Span::styled(" ←/→ category  t time picker ", Style::default().fg(TEXT_MUTED))))
             .style(Style::default().bg(BG_PANEL));
 
         let title_para = Paragraph::new(Line::from(title_spans))
@@ -947,13 +965,14 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
         let title_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(GREEN))
+            .title_bottom(Line::from(Span::styled(" t time picker ", Style::default().fg(TEXT_MUTED))))
             .style(Style::default().bg(BG_PANEL));
 
         let title_para = Paragraph::new(Line::from(vec![
             Span::styled(" [ ", Style::default().fg(BORDER)),
             Span::styled(&title, Style::default().fg(GREEN).bold()),
             Span::styled(" ]  ", Style::default().fg(BORDER)),
-            Span::styled("Storage (24h)", Style::default().fg(TEXT_PRIMARY)),
+            Span::styled(format!("Storage [{}]", state.time_range.as_str()), Style::default().fg(TEXT_PRIMARY)),
         ]))
         .block(title_block)
         .alignment(Alignment::Center);
@@ -988,9 +1007,7 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
             .style(Style::default().bg(BG_DARK));
         let empty = Paragraph::new(vec![
             Line::from(""),
-            Line::from(Span::styled("No metrics data available", Style::default().fg(TEXT_MUTED))),
-            Line::from(""),
-            Line::from(Span::styled("Try writing some data first", Style::default().fg(TEXT_MUTED))),
+            Line::from(Span::styled("No data in the last 24 hours", Style::default().fg(TEXT_MUTED))),
         ])
         .block(empty_block)
         .alignment(Alignment::Center);
@@ -1000,6 +1017,23 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
             .constraints([Constraint::Min(1)])
             .split(chunks[1]);
         f.render_widget(empty, remaining[0]);
+        return;
+    }
+
+    // Check for Label metrics first (like Active Basins)
+    let mut label_values: Vec<String> = Vec::new();
+    let mut label_name = String::new();
+
+    for metric in &state.metrics {
+        if let Metric::Label(m) = metric {
+            label_name = m.name.clone();
+            label_values.extend(m.values.iter().cloned());
+        }
+    }
+
+    // If we have label metrics, render them differently
+    if !label_values.is_empty() {
+        render_label_metric(f, chunks, &label_name, &label_values, state);
         return;
     }
 
@@ -1025,7 +1059,7 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
                 metric_unit = m.unit;
                 all_values.push((0, m.value));
             }
-            Metric::Label(_) => {}
+            Metric::Label(_) => {} // Handled above
         }
     }
 
@@ -1182,6 +1216,91 @@ fn intensity_to_color(intensity: f64) -> Color {
         Color::Rgb(187, 247, 208)
     } else {
         Color::Rgb(220, 252, 231) // pale green
+    }
+}
+
+/// Render a label metric (list of string values, like Active Basins)
+fn render_label_metric(
+    f: &mut Frame,
+    chunks: std::rc::Rc<[Rect]>,
+    metric_name: &str,
+    values: &[String],
+    state: &MetricsViewState,
+) {
+    // Stats header showing count
+    let stats_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER))
+        .style(Style::default().bg(BG_PANEL));
+
+    let stats_inner = stats_block.inner(chunks[1]);
+    f.render_widget(stats_block, chunks[1]);
+
+    let stats_line = Line::from(vec![
+        Span::styled(" TOTAL ", Style::default().fg(BG_DARK).bg(GREEN).bold()),
+        Span::styled(format!(" {} ", values.len()), Style::default().fg(GREEN).bold()),
+        Span::styled(format!(" {} in selected time range", metric_name.to_lowercase()), Style::default().fg(TEXT_MUTED)),
+    ]);
+    let stats_para = Paragraph::new(stats_line).alignment(Alignment::Center);
+    f.render_widget(stats_para, stats_inner);
+
+    // Main list area
+    let list_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(GREEN))
+        .title(Line::from(vec![
+            Span::styled(" ", Style::default()),
+            Span::styled(metric_name, Style::default().fg(GREEN).bold()),
+            Span::styled(" ", Style::default()),
+        ]))
+        .style(Style::default().bg(BG_DARK));
+
+    let list_inner = list_block.inner(chunks[2]);
+    f.render_widget(list_block, chunks[2]);
+
+    if values.is_empty() {
+        let empty = Paragraph::new(Span::styled("No data", Style::default().fg(TEXT_MUTED)))
+            .alignment(Alignment::Center);
+        f.render_widget(empty, list_inner);
+    } else {
+        // Render the list of values
+        let visible_rows = list_inner.height as usize;
+        let total_items = values.len();
+
+        let items: Vec<Line> = values
+            .iter()
+            .enumerate()
+            .skip(state.scroll)
+            .take(visible_rows)
+            .map(|(i, value)| {
+                Line::from(vec![
+                    Span::styled(format!(" {:>3}. ", i + 1), Style::default().fg(TEXT_MUTED)),
+                    Span::styled(value, Style::default().fg(GREEN)),
+                ])
+            })
+            .collect();
+
+        let list_para = Paragraph::new(items);
+        f.render_widget(list_para, list_inner);
+
+        // Scroll indicator in timeline area
+        let scroll_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(BORDER))
+            .title(Line::from(vec![
+                Span::styled(
+                    format!(" Showing {}-{} of {} ",
+                        state.scroll + 1,
+                        (state.scroll + visible_rows).min(total_items),
+                        total_items
+                    ),
+                    Style::default().fg(TEXT_MUTED)
+                ),
+            ]))
+            .title_bottom(Line::from(Span::styled(" j/k scroll ", Style::default().fg(TEXT_MUTED))))
+            .style(Style::default().bg(BG_DARK));
+
+        f.render_widget(scroll_block, chunks[3]);
     }
 }
 
@@ -1390,6 +1509,231 @@ fn format_count(count: u64) -> String {
         count.to_string()
     }
 }
+
+/// Draw time range picker popup
+fn draw_time_picker(f: &mut Frame, state: &MetricsViewState) {
+    use super::app::TimeRangeOption;
+
+    let area = f.area();
+
+    // PRESETS.len() + 1 for "Custom" option
+    let item_count = TimeRangeOption::PRESETS.len() + 1;
+
+    // Calculate popup dimensions
+    let popup_width = 30u16;
+    let popup_height = (item_count as u16) + 4; // Items + borders + title
+
+    // Center the popup
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    // Clear the area behind the popup
+    f.render_widget(Clear, popup_area);
+
+    // Build the list items
+    let mut items: Vec<ListItem> = TimeRangeOption::PRESETS
+        .iter()
+        .enumerate()
+        .map(|(i, option)| {
+            let is_selected = i == state.time_picker_selected;
+            let is_current = std::mem::discriminant(option) == std::mem::discriminant(&state.time_range);
+
+            let style = if is_selected {
+                Style::default().fg(BG_DARK).bg(GREEN).bold()
+            } else if is_current {
+                Style::default().fg(GREEN)
+            } else {
+                Style::default().fg(TEXT_PRIMARY)
+            };
+
+            let marker = if is_current { " ✓" } else { "" };
+            ListItem::new(format!(" {}{} ", option.as_label(), marker)).style(style)
+        })
+        .collect();
+
+    // Add "Custom" option at index 7
+    let custom_index = TimeRangeOption::PRESETS.len();
+    let is_custom_selected = state.time_picker_selected == custom_index;
+    let is_custom_current = matches!(state.time_range, TimeRangeOption::Custom { .. });
+    let custom_style = if is_custom_selected {
+        Style::default().fg(BG_DARK).bg(GREEN).bold()
+    } else if is_custom_current {
+        Style::default().fg(GREEN)
+    } else {
+        Style::default().fg(CYAN)
+    };
+    let custom_marker = if is_custom_current { " ✓" } else { "" };
+    items.push(ListItem::new(format!(" Custom range...{} ", custom_marker)).style(custom_style));
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(GREEN))
+                .title(Line::from(vec![
+                    Span::styled(" ", Style::default()),
+                    Span::styled("Time Range", Style::default().fg(GREEN).bold()),
+                    Span::styled(" ", Style::default()),
+                ]))
+                .title_bottom(Line::from(Span::styled(
+                    " Enter select  Esc close ",
+                    Style::default().fg(TEXT_MUTED),
+                )))
+                .style(Style::default().bg(BG_PANEL)),
+        );
+
+    f.render_widget(list, popup_area);
+}
+
+/// Draw calendar date picker
+fn draw_calendar_picker(f: &mut Frame, state: &MetricsViewState) {
+    use chrono::{Datelike, NaiveDate};
+
+    let area = f.area();
+
+    // Calendar dimensions: 7 columns * 4 chars + padding = 32, height for header + 6 weeks + status
+    let popup_width = 36u16;
+    let popup_height = 14u16;
+
+    // Center the popup
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    // Clear the area behind the popup
+    f.render_widget(Clear, popup_area);
+
+    // Month names
+    let month_names = [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    ];
+    let month_name = month_names.get(state.calendar_month as usize - 1).unwrap_or(&"???");
+
+    // Calculate first day of month and days in month
+    let first_of_month = NaiveDate::from_ymd_opt(state.calendar_year, state.calendar_month, 1)
+        .unwrap_or(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap());
+    let first_weekday = first_of_month.weekday().num_days_from_sunday() as usize;
+    let days_in_month = {
+        let next_month = if state.calendar_month == 12 {
+            NaiveDate::from_ymd_opt(state.calendar_year + 1, 1, 1)
+        } else {
+            NaiveDate::from_ymd_opt(state.calendar_year, state.calendar_month + 1, 1)
+        };
+        next_month.unwrap().pred_opt().map(|d| d.day()).unwrap_or(28)
+    };
+
+    // Build calendar lines
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Month/Year header with navigation hints
+    lines.push(Line::from(vec![
+        Span::styled(" [", Style::default().fg(TEXT_MUTED)),
+        Span::styled(format!("{} {}", month_name, state.calendar_year), Style::default().fg(GREEN).bold()),
+        Span::styled("] ", Style::default().fg(TEXT_MUTED)),
+    ]));
+
+    // Day headers
+    lines.push(Line::from(vec![
+        Span::styled(" Su ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(" Mo ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(" Tu ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(" We ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(" Th ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(" Fr ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(" Sa ", Style::default().fg(TEXT_MUTED)),
+    ]));
+
+    // Calendar grid
+    let mut day = 1u32;
+    for week in 0..6 {
+        let mut spans: Vec<Span> = Vec::new();
+        for weekday in 0..7 {
+            let cell_idx = week * 7 + weekday;
+            if cell_idx < first_weekday || day > days_in_month {
+                spans.push(Span::styled("    ", Style::default()));
+            } else {
+                let is_selected = day == state.calendar_day;
+                let current_date = (state.calendar_year, state.calendar_month, day);
+
+                // Check if this day is the start or end of selection
+                let is_start = state.calendar_start == Some(current_date);
+                let is_end = state.calendar_end == Some(current_date);
+
+                // Check if this day is in the selected range
+                let in_range = match (state.calendar_start, state.calendar_end) {
+                    (Some(start), Some(end)) => {
+                        let (s, e) = if start <= end { (start, end) } else { (end, start) };
+                        current_date >= s && current_date <= e
+                    }
+                    (Some(start), None) if state.calendar_selecting_end => {
+                        // Show range preview while selecting end
+                        let (s, e) = if start <= current_date { (start, current_date) } else { (current_date, start) };
+                        current_date >= s && current_date <= e && is_selected
+                    }
+                    _ => false,
+                };
+
+                let style = if is_selected {
+                    Style::default().fg(BG_DARK).bg(GREEN).bold()
+                } else if is_start || is_end {
+                    Style::default().fg(BG_DARK).bg(CYAN).bold()
+                } else if in_range {
+                    Style::default().fg(GREEN).bg(BG_PANEL)
+                } else {
+                    Style::default().fg(TEXT_PRIMARY)
+                };
+
+                spans.push(Span::styled(format!("{:>3} ", day), style));
+                day += 1;
+            }
+        }
+        lines.push(Line::from(spans));
+        if day > days_in_month {
+            break;
+        }
+    }
+
+    // Selection status
+    let status = match (state.calendar_start, state.calendar_end) {
+        (Some((sy, sm, sd)), Some((ey, em, ed))) => {
+            format!("{:02}/{:02}/{} - {:02}/{:02}/{}", sm, sd, sy, em, ed, ey)
+        }
+        (Some((sy, sm, sd)), None) => {
+            if state.calendar_selecting_end {
+                format!("{:02}/{:02}/{} - select end", sm, sd, sy)
+            } else {
+                format!("Select start date")
+            }
+        }
+        _ => "Select start date".to_string(),
+    };
+    lines.push(Line::from(Span::styled(format!(" {} ", status), Style::default().fg(CYAN))));
+
+    let calendar_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(GREEN))
+        .title(Line::from(vec![
+            Span::styled(" ", Style::default()),
+            Span::styled("Select Date Range", Style::default().fg(GREEN).bold()),
+            Span::styled(" ", Style::default()),
+        ]))
+        .title_bottom(Line::from(Span::styled(
+            " ←→↑↓ nav  [/] month  Enter select  Esc cancel ",
+            Style::default().fg(TEXT_MUTED),
+        )))
+        .style(Style::default().bg(BG_PANEL));
+
+    let calendar_para = Paragraph::new(lines)
+        .block(calendar_block)
+        .alignment(Alignment::Center);
+
+    f.render_widget(calendar_para, popup_area);
+}
+
 fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
     // Layout: Title bar, Search bar, Header, Table rows
     let chunks = Layout::default()
