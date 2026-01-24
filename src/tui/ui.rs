@@ -8,11 +8,10 @@ use ratatui::{
 
 use crate::types::{StorageClass, TimestampingMode};
 
-use super::app::{AccessTokensState, App, AgoUnit, AppendViewState, BasinsState, ExpiryOption, InputMode, MessageLevel, MetricCategory, MetricsType, MetricsViewState, ReadStartFrom, ReadViewState, RetentionPolicyOption, ScopeOption, Screen, StreamDetailState, StreamsState, Tab};
+use super::app::{AccessTokensState, App, AgoUnit, AppendViewState, BasinsState, CompressionOption, ExpiryOption, InputMode, MessageLevel, MetricCategory, MetricsType, MetricsViewState, ReadStartFrom, ReadViewState, RetentionPolicyOption, ScopeOption, Screen, SettingsState, SetupState, StreamDetailState, StreamsState, Tab};
 
 // S2 Console dark theme
 const GREEN: Color = Color::Rgb(34, 197, 94);            // Active green
-const GREEN_DIM: Color = Color::Rgb(22, 163, 74);        // Dimmer green
 const YELLOW: Color = Color::Rgb(250, 204, 21);          // Warning yellow
 const RED: Color = Color::Rgb(239, 68, 68);              // Error red
 const CYAN: Color = Color::Rgb(34, 211, 238);            // Cyan accent
@@ -43,8 +42,16 @@ pub fn draw(f: &mut Frame, app: &App) {
         return;
     }
 
+    // Setup screen uses full area (no tabs or status bar)
+    if matches!(app.screen, Screen::Setup(_)) {
+        if let Screen::Setup(state) = &app.screen {
+            draw_setup(f, area, state);
+        }
+        return;
+    }
+
     // Check if we should show tabs (only on top-level screens)
-    let show_tabs = matches!(app.screen, Screen::Basins(_) | Screen::AccessTokens(_));
+    let show_tabs = matches!(app.screen, Screen::Basins(_) | Screen::AccessTokens(_) | Screen::Settings(_));
 
     let chunks = if show_tabs {
         Layout::default()
@@ -76,6 +83,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     // Draw main content based on screen
     match &app.screen {
         Screen::Splash => unreachable!(),
+        Screen::Setup(_) => unreachable!(), // Handled above
         Screen::Basins(state) => draw_basins(f, chunks[1], state),
         Screen::Streams(state) => draw_streams(f, chunks[1], state),
         Screen::StreamDetail(state) => draw_stream_detail(f, chunks[1], state),
@@ -83,6 +91,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Screen::AppendView(state) => draw_append_view(f, chunks[1], state),
         Screen::AccessTokens(state) => draw_access_tokens(f, chunks[1], state),
         Screen::MetricsView(state) => draw_metrics_view(f, chunks[1], state),
+        Screen::Settings(state) => draw_settings(f, chunks[1], state),
     }
 
     // Draw status bar
@@ -158,6 +167,341 @@ fn draw_splash(f: &mut Frame, area: Rect) {
     f.render_widget(logo_widget, centered_area);
 }
 
+/// Draw the setup screen (first-time token entry)
+fn draw_setup(f: &mut Frame, area: Rect, state: &SetupState) {
+    // Draw aurora background
+    draw_aurora_background(f, area);
+
+    // S2 logo (same as splash)
+    let logo = vec![
+        "   █████████████████████████    ",
+        "  ██████████████████████████████ ",
+        " ███████████████████████████████ ",
+        "█████████████████████████████████",
+        "█████████████████████████████████  ",
+        "███████████████                  ",
+        "███████████████                  ",
+        "██████████████   ████████████████",
+        "██████████████   ████████████████",
+        "██████████████   ████████████████",
+        "███████████████           ███████",
+        "██████████████████          █████",
+        "█████████████████████████    ████",
+        "█████████████████████████   █████",
+        "██████                     ██████",
+        "█████                    ████████",
+        " ███    ██████████████████████ ",
+        "  ██    ██████████████████████ ",
+        "         ████████████████████    ",
+    ];
+
+    // Build content
+    let mut lines: Vec<Line> = logo
+        .iter()
+        .map(|&line| Line::from(Span::styled(line, Style::default().fg(Color::White))))
+        .collect();
+
+    // Tagline
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Streams as a cloud storage primitive",
+        Style::default().fg(WHITE).bold(),
+    )));
+    lines.push(Line::from(Span::styled(
+        "The serverless API for unlimited, durable, real-time streams.",
+        Style::default().fg(TEXT_MUTED),
+    )));
+
+    // Spacer
+    lines.push(Line::from(""));
+    lines.push(Line::from(""));
+
+    // Token input - minimal style
+    let token_display = if state.access_token.is_empty() {
+        vec![
+            Span::styled("Token ", Style::default().fg(TEXT_MUTED)),
+            Span::styled("› ", Style::default().fg(BORDER)),
+            Span::styled("_", Style::default().fg(CYAN)),
+        ]
+    } else {
+        let display = if state.access_token.len() > 40 {
+            format!("{}...", &state.access_token[..40])
+        } else {
+            state.access_token.clone()
+        };
+        vec![
+            Span::styled("Token ", Style::default().fg(TEXT_MUTED)),
+            Span::styled("› ", Style::default().fg(GREEN)),
+            Span::styled(display, Style::default().fg(WHITE)),
+            Span::styled("_", Style::default().fg(CYAN)),
+        ]
+    };
+    lines.push(Line::from(token_display));
+
+    // Status/error line
+    lines.push(Line::from(""));
+    if let Some(error) = &state.error {
+        lines.push(Line::from(Span::styled(
+            error.as_str(),
+            Style::default().fg(ERROR),
+        )));
+    } else if state.validating {
+        lines.push(Line::from(Span::styled(
+            "Validating...",
+            Style::default().fg(YELLOW),
+        )));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled("Get token: ", Style::default().fg(TEXT_MUTED)),
+            Span::styled("s2.dev/dashboard/access-tokens", Style::default().fg(CYAN)),
+        ]));
+    }
+
+    // Footer hint
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Enter to continue · Esc to quit",
+        Style::default().fg(BORDER),
+    )));
+
+    let content_height = lines.len() as u16;
+    let y = area.y + area.height.saturating_sub(content_height) / 2;
+    let centered_area = Rect::new(area.x, y, area.width, content_height);
+
+    let content = Paragraph::new(lines).alignment(Alignment::Center);
+    f.render_widget(content, centered_area);
+}
+
+/// Draw the settings screen
+fn draw_settings(f: &mut Frame, area: Rect, state: &SettingsState) {
+    use ratatui::widgets::BorderType;
+
+    // Layout: Title bar + content
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Title bar (consistent height)
+            Constraint::Min(1),    // Content
+        ])
+        .split(area);
+
+    // === TITLE BAR ===
+    let title_block = Block::default()
+        .borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(BORDER))
+        .style(Style::default().bg(BG_PANEL));
+    let title_content = Paragraph::new(Line::from(vec![
+        Span::styled(" ⚙ ", Style::default().fg(GREEN)),
+        Span::styled("Settings", Style::default().fg(TEXT_PRIMARY).bold()),
+    ]))
+    .block(title_block);
+    f.render_widget(title_content, chunks[0]);
+
+    // === CONTENT ===
+    let content_area = chunks[1];
+
+    // Create centered settings panel
+    let panel_width = 70.min(content_area.width.saturating_sub(4));
+    let panel_x = content_area.x + (content_area.width.saturating_sub(panel_width)) / 2;
+    let panel_area = Rect::new(panel_x, content_area.y + 1, panel_width, content_area.height.saturating_sub(2));
+
+    let settings_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(BORDER))
+        .style(Style::default().bg(BG_PANEL))
+        .padding(Padding::new(2, 2, 1, 1));
+    let inner = settings_block.inner(panel_area);
+    f.render_widget(settings_block, panel_area);
+
+    // Settings fields
+    let field_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(4), // Access Token (label + 3-line bordered input)
+            Constraint::Length(4), // Account Endpoint
+            Constraint::Length(4), // Basin Endpoint
+            Constraint::Length(3), // Compression (label + pills, no border)
+            Constraint::Length(1), // Spacer
+            Constraint::Length(3), // Save button
+            Constraint::Min(1),    // Message/footer
+        ])
+        .split(inner);
+
+    // Access Token field
+    // Always show actual value when editing, otherwise respect mask flag
+    let is_editing_token = state.editing && state.selected == 0;
+    let token_display = if is_editing_token {
+        // When editing, always show actual value
+        state.access_token.clone()
+    } else if state.access_token_masked && !state.access_token.is_empty() {
+        format!("{}...", "*".repeat(20.min(state.access_token.len())))
+    } else if state.access_token.is_empty() {
+        "(not set)".to_string()
+    } else {
+        state.access_token.clone()
+    };
+
+    draw_settings_field(
+        f,
+        field_chunks[0],
+        "Access Token",
+        token_display,
+        state.selected == 0,
+        is_editing_token,
+        Some("Space to toggle visibility"),
+    );
+
+    // Account Endpoint field
+    draw_settings_field(
+        f,
+        field_chunks[1],
+        "Account Endpoint",
+        if state.account_endpoint.is_empty() {
+            "(default)".to_string()
+        } else {
+            state.account_endpoint.clone()
+        },
+        state.selected == 1,
+        state.editing && state.selected == 1,
+        None,
+    );
+
+    // Basin Endpoint field
+    draw_settings_field(
+        f,
+        field_chunks[2],
+        "Basin Endpoint",
+        if state.basin_endpoint.is_empty() {
+            "(default)".to_string()
+        } else {
+            state.basin_endpoint.clone()
+        },
+        state.selected == 2,
+        state.editing && state.selected == 2,
+        None,
+    );
+
+    // Compression field (pill selector)
+    let compression_label = Line::from(vec![
+        Span::styled("Compression", Style::default().fg(TEXT_SECONDARY)),
+    ]);
+    f.render_widget(Paragraph::new(compression_label), Rect::new(field_chunks[3].x, field_chunks[3].y, field_chunks[3].width, 1));
+
+    let options = [CompressionOption::None, CompressionOption::Gzip, CompressionOption::Zstd];
+    let pills: Vec<Span> = options.iter().map(|opt| {
+        let is_selected = *opt == state.compression;
+        let style = if is_selected {
+            Style::default().fg(BG_DARK).bg(GREEN).bold()
+        } else {
+            Style::default().fg(TEXT_MUTED).bg(BG_DARK)
+        };
+        Span::styled(format!(" {} ", opt.as_str()), style)
+    }).collect();
+
+    let mut pill_line = vec![Span::styled("  ", Style::default())];
+    for (i, pill) in pills.into_iter().enumerate() {
+        if i > 0 {
+            pill_line.push(Span::styled(" ", Style::default()));
+        }
+        pill_line.push(pill);
+    }
+    if state.selected == 3 {
+        pill_line.push(Span::styled("  ← h/l →", Style::default().fg(TEXT_MUTED)));
+    }
+
+    let compression_row = Rect::new(field_chunks[3].x, field_chunks[3].y + 1, field_chunks[3].width, 1);
+    f.render_widget(
+        Paragraph::new(Line::from(pill_line))
+            .style(Style::default().bg(BG_DARK)),
+        compression_row,
+    );
+
+    // Save button
+    let save_style = if state.selected == 4 {
+        Style::default().fg(BG_DARK).bg(GREEN).bold()
+    } else if state.has_changes {
+        Style::default().fg(GREEN)
+    } else {
+        Style::default().fg(TEXT_MUTED)
+    };
+    let save_text = if state.has_changes {
+        " ● Save Changes "
+    } else {
+        "   Save Changes "
+    };
+    let save_button = Paragraph::new(Line::from(Span::styled(save_text, save_style)))
+        .alignment(Alignment::Center);
+    f.render_widget(save_button, field_chunks[5]);
+
+    // Message/footer
+    if let Some(msg) = &state.message {
+        let msg_style = if msg.contains("success") || msg.contains("saved") {
+            Style::default().fg(SUCCESS)
+        } else {
+            Style::default().fg(ERROR)
+        };
+        let msg_para = Paragraph::new(Line::from(Span::styled(msg.as_str(), msg_style)))
+            .alignment(Alignment::Center);
+        f.render_widget(msg_para, field_chunks[6]);
+    } else {
+        let footer = Paragraph::new(Line::from(Span::styled(
+            "j/k navigate • e/Enter edit • r reload",
+            Style::default().fg(TEXT_MUTED),
+        )))
+        .alignment(Alignment::Center);
+        f.render_widget(footer, field_chunks[6]);
+    }
+}
+
+/// Helper to draw a settings field
+fn draw_settings_field(
+    f: &mut Frame,
+    area: Rect,
+    label: &str,
+    value: String,
+    selected: bool,
+    editing: bool,
+    hint: Option<&str>,
+) {
+    let label_line = Line::from(vec![
+        Span::styled(label, Style::default().fg(TEXT_SECONDARY)),
+        if let Some(h) = hint {
+            Span::styled(format!("  ({})", h), Style::default().fg(TEXT_MUTED))
+        } else {
+            Span::raw("")
+        },
+    ]);
+    f.render_widget(Paragraph::new(label_line), Rect::new(area.x, area.y, area.width, 1));
+
+    let border_style = if selected {
+        Style::default().fg(GREEN)
+    } else {
+        Style::default().fg(BORDER)
+    };
+
+    let value_display = if editing {
+        format!("{}█", value)
+    } else {
+        value
+    };
+
+    let value_style = if value_display.starts_with('(') {
+        Style::default().fg(TEXT_MUTED)
+    } else {
+        Style::default().fg(TEXT_PRIMARY)
+    };
+
+    let value_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .style(Style::default().bg(BG_DARK));
+    let value_para = Paragraph::new(Span::styled(value_display, value_style))
+        .block(value_block);
+    // Height must be 3: top border (1) + content (1) + bottom border (1)
+    f.render_widget(value_para, Rect::new(area.x, area.y + 1, area.width, 3));
+}
+
 /// Draw a subtle aurora/gradient background effect
 fn draw_aurora_background(f: &mut Frame, area: Rect) {
     let width = area.width as f64;
@@ -216,10 +560,18 @@ fn draw_tab_bar(f: &mut Frame, area: Rect, current_tab: Tab) {
         Style::default().fg(TEXT_MUTED)
     };
 
+    let settings_style = if current_tab == Tab::Settings {
+        Style::default().fg(GREEN).bold()
+    } else {
+        Style::default().fg(TEXT_MUTED)
+    };
+
     let line = Line::from(vec![
         Span::styled("Basins", basins_style),
         Span::styled("  │  ", Style::default().fg(BORDER)),
         Span::styled("Access Tokens", tokens_style),
+        Span::styled("  │  ", Style::default().fg(BORDER)),
+        Span::styled("Settings", settings_style),
         Span::styled("  (Tab to switch)", Style::default().fg(TEXT_MUTED)),
     ]);
 
@@ -228,15 +580,42 @@ fn draw_tab_bar(f: &mut Frame, area: Rect, current_tab: Tab) {
 }
 
 fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
-    // Layout: Search bar, Header, Table rows
+    // Layout: Title bar, Search bar, Header, Table rows
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(3), // Title bar (consistent height)
             Constraint::Length(3), // Search bar
             Constraint::Length(2), // Header
             Constraint::Min(1),    // Table rows
         ])
         .split(area);
+
+    // === Title Bar ===
+    let count_text = if state.loading {
+        " loading...".to_string()
+    } else {
+        let filtered_count = state.tokens.iter()
+            .filter(|t| state.filter.is_empty() || t.id.to_lowercase().contains(&state.filter.to_lowercase()))
+            .count();
+        if filtered_count != state.tokens.len() {
+            format!("  {}/{} tokens", filtered_count, state.tokens.len())
+        } else {
+            format!("  {} tokens", state.tokens.len())
+        }
+    };
+    let title_lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Access Tokens", Style::default().fg(GREEN).bold()),
+            Span::styled(&count_text, Style::default().fg(Color::Rgb(100, 100, 100))),
+        ]),
+    ];
+    let title_block = Paragraph::new(title_lines)
+        .block(Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
+    f.render_widget(title_block, chunks[0]);
 
     // === Search Bar ===
     let search_block = Block::default()
@@ -246,26 +625,25 @@ fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
 
     let search_text = if state.filter_active {
         Line::from(vec![
-            Span::styled("/ ", Style::default().fg(GREEN)),
+            Span::styled(" [/] ", Style::default().fg(GREEN)),
             Span::styled(&state.filter, Style::default().fg(TEXT_PRIMARY)),
-            Span::styled("█", Style::default().fg(GREEN)), // Cursor
+            Span::styled("_", Style::default().fg(GREEN)),
         ])
     } else if !state.filter.is_empty() {
         Line::from(vec![
-            Span::styled("Filter: ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(" [/] ", Style::default().fg(TEXT_MUTED)),
             Span::styled(&state.filter, Style::default().fg(TEXT_PRIMARY)),
         ])
     } else {
-        Line::from(Span::styled(
-            "Press / to search access tokens...",
-            Style::default().fg(TEXT_MUTED),
-        ))
+        Line::from(vec![
+            Span::styled(" [/] Filter by token ID...", Style::default().fg(TEXT_MUTED)),
+        ])
     };
 
     let search_para = Paragraph::new(search_text)
         .block(search_block)
         .style(Style::default().bg(BG_PANEL));
-    f.render_widget(search_para, chunks[0]);
+    f.render_widget(search_para, chunks[1]);
 
     // === Header ===
     // Column widths: prefix(2) + token_id(30) + expires_at(28) + scope(rest)
@@ -282,7 +660,7 @@ fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
         Span::styled("SCOPE", Style::default().fg(TEXT_MUTED).bold()),
     ]);
     let header_para = Paragraph::new(header);
-    f.render_widget(header_para, chunks[1]);
+    f.render_widget(header_para, chunks[2]);
 
     // === Token List ===
     // Filter tokens
@@ -300,7 +678,7 @@ fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
             "Loading access tokens...",
             Style::default().fg(TEXT_MUTED),
         )));
-        f.render_widget(loading, chunks[2]);
+        f.render_widget(loading, chunks[3]);
     } else if filtered_tokens.is_empty() {
         let empty_msg = if state.tokens.is_empty() {
             "No access tokens. Press 'c' to issue a new token."
@@ -311,9 +689,9 @@ fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
             empty_msg,
             Style::default().fg(TEXT_MUTED),
         )));
-        f.render_widget(empty, chunks[2]);
+        f.render_widget(empty, chunks[3]);
     } else {
-        let list_height = chunks[2].height as usize;
+        let list_height = chunks[3].height as usize;
         let start = state.selected.saturating_sub(list_height / 2);
         let visible_tokens = filtered_tokens.iter().skip(start).take(list_height);
 
@@ -360,7 +738,7 @@ fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
             .collect();
 
         let list = Paragraph::new(lines);
-        f.render_widget(list, chunks[2]);
+        f.render_widget(list, chunks[3]);
     }
 }
 
@@ -1013,15 +1391,42 @@ fn format_count(count: u64) -> String {
     }
 }
 fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
-    // Layout: Search bar, Header, Table rows
+    // Layout: Title bar, Search bar, Header, Table rows
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(3), // Title bar (consistent height)
             Constraint::Length(3), // Search bar
             Constraint::Length(2), // Header
             Constraint::Min(1),    // Table rows
         ])
         .split(area);
+
+    // === Title Bar ===
+    let count_text = if state.loading {
+        " loading...".to_string()
+    } else {
+        let filtered_count = state.basins.iter()
+            .filter(|b| state.filter.is_empty() || b.name.to_string().to_lowercase().contains(&state.filter.to_lowercase()))
+            .count();
+        if filtered_count != state.basins.len() {
+            format!("  {}/{} basins", filtered_count, state.basins.len())
+        } else {
+            format!("  {} basins", state.basins.len())
+        }
+    };
+    let title_lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Basins", Style::default().fg(GREEN).bold()),
+            Span::styled(&count_text, Style::default().fg(Color::Rgb(100, 100, 100))),
+        ]),
+    ];
+    let title_block = Paragraph::new(title_lines)
+        .block(Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
+    f.render_widget(title_block, chunks[0]);
 
     // === Search Bar ===
     let search_block = Block::default()
@@ -1047,10 +1452,10 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
     };
 
     let search = Paragraph::new(search_text).block(search_block);
-    f.render_widget(search, chunks[0]);
+    f.render_widget(search, chunks[1]);
 
     // === Table Header ===
-    let header_area = chunks[1];
+    let header_area = chunks[2];
     // Calculate column widths: Name takes most space, State and Scope are fixed
     let total_width = header_area.width as usize;
     let state_col = 12;
@@ -1077,7 +1482,7 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
         .collect();
 
     // === Table Rows ===
-    let table_area = chunks[2];
+    let table_area = chunks[3];
 
     if filtered.is_empty() && !state.loading {
         let msg = if state.filter.is_empty() {
@@ -1182,7 +1587,7 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2), // Title bar with basin name
+            Constraint::Length(3), // Title bar with basin name (consistent height)
             Constraint::Length(3), // Search bar
             Constraint::Length(2), // Header
             Constraint::Min(1),    // Table rows
@@ -1197,19 +1602,26 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
             .filter(|s| state.filter.is_empty() || s.name.to_string().to_lowercase().contains(&state.filter.to_lowercase()))
             .count();
         if filtered_count != state.streams.len() {
-            format!(" ({}/{} streams)", filtered_count, state.streams.len())
+            format!("  {}/{} streams", filtered_count, state.streams.len())
         } else {
-            format!(" ({} streams)", state.streams.len())
+            format!("  {} streams", state.streams.len())
         }
     };
 
     let basin_name_str = state.basin_name.to_string();
-    let title = Line::from(vec![
-        Span::styled(" ← ", Style::default().fg(TEXT_MUTED)),
-        Span::styled(&basin_name_str, Style::default().fg(GREEN).bold()),
-        Span::styled(count_text, Style::default().fg(TEXT_MUTED)),
-    ]);
-    f.render_widget(Paragraph::new(title), chunks[0]);
+    let title_lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  ← ", Style::default().fg(Color::Rgb(100, 100, 100))),
+            Span::styled(&basin_name_str, Style::default().fg(GREEN).bold()),
+            Span::styled(&count_text, Style::default().fg(Color::Rgb(100, 100, 100))),
+        ]),
+    ];
+    let title_block = Paragraph::new(title_lines)
+        .block(Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
+    f.render_widget(title_block, chunks[0]);
 
     // === Search Bar ===
     let search_block = Block::default()
@@ -1348,24 +1760,40 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Header with URI
-            Constraint::Length(7),  // Stats cards
-            Constraint::Min(8),     // Actions
+            Constraint::Length(3),  // Header with URI (consistent height)
+            Constraint::Length(5),  // Stats cards
+            Constraint::Min(12),    // Actions
         ])
         .split(area);
 
-    // === Header ===
-    let uri = format!("s2://{}/{}", state.basin_name, state.stream_name);
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled("  ", Style::default()),
-        Span::styled(&uri, Style::default().fg(GREEN).bold()),
-    ]))
-    .block(Block::default()
-        .borders(Borders::BOTTOM)
-        .border_style(Style::default().fg(BORDER)));
+    // === HEADER ===
+    let basin_str = state.basin_name.to_string();
+    let stream_str = state.stream_name.to_string();
+    let header_lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  ← ", Style::default().fg(Color::Rgb(100, 100, 100))),
+            Span::styled(&basin_str, Style::default().fg(Color::Rgb(150, 150, 150))),
+            Span::styled(" / ", Style::default().fg(Color::Rgb(80, 80, 80))),
+            Span::styled(&stream_str, Style::default().fg(GREEN).bold()),
+        ]),
+    ];
+    let header = Paragraph::new(header_lines)
+        .block(Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
     f.render_widget(header, chunks[0]);
 
-    // === Stats Row ===
+    // === STATS ROW ===
+    let stats_area = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(2),  // Left padding
+            Constraint::Min(20),    // Stats content
+            Constraint::Length(2),  // Right padding
+        ])
+        .split(chunks[1])[1];
+
     let stats_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -1374,46 +1802,51 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
             Constraint::Ratio(1, 4),
             Constraint::Ratio(1, 4),
         ])
-        .split(chunks[1]);
+        .split(stats_area);
 
-    // Stat card helper function
-    fn render_stat_card(f: &mut Frame, area: Rect, label: &str, value: &str, sub: Option<&str>) {
-        let mut lines = vec![
-            Line::from(Span::styled(label, Style::default().fg(TEXT_MUTED))),
-            Line::from(Span::styled(value, Style::default().fg(TEXT_PRIMARY).bold())),
+    // Stat card helper with icon and color
+    fn render_stat_card_v2(f: &mut Frame, area: Rect, icon: &str, label: &str, value: &str, value_color: Color) {
+        let lines = vec![
+            Line::from(vec![
+                Span::styled(icon, Style::default().fg(value_color)),
+                Span::styled(format!(" {}", label), Style::default().fg(Color::Rgb(120, 120, 120))),
+            ]),
+            Line::from(vec![
+                Span::styled("  ", Style::default()),
+                Span::styled(value, Style::default().fg(value_color).bold()),
+            ]),
         ];
-        if let Some(s) = sub {
-            lines.push(Line::from(Span::styled(s, Style::default().fg(TEXT_MUTED))));
-        }
         let widget = Paragraph::new(lines)
             .block(Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(BORDER))
-                .padding(Padding::horizontal(1)))
-            .alignment(Alignment::Center);
+                .border_style(Style::default().fg(Color::Rgb(50, 50, 50)))
+                .border_type(ratatui::widgets::BorderType::Rounded));
         f.render_widget(widget, area);
     }
 
     // Tail Position
-    let (tail_val, tail_sub): (String, Option<&str>) = if let Some(pos) = &state.tail_position {
-        (format!("{}", pos.seq_num), Some("records"))
+    let (tail_val, tail_color) = if let Some(pos) = &state.tail_position {
+        if pos.seq_num > 0 {
+            (format!("{}", pos.seq_num), Color::Rgb(34, 211, 238)) // Cyan
+        } else {
+            ("0".to_string(), Color::Rgb(100, 100, 100))
+        }
     } else if state.loading {
-        ("...".to_string(), None)
+        ("...".to_string(), Color::Rgb(100, 100, 100))
     } else {
-        ("--".to_string(), None)
+        ("--".to_string(), Color::Rgb(100, 100, 100))
     };
-    render_stat_card(f, stats_chunks[0], "Tail Position", &tail_val, tail_sub);
+    render_stat_card_v2(f, stats_chunks[0], "▌", "Records", &tail_val, tail_color);
 
-    // Last Timestamp
-    let ts_val = if let Some(pos) = &state.tail_position {
+    // Last Write
+    let (ts_val, ts_color) = if let Some(pos) = &state.tail_position {
         if pos.timestamp > 0 {
-            // Format as relative time if recent
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
             let age_secs = now_ms.saturating_sub(pos.timestamp) / 1000;
-            if age_secs < 60 {
+            let val = if age_secs < 60 {
                 format!("{}s ago", age_secs)
             } else if age_secs < 3600 {
                 format!("{}m ago", age_secs / 60)
@@ -1421,34 +1854,51 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
                 format!("{}h ago", age_secs / 3600)
             } else {
                 format!("{}d ago", age_secs / 86400)
-            }
+            };
+            // Color based on recency
+            let color = if age_secs < 60 {
+                Color::Rgb(74, 222, 128) // Green - very recent
+            } else if age_secs < 3600 {
+                Color::Rgb(250, 204, 21) // Yellow - recent
+            } else {
+                Color::Rgb(180, 180, 180) // Gray - old
+            };
+            (val, color)
         } else {
-            "never".to_string()
+            ("never".to_string(), Color::Rgb(100, 100, 100))
         }
     } else {
-        "--".to_string()
+        ("--".to_string(), Color::Rgb(100, 100, 100))
     };
-    render_stat_card(f, stats_chunks[1], "Last Write", &ts_val, None);
+    render_stat_card_v2(f, stats_chunks[1], "◷", "Last Write", &ts_val, ts_color);
 
     // Storage Class
-    let storage_val = if let Some(config) = &state.config {
-        config.storage_class
+    let (storage_val, storage_color) = if let Some(config) = &state.config {
+        let val = config.storage_class
             .as_ref()
             .map(|s| format!("{:?}", s).to_lowercase())
-            .unwrap_or_else(|| "default".to_string())
+            .unwrap_or_else(|| "default".to_string());
+        let color = match val.as_str() {
+            "express" => Color::Rgb(251, 146, 60), // Orange for express
+            "standard" => Color::Rgb(147, 197, 253), // Light blue for standard
+            _ => Color::Rgb(180, 180, 180),
+        };
+        (val, color)
     } else {
-        "--".to_string()
+        ("--".to_string(), Color::Rgb(100, 100, 100))
     };
-    render_stat_card(f, stats_chunks[2], "Storage", &storage_val, None);
+    render_stat_card_v2(f, stats_chunks[2], "◈", "Storage", &storage_val, storage_color);
 
     // Retention
-    let retention_val = if let Some(config) = &state.config {
-        config.retention_policy
+    let (retention_val, retention_color) = if let Some(config) = &state.config {
+        let val = config.retention_policy
             .as_ref()
             .map(|p| match p {
                 crate::types::RetentionPolicy::Age(dur) => {
                     let secs = dur.as_secs();
-                    if secs >= 86400 {
+                    if secs >= 86400 * 365 {
+                        format!("{}y", secs / (86400 * 365))
+                    } else if secs >= 86400 {
                         format!("{}d", secs / 86400)
                     } else if secs >= 3600 {
                         format!("{}h", secs / 3600)
@@ -1456,55 +1906,102 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
                         format!("{}s", secs)
                     }
                 }
-                crate::types::RetentionPolicy::Infinite => "infinite".to_string(),
+                crate::types::RetentionPolicy::Infinite => "∞".to_string(),
             })
-            .unwrap_or_else(|| "infinite".to_string())
+            .unwrap_or_else(|| "∞".to_string());
+        let color = if val == "∞" {
+            Color::Rgb(167, 139, 250) // Purple for infinite
+        } else {
+            Color::Rgb(180, 180, 180)
+        };
+        (val, color)
     } else {
-        "--".to_string()
+        ("--".to_string(), Color::Rgb(100, 100, 100))
     };
-    render_stat_card(f, stats_chunks[3], "Retention", &retention_val, None);
+    render_stat_card_v2(f, stats_chunks[3], "◔", "Retention", &retention_val, retention_color);
 
-    // === Actions ===
-    let actions_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(BORDER))
-        .padding(Padding::new(2, 2, 1, 1));
+    // === ACTIONS ===
+    let actions_outer = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(20),
+            Constraint::Length(2),
+        ])
+        .split(chunks[2])[1];
 
-    let actions = vec![
-        ("t", "Tail", "Live follow from current position - see new records as they arrive"),
-        ("r", "Read", "Configure start position, limits, and time range"),
-        ("a", "Append", "Write records to this stream"),
-        ("f", "Fence", "Set a fencing token to block other writers"),
-        ("m", "Trim", "Delete records before a sequence number"),
+    // Split into two columns: Data Operations | Stream Management
+    let action_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Ratio(1, 2),
+            Constraint::Ratio(1, 2),
+        ])
+        .split(actions_outer);
+
+    // Data operations (left column)
+    let data_ops: Vec<(&str, &str, &str, &str)> = vec![
+        ("t", "Tail", "Live stream, see records as they arrive", "◉"),
+        ("r", "Read", "Read with custom start position & limits", "◎"),
+        ("a", "Append", "Write new records to stream", "◆"),
     ];
 
-    let mut action_lines = vec![];
+    // Stream management (right column)
+    let mgmt_ops: Vec<(&str, &str, &str, &str)> = vec![
+        ("f", "Fence", "Set token for exclusive writes", "⊘"),
+        ("m", "Trim", "Delete records before seq number", "✂"),
+    ];
 
-    for (i, (key, title, desc)) in actions.iter().enumerate() {
-        let is_selected = i == state.selected_action;
+    fn render_action_column(f: &mut Frame, area: Rect, title: &str, actions: &[(&str, &str, &str, &str)], selected: usize, offset: usize) {
+        let title_width = title.len() + 4;
+        let line_width = area.width.saturating_sub(title_width as u16 + 2) as usize;
 
-        if is_selected {
-            action_lines.push(Line::from(vec![
-                Span::styled("> ", Style::default().fg(GREEN)),
-                Span::styled(format!("[{}] ", key), Style::default().fg(GREEN).bold()),
-                Span::styled(*title, Style::default().fg(TEXT_PRIMARY).bold()),
-            ]));
-            action_lines.push(Line::from(vec![
-                Span::styled("     ", Style::default()),
-                Span::styled(*desc, Style::default().fg(TEXT_SECONDARY)),
-            ]));
-        } else {
-            action_lines.push(Line::from(vec![
-                Span::styled("  ", Style::default()),
-                Span::styled(format!("[{}] ", key), Style::default().fg(GREEN_DIM)),
-                Span::styled(*title, Style::default().fg(TEXT_MUTED)),
-            ]));
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled(format!("  {} ", title), Style::default().fg(Color::Rgb(34, 211, 238)).bold()),
+                Span::styled("─".repeat(line_width), Style::default().fg(Color::Rgb(40, 40, 40))),
+            ]),
+            Line::from(""),
+        ];
+
+        for (i, (key, name, desc, icon)) in actions.iter().enumerate() {
+            let actual_idx = i + offset;
+            let is_selected = actual_idx == selected;
+
+            if is_selected {
+                // Selected action - highlighted card style
+                lines.push(Line::from(vec![
+                    Span::styled("  ▶ ", Style::default().fg(GREEN)),
+                    Span::styled(*icon, Style::default().fg(GREEN)),
+                    Span::styled(format!(" {} ", name), Style::default().fg(Color::White).bold()),
+                    Span::styled(format!("[{}]", key), Style::default().fg(GREEN).bold()),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::styled("      ", Style::default()),
+                    Span::styled(*desc, Style::default().fg(Color::Rgb(180, 180, 180)).italic()),
+                ]));
+            } else {
+                // Unselected action - dimmed
+                lines.push(Line::from(vec![
+                    Span::styled("    ", Style::default()),
+                    Span::styled(*icon, Style::default().fg(Color::Rgb(80, 80, 80))),
+                    Span::styled(format!(" {} ", name), Style::default().fg(Color::Rgb(140, 140, 140))),
+                    Span::styled(format!("[{}]", key), Style::default().fg(Color::Rgb(80, 80, 80))),
+                ]));
+            }
+            lines.push(Line::from(""));
         }
-        action_lines.push(Line::from(""));
+
+        let widget = Paragraph::new(lines)
+            .block(Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Rgb(50, 50, 50)))
+                .border_type(ratatui::widgets::BorderType::Rounded));
+        f.render_widget(widget, area);
     }
 
-    let actions_paragraph = Paragraph::new(action_lines).block(actions_block);
-    f.render_widget(actions_paragraph, chunks[2]);
+    render_action_column(f, action_cols[0], "Data Operations", &data_ops, state.selected_action, 0);
+    render_action_column(f, action_cols[1], "Stream Management", &mgmt_ops, state.selected_action, 3);
 }
 
 fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
@@ -1518,34 +2015,55 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
         ("READING", ACCENT)
     };
 
-    let uri = format!("s2://{}/{}", state.basin_name, state.stream_name);
+    // Split into header and content
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),  // Header (consistent height)
+            Constraint::Min(1),     // Content
+        ])
+        .split(area);
 
-    // Build title spans
-    let mut title_spans = vec![
-        Span::styled(" ", Style::default()),
-        Span::styled(mode_text, Style::default().fg(mode_color).bold()),
+    // === HEADER ===
+    let basin_str = state.basin_name.to_string();
+    let stream_str = state.stream_name.to_string();
+    let record_count = format!("  {} records", state.records.len());
+
+    let mut header_spans = vec![
+        Span::styled("  ← ", Style::default().fg(Color::Rgb(100, 100, 100))),
+        Span::styled(&basin_str, Style::default().fg(Color::Rgb(150, 150, 150))),
+        Span::styled(" / ", Style::default().fg(Color::Rgb(80, 80, 80))),
+        Span::styled(&stream_str, Style::default().fg(Color::Rgb(180, 180, 180))),
         Span::styled("  ", Style::default()),
-        Span::styled(&uri, Style::default().fg(TEXT_SECONDARY)),
-        Span::styled(
-            format!("  {} records ", state.records.len()),
-            Style::default().fg(TEXT_MUTED),
-        ),
+        Span::styled(format!(" {} ", mode_text), Style::default().fg(BG_DARK).bg(mode_color).bold()),
+        Span::styled(&record_count, Style::default().fg(Color::Rgb(100, 100, 100))),
     ];
 
     // Add output file indicator if writing to file
     if let Some(ref output) = state.output_file {
-        title_spans.push(Span::styled(" → ", Style::default().fg(TEXT_MUTED)));
-        title_spans.push(Span::styled(output, Style::default().fg(YELLOW)));
+        header_spans.push(Span::styled("  → ", Style::default().fg(Color::Rgb(100, 100, 100))));
+        header_spans.push(Span::styled(output, Style::default().fg(YELLOW)));
     }
 
-    // Main container with title
-    let outer_block = Block::default()
-        .title(Line::from(title_spans))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(if state.is_tailing && !state.paused { GREEN } else { BORDER }));
+    let header_lines = vec![
+        Line::from(""),
+        Line::from(header_spans),
+    ];
+    let header = Paragraph::new(header_lines)
+        .block(Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
+    f.render_widget(header, main_chunks[0]);
 
-    let inner_area = outer_block.inner(area);
-    f.render_widget(outer_block, area);
+    // === CONTENT ===
+    let content_area = main_chunks[1];
+
+    // Main container
+    let outer_block = Block::default()
+        .borders(Borders::NONE);
+
+    let inner_area = outer_block.inner(content_area);
+    f.render_widget(outer_block, content_area);
 
     if state.records.is_empty() {
         let text = if state.loading {
@@ -1773,8 +2291,36 @@ fn draw_headers_popup(f: &mut Frame, record: &s2_sdk::types::SequencedRecord) {
 }
 
 fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
-    let uri = format!("s2://{}/{}", state.basin_name, state.stream_name);
+    // Split into header and content
+    let outer_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),  // Header (consistent height)
+            Constraint::Min(1),     // Content
+        ])
+        .split(area);
 
+    // === HEADER ===
+    let basin_str = state.basin_name.to_string();
+    let stream_str = state.stream_name.to_string();
+    let header_lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  ← ", Style::default().fg(Color::Rgb(100, 100, 100))),
+            Span::styled(&basin_str, Style::default().fg(Color::Rgb(150, 150, 150))),
+            Span::styled(" / ", Style::default().fg(Color::Rgb(80, 80, 80))),
+            Span::styled(&stream_str, Style::default().fg(Color::Rgb(180, 180, 180))),
+            Span::styled("  ", Style::default()),
+            Span::styled(" APPEND ", Style::default().fg(BG_DARK).bg(GREEN).bold()),
+        ]),
+    ];
+    let header = Paragraph::new(header_lines)
+        .block(Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
+    f.render_widget(header, outer_chunks[0]);
+
+    // === CONTENT ===
     // Split into form (left) and history (right)
     let main_chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -1782,17 +2328,13 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
             Constraint::Percentage(50),  // Form
             Constraint::Percentage(50),  // History
         ])
-        .split(area);
+        .split(outer_chunks[1]);
 
     // === Form pane ===
     let form_block = Block::default()
-        .title(Line::from(vec![
-            Span::styled(" APPEND ", Style::default().fg(GREEN).bold()),
-            Span::styled(" ", Style::default()),
-            Span::styled(&uri, Style::default().fg(TEXT_SECONDARY)),
-        ]))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(GREEN))
+        .border_style(Style::default().fg(Color::Rgb(50, 50, 50)))
+        .border_type(ratatui::widgets::BorderType::Rounded)
         .padding(Padding::new(2, 2, 1, 1));
 
     let form_inner = form_block.inner(main_chunks[0]);
@@ -2019,7 +2561,16 @@ fn get_responsive_hints(screen: &Screen, width: usize) -> String {
     let medium = width >= 60;
 
     match screen {
-        Screen::Splash => String::new(),
+        Screen::Splash | Screen::Setup(_) => String::new(),
+        Screen::Settings(_) => {
+            if wide {
+                "jk nav | e edit | hl compression | space toggle | ⏎ save | r reload | ⇥ switch | q".to_string()
+            } else if medium {
+                "jk e hl space ⏎ r ⇥ q".to_string()
+            } else {
+                "jk e ⏎ r ⇥ q".to_string()
+            }
+        }
         Screen::Basins(_) => {
             if wide {
                 "/ filter | jk nav | ⏎ open | M basin metrics | A acct metrics | c new | e cfg | d del | r ref | ?".to_string()
@@ -2114,7 +2665,43 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
     let area = centered_rect(50, 50, f.area());
 
     let help_text = match screen {
-        Screen::Splash => vec![], // Never shown
+        Screen::Splash | Screen::Setup(_) => vec![], // Never shown
+        Screen::Settings(_) => vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  j/k ", Style::default().fg(GREEN).bold()),
+                Span::styled("Navigate", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    e ", Style::default().fg(GREEN).bold()),
+                Span::styled("Edit field", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("  h/l ", Style::default().fg(GREEN).bold()),
+                Span::styled("Change compression", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("space ", Style::default().fg(GREEN).bold()),
+                Span::styled("Toggle token visibility", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("enter ", Style::default().fg(GREEN).bold()),
+                Span::styled("Save changes", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    r ", Style::default().fg(GREEN).bold()),
+                Span::styled("Reload from file", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("  tab ", Style::default().fg(GREEN).bold()),
+                Span::styled("Switch tabs", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    q ", Style::default().fg(GREEN).bold()),
+                Span::styled("Quit", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(""),
+        ],
         Screen::Basins(_) => vec![
             Line::from(""),
             Line::from(vec![

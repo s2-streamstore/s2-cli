@@ -18,10 +18,13 @@ use crate::error::CliError;
 use app::App;
 
 pub async fn run() -> Result<(), CliError> {
-    // Load config and create SDK client
+    // Load config and try to create SDK client
+    // If access token is missing, we'll start with Setup screen instead of failing
     let cli_config = load_cli_config()?;
-    let sdk_config = sdk_config(&cli_config)?;
-    let s2 = s2_sdk::S2::new(sdk_config).map_err(CliError::SdkInit)?;
+    let s2 = match sdk_config(&cli_config) {
+        Ok(sdk_cfg) => Some(s2_sdk::S2::new(sdk_cfg).map_err(CliError::SdkInit)?),
+        Err(_) => None, // No access token - will show setup screen
+    };
 
     // Setup terminal
     enable_raw_mode().map_err(|e| CliError::RecordWrite(format!("Failed to enable raw mode: {e}")))?;

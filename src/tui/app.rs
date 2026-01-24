@@ -9,6 +9,7 @@ use s2_sdk::types::{AccessTokenId, AccessTokenInfo, BasinInfo, BasinMetricSet, B
 use tokio::sync::mpsc;
 
 use crate::cli::{CreateStreamArgs, IssueAccessTokenArgs, ListAccessTokensArgs, ListBasinsArgs, ListStreamsArgs, ReadArgs, ReconfigureBasinArgs, ReconfigureStreamArgs};
+use crate::config::{self, ConfigKey, Compression};
 use crate::error::CliError;
 use crate::ops;
 use crate::record_format::{RecordFormat, RecordsOut};
@@ -26,12 +27,14 @@ pub enum Tab {
     #[default]
     Basins,
     AccessTokens,
+    Settings,
 }
 
 /// Current screen being displayed
 #[derive(Debug, Clone)]
 pub enum Screen {
     Splash,
+    Setup(SetupState),
     Basins(BasinsState),
     Streams(StreamsState),
     StreamDetail(StreamDetailState),
@@ -39,6 +42,15 @@ pub enum Screen {
     AppendView(AppendViewState),
     AccessTokens(AccessTokensState),
     MetricsView(MetricsViewState),
+    Settings(SettingsState),
+}
+
+/// State for the setup screen (first-time token entry)
+#[derive(Debug, Clone, Default)]
+pub struct SetupState {
+    pub access_token: String,
+    pub error: Option<String>,
+    pub validating: bool,
 }
 
 /// State for the basins list screen
@@ -125,6 +137,71 @@ pub struct AccessTokensState {
     pub loading: bool,
     pub filter: String,
     pub filter_active: bool,
+}
+
+/// Compression option for settings
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CompressionOption {
+    #[default]
+    None,
+    Gzip,
+    Zstd,
+}
+
+impl CompressionOption {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CompressionOption::None => "None",
+            CompressionOption::Gzip => "Gzip",
+            CompressionOption::Zstd => "Zstd",
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        match self {
+            CompressionOption::None => CompressionOption::Gzip,
+            CompressionOption::Gzip => CompressionOption::Zstd,
+            CompressionOption::Zstd => CompressionOption::None,
+        }
+    }
+
+    pub fn prev(&self) -> Self {
+        match self {
+            CompressionOption::None => CompressionOption::Zstd,
+            CompressionOption::Gzip => CompressionOption::None,
+            CompressionOption::Zstd => CompressionOption::Gzip,
+        }
+    }
+}
+
+/// State for the settings screen
+#[derive(Debug, Clone)]
+pub struct SettingsState {
+    pub access_token: String,
+    pub access_token_masked: bool,  // Whether to show masked or plaintext
+    pub account_endpoint: String,
+    pub basin_endpoint: String,
+    pub compression: CompressionOption,
+    pub selected: usize,  // 0=token, 1=account_endpoint, 2=basin_endpoint, 3=compression
+    pub editing: bool,
+    pub has_changes: bool,
+    pub message: Option<String>,
+}
+
+impl Default for SettingsState {
+    fn default() -> Self {
+        Self {
+            access_token: String::new(),
+            access_token_masked: true,
+            account_endpoint: String::new(),
+            basin_endpoint: String::new(),
+            compression: CompressionOption::None,
+            selected: 0,
+            editing: false,
+            has_changes: false,
+            message: None,
+        }
+    }
 }
 
 /// Type of metrics being viewed
@@ -610,7 +687,7 @@ impl Default for InputMode {
 pub struct App {
     pub screen: Screen,
     pub tab: Tab,
-    pub s2: s2_sdk::S2,
+    pub s2: Option<s2_sdk::S2>,
     pub message: Option<StatusMessage>,
     pub show_help: bool,
     pub input_mode: InputMode,
@@ -717,9 +794,14 @@ fn build_stream_config(
 }
 
 impl App {
-    pub fn new(s2: s2_sdk::S2) -> Self {
+    pub fn new(s2: Option<s2_sdk::S2>) -> Self {
+        let screen = if s2.is_some() {
+            Screen::Splash
+        } else {
+            Screen::Setup(SetupState::default())
+        };
         Self {
-            screen: Screen::Splash,
+            screen,
             tab: Tab::Basins,
             s2,
             message: None,
@@ -729,6 +811,97 @@ impl App {
         }
     }
 
+    /// Create an S2 client from the given access token
+    fn create_s2_client(access_token: &str) -> Result<s2_sdk::S2, CliError> {
+        let sdk_config = s2_sdk::types::S2Config::new(access_token)
+            .with_user_agent("s2-cli")
+            .map_err(|e| CliError::EndpointsFromEnv(e.to_string()))?
+            .with_request_timeout(Duration::from_secs(30));
+        s2_sdk::S2::new(sdk_config).map_err(CliError::SdkInit)
+    }
+
+    /// Load settings from config file
+    fn load_settings_state() -> SettingsState {
+        // Load from file first
+        let file_config = config::load_config_file().unwrap_or_default();
+        // Also load from environment (which load_cli_config does)
+        let env_config = config::load_cli_config().unwrap_or_default();
+
+        // Prefer file config for display, but show env token if file is empty
+        let access_token = file_config.access_token.clone()
+            .or_else(|| env_config.access_token.clone())
+            .unwrap_or_default();
+
+        // Track if token is from env (read-only in that case)
+        let token_from_env = file_config.access_token.is_none() && env_config.access_token.is_some();
+
+        SettingsState {
+            access_token,
+            access_token_masked: true,
+            account_endpoint: file_config.account_endpoint.unwrap_or_default(),
+            basin_endpoint: file_config.basin_endpoint.unwrap_or_default(),
+            compression: match file_config.compression {
+                Some(Compression::Gzip) => CompressionOption::Gzip,
+                Some(Compression::Zstd) => CompressionOption::Zstd,
+                None => CompressionOption::None,
+            },
+            selected: 0,
+            editing: false,
+            has_changes: false,
+            message: if token_from_env {
+                Some("Token loaded from S2_ACCESS_TOKEN env var".to_string())
+            } else {
+                None
+            },
+        }
+    }
+
+    /// Save settings to config file
+    fn save_settings_static(state: &SettingsState) -> Result<(), CliError> {
+        let mut cli_config = config::load_config_file().unwrap_or_default();
+
+        // Update access token
+        if state.access_token.is_empty() {
+            cli_config.unset(ConfigKey::AccessToken);
+        } else {
+            cli_config.set(ConfigKey::AccessToken, state.access_token.clone())
+                .map_err(|e| CliError::Config(e))?;
+        }
+
+        // Update account endpoint
+        if state.account_endpoint.is_empty() {
+            cli_config.unset(ConfigKey::AccountEndpoint);
+        } else {
+            cli_config.set(ConfigKey::AccountEndpoint, state.account_endpoint.clone())
+                .map_err(|e| CliError::Config(e))?;
+        }
+
+        // Update basin endpoint
+        if state.basin_endpoint.is_empty() {
+            cli_config.unset(ConfigKey::BasinEndpoint);
+        } else {
+            cli_config.set(ConfigKey::BasinEndpoint, state.basin_endpoint.clone())
+                .map_err(|e| CliError::Config(e))?;
+        }
+
+        // Update compression
+        match state.compression {
+            CompressionOption::None => cli_config.unset(ConfigKey::Compression),
+            CompressionOption::Gzip => {
+                cli_config.set(ConfigKey::Compression, "gzip".to_string())
+                    .map_err(|e| CliError::Config(e))?;
+            }
+            CompressionOption::Zstd => {
+                cli_config.set(ConfigKey::Compression, "zstd".to_string())
+                    .map_err(|e| CliError::Config(e))?;
+            }
+        }
+
+        config::save_cli_config(&cli_config)
+            .map_err(|e| CliError::Config(e))?;
+        Ok(())
+    }
+
     pub async fn run<B: Backend>(mut self, terminal: &mut Terminal<B>) -> Result<(), CliError> {
         let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -736,8 +909,10 @@ impl App {
         let splash_start = std::time::Instant::now();
         let splash_duration = Duration::from_millis(1200);
 
-        // Start loading basins in background
-        self.load_basins(tx.clone());
+        // Only start loading basins if we have an S2 client (access token configured)
+        if self.s2.is_some() {
+            self.load_basins(tx.clone());
+        }
 
         // Track loaded basins for transition from splash
         let mut pending_basins: Option<Result<Vec<BasinInfo>, CliError>> = None;
@@ -1379,7 +1554,7 @@ impl App {
         // Tab key to switch between tabs (only on top-level screens)
         if key.code == KeyCode::Tab {
             match &self.screen {
-                Screen::Basins(_) | Screen::AccessTokens(_) => {
+                Screen::Basins(_) | Screen::AccessTokens(_) | Screen::Settings(_) => {
                     self.switch_tab(tx.clone());
                     return;
                 }
@@ -1390,6 +1565,7 @@ impl App {
         // Screen-specific keys - handle in place to avoid borrow issues
         match &self.screen {
             Screen::Splash => {} // Keys handled in run loop
+            Screen::Setup(_) => self.handle_setup_key(key, tx),
             Screen::Basins(_) => self.handle_basins_key(key, tx),
             Screen::Streams(_) => self.handle_streams_key(key, tx),
             Screen::StreamDetail(_) => self.handle_stream_detail_key(key, tx),
@@ -1397,6 +1573,7 @@ impl App {
             Screen::AppendView(_) => self.handle_append_view_key(key, tx),
             Screen::AccessTokens(_) => self.handle_access_tokens_key(key, tx),
             Screen::MetricsView(_) => self.handle_metrics_view_key(key, tx),
+            Screen::Settings(_) => self.handle_settings_key(key, tx),
         }
     }
 
@@ -3195,7 +3372,10 @@ impl App {
     }
 
     fn load_basins(&self, tx: mpsc::UnboundedSender<Event>) {
-        let s2 = self.s2.clone();
+        let Some(s2) = self.s2.clone() else {
+            let _ = tx.send(Event::BasinsLoaded(Err(CliError::Config(crate::error::CliConfigError::MissingAccessToken))));
+            return;
+        };
         tokio::spawn(async move {
             let args = ListBasinsArgs {
                 prefix: None,
@@ -3220,7 +3400,10 @@ impl App {
     }
 
     fn load_streams(&self, basin_name: BasinName, tx: mpsc::UnboundedSender<Event>) {
-        let s2 = self.s2.clone();
+        let Some(s2) = self.s2.clone() else {
+            let _ = tx.send(Event::StreamsLoaded(Err(CliError::Config(crate::error::CliConfigError::MissingAccessToken))));
+            return;
+        };
         tokio::spawn(async move {
             let args = ListStreamsArgs {
                 uri: S2BasinAndMaybeStreamUri {
@@ -3254,7 +3437,7 @@ impl App {
         stream_name: StreamName,
         tx: mpsc::UnboundedSender<Event>,
     ) {
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
         let uri = S2BasinAndStreamUri {
             basin: basin_name.clone(),
             stream: stream_name.clone(),
@@ -3291,7 +3474,7 @@ impl App {
 
     fn create_basin_with_config(&mut self, name: String, scope: BasinScopeOption, config: BasinConfig, tx: mpsc::UnboundedSender<Event>) {
         self.input_mode = InputMode::Normal;
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
         let tx_refresh = tx.clone();
         tokio::spawn(async move {
             // Parse basin name
@@ -3338,7 +3521,7 @@ impl App {
     }
 
     fn delete_basin(&mut self, basin: BasinName, tx: mpsc::UnboundedSender<Event>) {
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
         let tx_refresh = tx.clone();
         let name = basin.to_string();
         tokio::spawn(async move {
@@ -3370,7 +3553,7 @@ impl App {
 
     fn create_stream_with_config(&mut self, basin: BasinName, name: String, config: StreamConfig, tx: mpsc::UnboundedSender<Event>) {
         self.input_mode = InputMode::Normal;
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
         let tx_refresh = tx.clone();
         let basin_clone = basin.clone();
         tokio::spawn(async move {
@@ -3420,7 +3603,7 @@ impl App {
     }
 
     fn delete_stream(&mut self, basin: BasinName, stream: StreamName, tx: mpsc::UnboundedSender<Event>) {
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
         let tx_refresh = tx.clone();
         let name = stream.to_string();
         let basin_clone = basin.clone();
@@ -3479,7 +3662,7 @@ impl App {
             output_file: None,
         });
 
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
         let uri = S2BasinAndStreamUri {
             basin: basin_name,
             stream: stream_name,
@@ -3586,7 +3769,7 @@ impl App {
             output_file: if has_output { Some(output_file.clone()) } else { None },
         });
 
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
         let uri = S2BasinAndStreamUri {
             basin: basin_name,
             stream: stream_name,
@@ -3733,7 +3916,7 @@ impl App {
     }
 
     fn load_basin_config(&self, basin: BasinName, tx: mpsc::UnboundedSender<Event>) {
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
         tokio::spawn(async move {
             match ops::get_basin_config(&s2, &basin).await {
                 Ok(config) => {
@@ -3778,7 +3961,7 @@ impl App {
         stream: StreamName,
         tx: mpsc::UnboundedSender<Event>,
     ) {
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
         let uri = S2BasinAndStreamUri { basin, stream };
         tokio::spawn(async move {
             match ops::get_stream_config(&s2, uri).await {
@@ -3818,7 +4001,7 @@ impl App {
         config: BasinReconfigureConfig,
         tx: mpsc::UnboundedSender<Event>,
     ) {
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
         let tx_refresh = tx.clone();
         tokio::spawn(async move {
             // Build the default stream config
@@ -3882,7 +4065,7 @@ impl App {
         config: StreamReconfigureConfig,
         tx: mpsc::UnboundedSender<Event>,
     ) {
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
         let basin_clone = basin.clone();
         let tx_refresh = tx.clone();
         tokio::spawn(async move {
@@ -4120,7 +4303,7 @@ impl App {
         fencing_token: Option<String>,
         tx: mpsc::UnboundedSender<Event>,
     ) {
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
         let body_preview = if body.len() > 50 {
             format!("{}...", &body[..50])
         } else {
@@ -4239,7 +4422,7 @@ impl App {
         current_token: Option<String>,
         tx: mpsc::UnboundedSender<Event>,
     ) {
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
         let new_token_clone = new_token.clone();
 
         tokio::spawn(async move {
@@ -4313,7 +4496,7 @@ impl App {
         fencing_token: Option<String>,
         tx: mpsc::UnboundedSender<Event>,
     ) {
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
 
         tokio::spawn(async move {
             use s2_sdk::types::{AppendInput, AppendRecordBatch, CommandRecord, FencingToken};
@@ -4378,6 +4561,10 @@ impl App {
                 self.load_access_tokens(tx);
             }
             Tab::AccessTokens => {
+                self.tab = Tab::Settings;
+                self.screen = Screen::Settings(Self::load_settings_state());
+            }
+            Tab::Settings => {
                 self.tab = Tab::Basins;
                 self.screen = Screen::Basins(BasinsState {
                     loading: true,
@@ -4501,9 +4688,176 @@ impl App {
         }
     }
 
+    /// Handle keys on setup screen (first-time token entry)
+    fn handle_setup_key(&mut self, key: KeyEvent, tx: mpsc::UnboundedSender<Event>) {
+        let Screen::Setup(state) = &mut self.screen else {
+            return;
+        };
+
+        match key.code {
+            KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.should_quit = true;
+            }
+            KeyCode::Esc => {
+                self.should_quit = true;
+            }
+            KeyCode::Enter => {
+                if state.access_token.is_empty() {
+                    state.error = Some("Access token is required".to_string());
+                    return;
+                }
+
+                // Try to create S2 client with the token
+                state.validating = true;
+                state.error = None;
+
+                match Self::create_s2_client(&state.access_token) {
+                    Ok(s2) => {
+                        // Save the token to config
+                        if let Err(e) = config::set_config_value(ConfigKey::AccessToken, state.access_token.clone()) {
+                            state.error = Some(format!("Failed to save config: {}", e));
+                            state.validating = false;
+                            return;
+                        }
+
+                        // Set the S2 client and transition to basins
+                        self.s2 = Some(s2);
+                        self.screen = Screen::Basins(BasinsState {
+                            loading: true,
+                            ..Default::default()
+                        });
+                        self.load_basins(tx);
+                        self.message = Some(StatusMessage {
+                            text: "Access token configured successfully".to_string(),
+                            level: MessageLevel::Success,
+                        });
+                    }
+                    Err(e) => {
+                        state.error = Some(format!("Invalid token: {}", e));
+                        state.validating = false;
+                    }
+                }
+            }
+            KeyCode::Backspace => {
+                state.access_token.pop();
+                state.error = None;
+            }
+            KeyCode::Char(c) => {
+                state.access_token.push(c);
+                state.error = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Handle keys on settings screen
+    fn handle_settings_key(&mut self, key: KeyEvent, _tx: mpsc::UnboundedSender<Event>) {
+        let Screen::Settings(state) = &mut self.screen else {
+            return;
+        };
+
+        // Handle editing mode
+        if state.editing {
+            match key.code {
+                KeyCode::Esc => {
+                    state.editing = false;
+                }
+                KeyCode::Enter => {
+                    state.editing = false;
+                    state.has_changes = true;
+                }
+                KeyCode::Backspace => {
+                    match state.selected {
+                        0 => { state.access_token.pop(); }
+                        1 => { state.account_endpoint.pop(); }
+                        2 => { state.basin_endpoint.pop(); }
+                        _ => {}
+                    }
+                    state.has_changes = true;
+                }
+                KeyCode::Char(c) => {
+                    match state.selected {
+                        0 => state.access_token.push(c),
+                        1 => state.account_endpoint.push(c),
+                        2 => state.basin_endpoint.push(c),
+                        _ => {}
+                    }
+                    state.has_changes = true;
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        match key.code {
+            KeyCode::Char('q') => {
+                self.should_quit = true;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if state.selected < 4 {  // 0=token, 1=account, 2=basin, 3=compression, 4=save
+                    state.selected += 1;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if state.selected > 0 {
+                    state.selected -= 1;
+                }
+            }
+            KeyCode::Char('e') | KeyCode::Enter if state.selected < 3 => {
+                // Edit text fields
+                state.editing = true;
+            }
+            KeyCode::Char('h') | KeyCode::Left if state.selected == 3 => {
+                // Cycle compression option backwards
+                state.compression = state.compression.prev();
+                state.has_changes = true;
+            }
+            KeyCode::Char('l') | KeyCode::Right if state.selected == 3 => {
+                // Cycle compression option forwards
+                state.compression = state.compression.next();
+                state.has_changes = true;
+            }
+            KeyCode::Char(' ') if state.selected == 0 => {
+                // Toggle token visibility
+                state.access_token_masked = !state.access_token_masked;
+            }
+            KeyCode::Enter if state.selected == 4 => {
+                // Save settings - clone state to avoid borrow issues
+                let state_clone = state.clone();
+                match Self::save_settings_static(&state_clone) {
+                    Err(e) => {
+                        state.message = Some(format!("Failed to save: {}", e));
+                    }
+                    Ok(()) => {
+                        state.has_changes = false;
+                        state.message = Some("Settings saved successfully".to_string());
+
+                        // If access token changed, recreate S2 client
+                        if !state.access_token.is_empty() {
+                            match Self::create_s2_client(&state.access_token) {
+                                Ok(s2) => {
+                                    self.s2 = Some(s2);
+                                }
+                                Err(e) => {
+                                    state.message = Some(format!("Token saved but client error: {}", e));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('r') => {
+                // Reload settings from file
+                *state = Self::load_settings_state();
+                state.message = Some("Settings reloaded".to_string());
+            }
+            _ => {}
+        }
+    }
+
     /// Load access tokens
     fn load_access_tokens(&self, tx: mpsc::UnboundedSender<Event>) {
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
         tokio::spawn(async move {
             let args = ListAccessTokensArgs {
                 prefix: None,
@@ -4549,7 +4903,7 @@ impl App {
         auto_prefix_streams: bool,
         tx: mpsc::UnboundedSender<Event>,
     ) {
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
         let tx_refresh = tx.clone();
 
         tokio::spawn(async move {
@@ -4693,7 +5047,7 @@ impl App {
 
     /// Revoke an access token
     fn revoke_access_token(&self, id: String, tx: mpsc::UnboundedSender<Event>) {
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
         let tx_refresh = tx.clone();
 
         tokio::spawn(async move {
@@ -4775,7 +5129,7 @@ impl App {
     fn load_account_metrics(&self, category: MetricCategory, tx: mpsc::UnboundedSender<Event>) {
         use s2_sdk::types::AccountMetricSet;
 
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
 
         tokio::spawn(async move {
             // Get metrics for last 24 hours
@@ -4809,7 +5163,7 @@ impl App {
     }
 
     fn load_basin_metrics(&self, basin_name: BasinName, category: MetricCategory, tx: mpsc::UnboundedSender<Event>) {
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
 
         tokio::spawn(async move {
             // Get metrics for last 24 hours
@@ -4853,7 +5207,7 @@ impl App {
 
     /// Load stream metrics
     fn load_stream_metrics(&self, basin_name: BasinName, stream_name: StreamName, tx: mpsc::UnboundedSender<Event>) {
-        let s2 = self.s2.clone();
+        let s2 = self.s2.clone().expect("S2 client not initialized");
 
         tokio::spawn(async move {
             // Get metrics for last 24 hours
