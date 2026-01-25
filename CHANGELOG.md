@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.1] - 2026-01-25
+
+### Miscellaneous Tasks
+
+- Bump sdk version, opt-out of ignoring deleted resources in pagination ([#205](https://github.com/s2-streamstore/s2-cli/issues/205))
+- `bench` improvements ([#206](https://github.com/s2-streamstore/s2-cli/issues/206))
+
 ## [0.25.0] - 2026-01-20
 
 ### Features
