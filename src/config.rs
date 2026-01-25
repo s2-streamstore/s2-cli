@@ -3,7 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use config::{Config, FileFormat};
 use s2_sdk::{
     self as sdk,
-    types::{S2Config, S2Endpoints},
+    types::{AccountEndpoint, BasinEndpoint, S2Config, S2Endpoints},
 };
 use serde::{Deserialize, Serialize};
 
@@ -163,13 +163,17 @@ pub fn sdk_config(config: &CliConfig) -> Result<S2Config, CliError> {
 
     let mut sdk_config = S2Config::new(access_token)
         .with_user_agent("s2-cli")
-        .map_err(|e| CliError::EndpointsFromEnv(e.to_string()))?
+        .expect("valid user agent")
         .with_request_timeout(Duration::from_secs(30))
         .with_compression(compression);
 
     match (&config.account_endpoint, &config.basin_endpoint) {
-        (Some(account), Some(basin)) => {
-            let endpoints = S2Endpoints::parse_from(account, basin)
+        (Some(account_endpoint_str), Some(basin_endpoint_str)) => {
+            let account_endpoint = AccountEndpoint::new(account_endpoint_str)
+                .map_err(|e| CliError::EndpointsFromEnv(e.to_string()))?;
+            let basin_endpoint = BasinEndpoint::new(basin_endpoint_str)
+                .map_err(|e| CliError::EndpointsFromEnv(e.to_string()))?;
+            let endpoints = S2Endpoints::new(account_endpoint, basin_endpoint)
                 .map_err(|e| CliError::EndpointsFromEnv(e.to_string()))?;
             sdk_config = sdk_config.with_endpoints(endpoints);
         }
