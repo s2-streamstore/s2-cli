@@ -16,7 +16,7 @@ use s2_sdk::{
     producer::{IndexedAppendAck, ProducerConfig},
     types::{
         AppendRecord, Header, RECORD_BATCH_MAX, ReadFrom, ReadInput, ReadStart, ReadStop, S2Error,
-        SequencedRecord, ValidationError,
+        SequencedRecord,
     },
 };
 use tokio::sync::mpsc;
@@ -39,7 +39,7 @@ struct BenchWriteSample {
     records: u64,
     elapsed: Duration,
     ack_latencies: Vec<Duration>,
-    run_hash: Option<u64>,
+    chain_hash: Option<u64>,
 }
 
 struct BenchReadSample {
@@ -47,7 +47,7 @@ struct BenchReadSample {
     records: u64,
     elapsed: Duration,
     e2e_latencies: Vec<Duration>,
-    run_hash: Option<u64>,
+    chain_hash: Option<u64>,
 }
 
 trait BenchSample {
@@ -105,11 +105,13 @@ fn record_body(record_size: usize, rng: &mut rand::rngs::StdRng) -> Bytes {
     Bytes::from(body)
 }
 
-fn record(body: Bytes, timestamp: u64, hash: u64) -> Result<AppendRecord, ValidationError> {
-    let hash_header = Header::new(HASH_HEADER_NAME, hash.to_be_bytes().to_vec());
-    let record = AppendRecord::new(body)?;
-    let record = record.with_headers([hash_header])?;
-    Ok(record.with_timestamp(timestamp))
+fn new_record(body: Bytes, timestamp: u64, hash: u64) -> AppendRecord {
+    AppendRecord::new(body)
+        .and_then(|record| {
+            record.with_headers([Header::new(HASH_HEADER_NAME, hash.to_be_bytes().to_vec())])
+        })
+        .expect("valid")
+        .with_timestamp(timestamp)
 }
 
 fn record_hash(record: &SequencedRecord) -> Result<u64, String> {
@@ -142,9 +144,8 @@ fn bench_write(
     write_done_records: Arc<AtomicU64>,
     bench_start: Instant,
 ) -> impl Stream<Item = Result<BenchWriteSample, CliError>> + Send {
-    let metered_size = record(Bytes::from(vec![0u8; body_size(record_size)]), 0, 0)
-        .expect("valid record")
-        .metered_bytes();
+    let metered_size =
+        new_record(Bytes::from(vec![0u8; body_size(record_size)]), 0, 0).metered_bytes();
     assert_eq!(metered_size, record_size);
 
     let producer = stream.producer(ProducerConfig::default());
@@ -158,7 +159,6 @@ fn bench_write(
         let mut last_yield = Instant::now();
         let mut rng = rand::rngs::StdRng::seed_from_u64(0);
         let mut prev_hash: u64 = 0;
-        let mut run_hasher = Xxh3Default::new();
         let mut next_seq_num: u64 = 0;
 
         let mut pending_acks: FuturesUnordered<PendingAck> = FuturesUnordered::new();
@@ -208,7 +208,7 @@ fn bench_write(
                                     records: total_records,
                                     elapsed: throughput_start.elapsed(),
                                     ack_latencies: std::mem::take(&mut ack_latencies),
-                                    run_hash: None,
+                                    chain_hash: None,
                                 });
                             }
                         }
@@ -231,18 +231,9 @@ fn bench_write(
                             let body = record_body(record_size, &mut rng);
                             let hash = chain_hash(prev_hash, body.as_ref());
                             prev_hash = hash;
-                            run_hasher.update(&hash.to_be_bytes());
-                            let rec = match record(body, timestamp, hash) {
-                                Ok(r) => r,
-                                Err(e) => {
-                                    yield Err(CliError::InvalidArgs(miette::miette!(
-                                        "Invalid bench record: {e}"
-                                    )));
-                                    return;
-                                }
-                            };
+                            let record = new_record(body, timestamp, hash);
                             pending_acks.push(Box::pin(async move {
-                                let res = permit.submit(rec).await;
+                                let res = permit.submit(record).await;
                                 (submit_time, res)
                             }));
                             bytes_submitted += record_size;
@@ -262,7 +253,7 @@ fn bench_write(
             records: total_records,
             elapsed: throughput_start.elapsed(),
             ack_latencies,
-            run_hash: Some(run_hasher.digest()),
+            chain_hash: Some(prev_hash),
         });
     }
 }
@@ -318,7 +309,6 @@ fn bench_read_inner(
         let mut last_yield = Instant::now();
         let mut e2e_latencies: Vec<Duration> = Vec::new();
         let mut prev_hash: u64 = 0;
-        let mut run_hasher = Xxh3Default::new();
 
         let mut poll_interval = tokio::time::interval(Duration::from_millis(250));
 
@@ -374,7 +364,6 @@ fn bench_read_inner(
                                     )));
                                     return;
                                 }
-                                run_hasher.update(&hash.to_be_bytes());
                                 prev_hash = hash;
                                 e2e_latencies.push(Duration::from_micros(
                                     now_micros.saturating_sub(record.timestamp),
@@ -391,7 +380,7 @@ fn bench_read_inner(
                                     records: total_records,
                                     elapsed: throughput_start.elapsed(),
                                     e2e_latencies: std::mem::take(&mut e2e_latencies),
-                                    run_hash: None,
+                                    chain_hash: None,
                                 });
                             }
 
@@ -414,7 +403,7 @@ fn bench_read_inner(
             records: total_records,
             elapsed: throughput_start.elapsed(),
             e2e_latencies,
-            run_hash: Some(run_hasher.digest()),
+            chain_hash: Some(prev_hash),
         });
     }
 }
@@ -475,8 +464,8 @@ pub async fn run(
     let mut read_sample: Option<BenchReadSample> = None;
     let mut all_ack_latencies: Vec<Duration> = Vec::new();
     let mut all_e2e_latencies: Vec<Duration> = Vec::new();
-    let mut write_run_hash: Option<u64> = None;
-    let mut read_run_hash: Option<u64> = None;
+    let mut write_chain_hash: Option<u64> = None;
+    let mut read_chain_hash: Option<u64> = None;
 
     let stop = Arc::new(AtomicBool::new(false));
     let write_done_records = Arc::new(AtomicU64::new(WRITE_DONE_SENTINEL));
@@ -545,8 +534,8 @@ pub async fn run(
                     Some(BenchEvent::Write(Ok(sample))) => {
                         update_bench_bar(&write_bar, &sample);
                         all_ack_latencies.extend(sample.ack_latencies.iter().copied());
-                        if let Some(hash) = sample.run_hash {
-                            write_run_hash = Some(hash);
+                        if let Some(hash) = sample.chain_hash {
+                            write_chain_hash = Some(hash);
                         }
                         write_sample = Some(sample);
                     }
@@ -564,8 +553,8 @@ pub async fn run(
                     Some(BenchEvent::Read(Ok(sample))) => {
                         update_bench_bar(&read_bar, &sample);
                         all_e2e_latencies.extend(sample.e2e_latencies.iter().copied());
-                        if let Some(hash) = sample.run_hash {
-                            read_run_hash = Some(hash);
+                        if let Some(hash) = sample.chain_hash {
+                            read_chain_hash = Some(hash);
                         }
                         read_sample = Some(sample);
                     }
@@ -626,7 +615,16 @@ pub async fn run(
         print_latency_stats(LatencyStats::compute(all_e2e_latencies), "End-to-End");
     }
 
-    if let (Some(expected), Some(actual)) = (write_run_hash, read_run_hash)
+    if let (Some(write_sample), Some(read_sample)) = (write_sample.as_ref(), read_sample.as_ref())
+        && write_sample.records != read_sample.records
+    {
+        return Err(CliError::BenchVerification(format!(
+            "live read record count mismatch: expected {}, got {}",
+            write_sample.records, read_sample.records
+        )));
+    }
+
+    if let (Some(expected), Some(actual)) = (write_chain_hash, read_chain_hash)
         && expected != actual
     {
         return Err(CliError::BenchVerification(format!(
@@ -646,15 +644,15 @@ pub async fn run(
                 .expect("valid template"),
         );
     let mut catchup_sample: Option<BenchReadSample> = None;
-    let mut catchup_run_hash: Option<u64> = None;
+    let mut catchup_chain_hash: Option<u64> = None;
     let catchup_stream = bench_read_catchup(stream.clone(), record_size, bench_start);
     let mut catchup_stream = std::pin::pin!(catchup_stream);
     while let Some(result) = catchup_stream.next().await {
         match result {
             Ok(sample) => {
                 update_bench_bar(&catchup_bar, &sample);
-                if let Some(hash) = sample.run_hash {
-                    catchup_run_hash = Some(hash);
+                if let Some(hash) = sample.chain_hash {
+                    catchup_chain_hash = Some(hash);
                 }
                 catchup_sample = Some(sample);
             }
@@ -683,7 +681,17 @@ pub async fn run(
         );
     }
 
-    if let (Some(expected), Some(actual)) = (write_run_hash, catchup_run_hash)
+    if let (Some(write_sample), Some(catchup_sample)) =
+        (write_sample.as_ref(), catchup_sample.as_ref())
+        && write_sample.records != catchup_sample.records
+    {
+        return Err(CliError::BenchVerification(format!(
+            "catchup read record count mismatch: expected {}, got {}",
+            write_sample.records, catchup_sample.records
+        )));
+    }
+
+    if let (Some(expected), Some(actual)) = (write_chain_hash, catchup_chain_hash)
         && expected != actual
     {
         return Err(CliError::BenchVerification(format!(
