@@ -346,7 +346,7 @@ fn bench_read_inner(
                                     return;
                                 }
 
-                                let expected_hash = match record_hash(record) {
+                                let header_hash = match record_hash(record) {
                                     Ok(hash) => hash,
                                     Err(err) => {
                                         yield Err(CliError::BenchVerification(format!(
@@ -356,15 +356,15 @@ fn bench_read_inner(
                                         return;
                                     }
                                 };
-                                let hash = chain_hash(prev_hash, record.body.as_ref());
-                                if hash != expected_hash {
+                                let computed_hash = chain_hash(prev_hash, record.body.as_ref());
+                                if computed_hash != header_hash {
                                     yield Err(CliError::BenchVerification(format!(
                                         "unexpected record hash at seq_num {}",
                                         record.seq_num
                                     )));
                                     return;
                                 }
-                                prev_hash = hash;
+                                prev_hash = computed_hash;
                                 e2e_latencies.push(Duration::from_micros(
                                     now_micros.saturating_sub(record.timestamp),
                                 ));
