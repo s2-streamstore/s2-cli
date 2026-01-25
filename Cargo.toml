@@ -51,3 +51,4 @@ tempfile = "3.24"
 
 [profile.release]
 lto = true
+
