@@ -78,7 +78,7 @@ jobs:
             "repo": "${{ github.repository }}",
             "ref": "${{ github.ref }}",
             "lang": "rust",
-            "test_cmd": "cargo install cargo-nextest && cargo nextest run --test integration -j 1"
+            "test_cmd": "cargo test --test integration -j 1"
           }
         ]
   lint:
