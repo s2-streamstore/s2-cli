@@ -356,6 +356,15 @@ fn bench_read_inner(
                                         return;
                                     }
                                 };
+
+                                if header_hash == prev_hash {
+                                    yield Err(CliError::BenchVerification(format!(
+                                        "duplicate record hash at seq_num {}",
+                                        record.seq_num
+                                    )));
+                                    return;
+                                }
+
                                 let computed_hash = chain_hash(prev_hash, record.body.as_ref());
                                 if computed_hash != header_hash {
                                     yield Err(CliError::BenchVerification(format!(
@@ -664,7 +673,7 @@ pub async fn run(
     }
 
     catchup_bar.finish_and_clear();
-    if let Some(sample) = catchup_sample {
+    if let Some(sample) = &catchup_sample {
         eprintln!(
             "{}: {:.2} MiB/s, {:.0} records/s ({} bytes, {} records in {:.2}s)",
             "Catchup".bold().cyan(),
