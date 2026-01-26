@@ -33,6 +33,7 @@ pub struct CliConfig {
     pub account_endpoint: Option<String>,
     pub basin_endpoint: Option<String>,
     pub compression: Option<Compression>,
+    pub ssl_no_verify: Option<bool>,
 }
 
 #[cfg(target_os = "windows")]
@@ -87,6 +88,7 @@ pub enum ConfigKey {
     AccountEndpoint,
     BasinEndpoint,
     Compression,
+    SslNoVerify,
 }
 
 impl CliConfig {
@@ -96,6 +98,7 @@ impl CliConfig {
             ConfigKey::AccountEndpoint => self.account_endpoint.clone(),
             ConfigKey::BasinEndpoint => self.basin_endpoint.clone(),
             ConfigKey::Compression => self.compression.map(|c| c.to_string()),
+            ConfigKey::SslNoVerify => self.ssl_no_verify.map(|v| v.to_string()),
         }
     }
 
@@ -111,6 +114,13 @@ impl CliConfig {
                         .map_err(|_| CliConfigError::InvalidValue(key.to_string(), value))?,
                 );
             }
+            ConfigKey::SslNoVerify => {
+                self.ssl_no_verify = Some(
+                    value
+                        .parse()
+                        .map_err(|_| CliConfigError::InvalidValue(key.to_string(), value))?,
+                );
+            }
         }
         Ok(())
     }
@@ -121,6 +131,7 @@ impl CliConfig {
             ConfigKey::AccountEndpoint => self.account_endpoint = None,
             ConfigKey::BasinEndpoint => self.basin_endpoint = None,
             ConfigKey::Compression => self.compression = None,
+            ConfigKey::SslNoVerify => self.ssl_no_verify = None,
         }
     }
 }
@@ -190,6 +201,11 @@ pub fn sdk_config(config: &CliConfig) -> Result<S2Config, CliError> {
             );
         }
         (None, None) => {}
+    }
+
+    if config.ssl_no_verify == Some(true) {
+        tracing::warn!("SSL certificate verification is disabled.");
+        sdk_config = sdk_config.with_insecure_skip_cert_verification(true);
     }
 
     Ok(sdk_config)
