@@ -1,4 +1,6 @@
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{Datelike, NaiveDate};
@@ -469,7 +471,6 @@ pub struct BenchViewState {
     pub stream_name: Option<String>,
     pub phase: BenchPhase,
     pub running: bool,
-    pub paused: bool,
     pub stopping: bool,
     pub elapsed_secs: f64,
     pub progress_pct: f64,
@@ -507,7 +508,6 @@ impl BenchViewState {
             stream_name: None,
             phase: BenchPhase::Write,
             running: false,
-            paused: false,
             stopping: false,
             elapsed_secs: 0.0,
             progress_pct: 0.0,
@@ -925,6 +925,8 @@ pub struct App {
     pub input_mode: InputMode,
     pub pip: Option<PipState>,
     should_quit: bool,
+    /// Stop signal for the benchmark task
+    bench_stop_signal: Option<Arc<AtomicBool>>,
 }
 
 /// Build a basin config from form values
@@ -1034,6 +1036,7 @@ impl App {
             input_mode: InputMode::Normal,
             pip: None,
             should_quit: false,
+            bench_stop_signal: None,
         }
     }
 
@@ -6224,20 +6227,17 @@ impl App {
             return;
         };
 
-        // If running, only allow stop/pause
+        // If running, only allow stop
         if state.running {
             match key.code {
                 KeyCode::Esc | KeyCode::Char('q') => {
                     state.stopping = true;
+                    // Signal the benchmark task to stop
+                    if let Some(stop_signal) = &self.bench_stop_signal {
+                        stop_signal.store(true, Ordering::Relaxed);
+                    }
                     self.message = Some(StatusMessage {
                         text: "Stopping benchmark...".to_string(),
-                        level: MessageLevel::Info,
-                    });
-                }
-                KeyCode::Char(' ') => {
-                    state.paused = !state.paused;
-                    self.message = Some(StatusMessage {
-                        text: if state.paused { "Paused".to_string() } else { "Resumed".to_string() },
                         level: MessageLevel::Info,
                     });
                 }
@@ -6273,26 +6273,42 @@ impl App {
                 }
                 KeyCode::Enter => {
                     // Apply the edit
-                    if let Ok(val) = state.edit_buffer.parse::<u64>() {
-                        match state.config_field {
-                            BenchConfigField::RecordSize => {
-                                let val = val.clamp(128, 1024 * 1024) as u32;
-                                state.record_size = val;
+                    match state.edit_buffer.parse::<u64>() {
+                        Ok(val) if val > 0 => {
+                            match state.config_field {
+                                BenchConfigField::RecordSize => {
+                                    let val = val.clamp(128, 1024 * 1024) as u32;
+                                    state.record_size = val;
+                                }
+                                BenchConfigField::TargetMibps => {
+                                    state.target_mibps = val.clamp(1, 100);
+                                }
+                                BenchConfigField::Duration => {
+                                    state.duration_secs = val.clamp(10, 600);
+                                }
+                                BenchConfigField::CatchupDelay => {
+                                    state.catchup_delay_secs = val.min(120);
+                                }
+                                BenchConfigField::Start => {}
                             }
-                            BenchConfigField::TargetMibps => {
-                                state.target_mibps = val.max(1);
-                            }
-                            BenchConfigField::Duration => {
-                                state.duration_secs = val.max(1);
-                            }
-                            BenchConfigField::CatchupDelay => {
-                                state.catchup_delay_secs = val;
-                            }
-                            BenchConfigField::Start => {}
+                            state.editing = false;
+                            state.edit_buffer.clear();
+                        }
+                        Ok(_) => {
+                            // Value is 0, show error
+                            self.message = Some(StatusMessage {
+                                text: "Value must be greater than 0".to_string(),
+                                level: MessageLevel::Error,
+                            });
+                        }
+                        Err(_) => {
+                            // Invalid number, show error
+                            self.message = Some(StatusMessage {
+                                text: "Invalid number".to_string(),
+                                level: MessageLevel::Error,
+                            });
                         }
                     }
-                    state.editing = false;
-                    state.edit_buffer.clear();
                 }
                 KeyCode::Char(c) if c.is_ascii_digit() => {
                     state.edit_buffer.push(c);
@@ -6380,7 +6396,7 @@ impl App {
     }
 
     fn start_benchmark(
-        &self,
+        &mut self,
         basin_name: BasinName,
         record_size: u32,
         target_mibps: u64,
@@ -6394,6 +6410,10 @@ impl App {
             ))));
             return;
         };
+
+        // Create a stop signal that can be triggered from the UI
+        let user_stop = Arc::new(AtomicBool::new(false));
+        self.bench_stop_signal = Some(user_stop.clone());
 
         tokio::spawn(async move {
             use s2_sdk::types::{CreateStreamInput, DeleteStreamInput, StreamName, StreamConfig as SdkStreamConfig, RetentionPolicy, TimestampingConfig, TimestampingMode, DeleteOnEmptyConfig};
@@ -6439,6 +6459,7 @@ impl App {
                 NonZeroU64::new(target_mibps).unwrap_or(NonZeroU64::new(1).unwrap()),
                 Duration::from_secs(duration_secs),
                 Duration::from_secs(catchup_delay_secs),
+                user_stop,
                 tx.clone(),
             )
             .await;
@@ -6458,20 +6479,21 @@ async fn run_bench_with_events(
     target_mibps: std::num::NonZeroU64,
     duration: std::time::Duration,
     catchup_delay: std::time::Duration,
+    user_stop: Arc<AtomicBool>,
     tx: mpsc::UnboundedSender<Event>,
 ) -> Result<BenchFinalStats, CliError> {
     use crate::bench::*;
     use crate::types::LatencyStats;
     use futures::StreamExt;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
     use tokio::time::Instant;
 
     const WRITE_DONE_SENTINEL: u64 = u64::MAX;
 
     let bench_start = Instant::now();
-    let stop = Arc::new(AtomicBool::new(false));
+    // Use the user_stop signal to control the benchmark - this allows the UI to stop it
+    let stop = user_stop;
     let write_done_records = Arc::new(AtomicU64::new(WRITE_DONE_SENTINEL));
 
     // We need to re-implement the bench logic here to send events
@@ -6598,13 +6620,50 @@ async fn run_bench_with_events(
     let _ = write_handle.await;
     let _ = read_handle.await;
 
-    // Catchup phase
+    // Check if user stopped before starting catchup
+    if stop.load(Ordering::Relaxed) {
+        return Ok(BenchFinalStats {
+            ack_latency: if all_ack_latencies.is_empty() {
+                None
+            } else {
+                Some(LatencyStats::compute(all_ack_latencies))
+            },
+            e2e_latency: if all_e2e_latencies.is_empty() {
+                None
+            } else {
+                Some(LatencyStats::compute(all_e2e_latencies))
+            },
+        });
+    }
+
+    // Catchup phase - wait with periodic stop checks
     let _ = tx.send(Event::BenchPhaseComplete(BenchPhase::CatchupWait));
-    tokio::time::sleep(catchup_delay).await;
+    let catchup_wait_start = Instant::now();
+    while catchup_wait_start.elapsed() < catchup_delay {
+        if stop.load(Ordering::Relaxed) {
+            return Ok(BenchFinalStats {
+                ack_latency: if all_ack_latencies.is_empty() {
+                    None
+                } else {
+                    Some(LatencyStats::compute(all_ack_latencies))
+                },
+                e2e_latency: if all_e2e_latencies.is_empty() {
+                    None
+                } else {
+                    Some(LatencyStats::compute(all_e2e_latencies))
+                },
+            });
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 
     let catchup_stream = bench_read_catchup(stream.clone(), record_size, bench_start);
     let mut catchup_stream = std::pin::pin!(catchup_stream);
     while let Some(result) = catchup_stream.next().await {
+        // Check stop signal during catchup
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
         match result {
             Ok(sample) => {
                 let mibps = sample.bytes as f64 / (1024.0 * 1024.0) / sample.elapsed.as_secs_f64().max(0.001);

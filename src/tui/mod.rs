@@ -7,7 +7,6 @@ mod widgets;
 use std::io;
 
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -29,7 +28,7 @@ pub async fn run() -> Result<(), CliError> {
     // Setup terminal
     enable_raw_mode().map_err(|e| CliError::RecordReaderInit(format!("terminal setup: {e}")))?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
+    execute!(stdout, EnterAlternateScreen)
         .map_err(|e| CliError::RecordReaderInit(format!("terminal setup: {e}")))?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)
@@ -49,8 +48,7 @@ pub async fn run() -> Result<(), CliError> {
 
     if let Err(e) = execute!(
         terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
+        LeaveAlternateScreen
     ) {
         cleanup_errors.push(format!("leave_alternate_screen: {e}"));
     }

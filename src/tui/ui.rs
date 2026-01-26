@@ -775,9 +775,9 @@ fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
         f.render_widget(loading, chunks[3]);
     } else if filtered_tokens.is_empty() {
         let empty_msg = if state.tokens.is_empty() {
-            "No access tokens. Press 'c' to issue a new token."
+            "No access tokens yet. Press  c  to issue your first token."
         } else {
-            "No tokens match filter."
+            "No tokens match the filter. Press  Esc  to clear."
         };
         let empty = Paragraph::new(Line::from(Span::styled(
             empty_msg,
@@ -2029,9 +2029,9 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
 
     if filtered.is_empty() && !state.loading {
         let msg = if state.filter.is_empty() {
-            "No basins found. Press c to create one."
+            "No basins yet. Press  c  to create your first basin."
         } else {
-            "No basins match the filter."
+            "No basins match the filter. Press  Esc  to clear."
         };
         let text = Paragraph::new(Span::styled(msg, Style::default().fg(TEXT_MUTED)))
             .alignment(Alignment::Center);
@@ -2212,9 +2212,9 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
 
     if filtered.is_empty() && !state.loading {
         let msg = if state.filter.is_empty() {
-            "No streams found. Press c to create one."
+            "No streams in this basin. Press  c  to create your first stream."
         } else {
-            "No streams match the filter."
+            "No streams match the filter. Press  Esc  to clear."
         };
         let text = Paragraph::new(Span::styled(msg, Style::default().fg(TEXT_MUTED)))
             .alignment(Alignment::Center);
@@ -3138,16 +3138,20 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     // Get hints based on available width - full, medium, or compact
     let hints = get_responsive_hints(&app.screen, width);
 
-    let message_span = app
+    // Create message spans with accessible text prefixes (not just colors)
+    let message_spans: Option<Vec<Span>> = app
         .message
         .as_ref()
         .map(|m| {
-            let color = match m.level {
-                MessageLevel::Info => ACCENT,
-                MessageLevel::Success => SUCCESS,
-                MessageLevel::Error => ERROR,
+            let (prefix, prefix_color, text_color) = match m.level {
+                MessageLevel::Info => ("ℹ ", CYAN, ACCENT),
+                MessageLevel::Success => ("✓ ", SUCCESS, SUCCESS),
+                MessageLevel::Error => ("✗ ", ERROR, ERROR),
             };
-            Span::styled(&m.text, Style::default().fg(color))
+            vec![
+                Span::styled(prefix, Style::default().fg(prefix_color).bold()),
+                Span::styled(&m.text, Style::default().fg(text_color)),
+            ]
         });
 
     // PiP indicator
@@ -3176,8 +3180,8 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
 
     let mut spans = Vec::new();
 
-    if let Some(msg) = message_span {
-        spans.push(msg);
+    if let Some(msg_spans) = message_spans {
+        spans.extend(msg_spans);
         spans.push(Span::styled("  ", Style::default()));
     }
 
@@ -3186,6 +3190,20 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     }
 
     spans.push(Span::styled(display_hints, Style::default().fg(TEXT_MUTED)));
+
+    // Add persistent help hint indicator (always visible, stands out)
+    let show_help_hint = !matches!(app.screen, Screen::Splash | Screen::Setup(_));
+    if show_help_hint {
+        // Calculate padding to right-align the help hint
+        let current_len: usize = spans.iter().map(|s| s.content.len()).sum();
+        let help_hint = " ? help";
+        let padding_needed = width.saturating_sub(current_len + help_hint.len());
+        if padding_needed > 0 {
+            spans.push(Span::styled(" ".repeat(padding_needed), Style::default()));
+        }
+        spans.push(Span::styled("?", Style::default().fg(CYAN).bold()));
+        spans.push(Span::styled(" help", Style::default().fg(TEXT_MUTED)));
+    }
 
     let line = Line::from(spans);
     let status = Paragraph::new(line);
@@ -3321,356 +3339,284 @@ fn get_responsive_hints(screen: &Screen, width: usize) -> String {
 }
 
 fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
-    let area = centered_rect(50, 50, f.area());
+    let area = centered_rect(60, 70, f.area());
 
-    let help_text = match screen {
-        Screen::Splash | Screen::Setup(_) => vec![], // Never shown
+    // Helper to create a section header
+    fn section(title: &str) -> Line<'static> {
+        Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled(format!("─── {} ", title), Style::default().fg(CYAN).bold()),
+            Span::styled("─".repeat(20), Style::default().fg(GRAY_650)),
+        ])
+    }
+
+    // Helper to create a key binding line with description
+    fn key(keys: &str, action: &str, desc: &str) -> Line<'static> {
+        let mut spans = vec![
+            Span::styled(format!("{:>6} ", keys), Style::default().fg(GREEN).bold()),
+            Span::styled(format!("{:<20}", action), Style::default().fg(TEXT_SECONDARY)),
+        ];
+        if !desc.is_empty() {
+            spans.push(Span::styled(format!("  {}", desc), Style::default().fg(TEXT_MUTED).italic()));
+        }
+        Line::from(spans)
+    }
+
+    // Get the screen title for the help header
+    let screen_title = match screen {
+        Screen::Splash | Screen::Setup(_) => "",
+        Screen::Settings(_) => "Settings",
+        Screen::Basins(_) => "Basins",
+        Screen::Streams(_) => "Streams",
+        Screen::StreamDetail(_) => "Stream Detail",
+        Screen::ReadView(_) => "Read View",
+        Screen::AppendView(_) => "Append Records",
+        Screen::AccessTokens(_) => "Access Tokens",
+        Screen::MetricsView(_) => "Metrics",
+        Screen::BenchView(_) => "Benchmark",
+    };
+
+    let mut help_text = match screen {
+        Screen::Splash | Screen::Setup(_) => vec![],
         Screen::Settings(_) => vec![
             Line::from(""),
-            Line::from(vec![
-                Span::styled("  j/k ", Style::default().fg(GREEN).bold()),
-                Span::styled("Navigate", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    e ", Style::default().fg(GREEN).bold()),
-                Span::styled("Edit field", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("  h/l ", Style::default().fg(GREEN).bold()),
-                Span::styled("Change compression", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("space ", Style::default().fg(GREEN).bold()),
-                Span::styled("Toggle token visibility", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("enter ", Style::default().fg(GREEN).bold()),
-                Span::styled("Save changes", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    r ", Style::default().fg(GREEN).bold()),
-                Span::styled("Reload from file", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("  tab ", Style::default().fg(GREEN).bold()),
-                Span::styled("Switch tabs", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    q ", Style::default().fg(GREEN).bold()),
-                Span::styled("Quit", Style::default().fg(TEXT_SECONDARY)),
-            ]),
+            section("Navigation"),
+            key("j / k", "Move down / up", "Navigate between settings"),
+            key("g / G", "Jump to top / bottom", ""),
+            Line::from(""),
+            section("Editing"),
+            key("e", "Edit field", "Modify the selected setting"),
+            key("h / l", "Cycle option left / right", "Change compression level"),
+            key("space", "Toggle visibility", "Show/hide auth token"),
+            key("enter", "Save changes", "Write settings to config file"),
+            key("r", "Reload", "Discard changes, reload from file"),
+            Line::from(""),
+            section("Application"),
+            key("tab", "Switch tab", "Navigate between Basins/Tokens/Settings"),
+            key("q", "Quit", "Exit the application"),
             Line::from(""),
         ],
         Screen::Basins(_) => vec![
             Line::from(""),
-            Line::from(vec![
-                Span::styled("  j/k ", Style::default().fg(GREEN).bold()),
-                Span::styled("Navigate", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("  g/G ", Style::default().fg(GREEN).bold()),
-                Span::styled("Top / Bottom", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    / ", Style::default().fg(GREEN).bold()),
-                Span::styled("Filter", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("enter ", Style::default().fg(GREEN).bold()),
-                Span::styled("Select basin", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    c ", Style::default().fg(GREEN).bold()),
-                Span::styled("Create basin", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    e ", Style::default().fg(GREEN).bold()),
-                Span::styled("Reconfigure basin", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    d ", Style::default().fg(GREEN).bold()),
-                Span::styled("Delete basin", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    r ", Style::default().fg(GREEN).bold()),
-                Span::styled("Refresh", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    B ", Style::default().fg(GREEN).bold()),
-                Span::styled("Benchmark", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    M ", Style::default().fg(GREEN).bold()),
-                Span::styled("Basin metrics", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    A ", Style::default().fg(GREEN).bold()),
-                Span::styled("Account metrics", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("  tab ", Style::default().fg(GREEN).bold()),
-                Span::styled("Switch to Access Tokens", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    q ", Style::default().fg(GREEN).bold()),
-                Span::styled("Quit", Style::default().fg(TEXT_SECONDARY)),
-            ]),
+            section("Navigation"),
+            key("j / k", "Move down / up", "Navigate basin list"),
+            key("g / G", "Jump to top / bottom", ""),
+            key("/", "Filter", "Search basins by name"),
+            key("enter", "Open basin", "View streams in selected basin"),
+            Line::from(""),
+            section("Basin Actions"),
+            key("c", "Create basin", "Create a new basin"),
+            key("e", "Configure", "Modify basin settings"),
+            key("d", "Delete", "Remove selected basin (requires confirm)"),
+            key("r", "Refresh", "Reload basin list from server"),
+            Line::from(""),
+            section("Analytics"),
+            key("B", "Benchmark", "Run performance benchmark on basin"),
+            key("M", "Basin metrics", "View metrics for selected basin"),
+            key("A", "Account metrics", "View account-level metrics"),
+            Line::from(""),
+            section("Application"),
+            key("tab", "Switch tab", "Go to Access Tokens or Settings"),
+            key("q", "Quit", "Exit the application"),
             Line::from(""),
         ],
         Screen::Streams(_) => vec![
             Line::from(""),
-            Line::from(vec![
-                Span::styled("  j/k ", Style::default().fg(GREEN).bold()),
-                Span::styled("Navigate", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    / ", Style::default().fg(GREEN).bold()),
-                Span::styled("Filter", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("enter ", Style::default().fg(GREEN).bold()),
-                Span::styled("Select stream", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    c ", Style::default().fg(GREEN).bold()),
-                Span::styled("Create stream", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    e ", Style::default().fg(GREEN).bold()),
-                Span::styled("Reconfigure stream", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    d ", Style::default().fg(GREEN).bold()),
-                Span::styled("Delete stream", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    r ", Style::default().fg(GREEN).bold()),
-                Span::styled("Refresh", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("  esc ", Style::default().fg(GREEN).bold()),
-                Span::styled("Back", Style::default().fg(TEXT_SECONDARY)),
-            ]),
+            section("Navigation"),
+            key("j / k", "Move down / up", "Navigate stream list"),
+            key("g / G", "Jump to top / bottom", ""),
+            key("/", "Filter", "Search streams by name"),
+            key("enter", "Open stream", "View stream details and actions"),
+            Line::from(""),
+            section("Stream Actions"),
+            key("c", "Create stream", "Create a new stream in this basin"),
+            key("e", "Configure", "Modify stream settings"),
+            key("d", "Delete", "Remove selected stream (requires confirm)"),
+            key("r", "Refresh", "Reload stream list from server"),
+            key("M", "Metrics", "View metrics for selected stream"),
+            Line::from(""),
+            section("Navigation"),
+            key("esc", "Back", "Return to basins list"),
             Line::from(""),
         ],
         Screen::StreamDetail(_) => vec![
             Line::from(""),
-            Line::from(vec![
-                Span::styled("  j/k ", Style::default().fg(GREEN).bold()),
-                Span::styled("Navigate actions", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("enter ", Style::default().fg(GREEN).bold()),
-                Span::styled("Execute action", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    t ", Style::default().fg(GREEN).bold()),
-                Span::styled("Tail (live follow)", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    r ", Style::default().fg(GREEN).bold()),
-                Span::styled("Read records", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    a ", Style::default().fg(GREEN).bold()),
-                Span::styled("Append records", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    f ", Style::default().fg(GREEN).bold()),
-                Span::styled("Fence stream", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    m ", Style::default().fg(GREEN).bold()),
-                Span::styled("Trim stream", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    e ", Style::default().fg(GREEN).bold()),
-                Span::styled("Reconfigure stream", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    M ", Style::default().fg(GREEN).bold()),
-                Span::styled("Stream metrics", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    p ", Style::default().fg(CYAN).bold()),
-                Span::styled("Pin to PiP", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("  esc ", Style::default().fg(GREEN).bold()),
-                Span::styled("Back", Style::default().fg(TEXT_SECONDARY)),
-            ]),
+            section("Navigation"),
+            key("j / k", "Move down / up", "Navigate action menu"),
+            key("enter", "Execute", "Run the selected action"),
+            Line::from(""),
+            section("Data Operations"),
+            key("t", "Tail", "Follow stream in real-time (live updates)"),
+            key("r", "Read", "Read records from a specific position"),
+            key("a", "Append", "Add new records to the stream"),
+            Line::from(""),
+            section("Stream Management"),
+            key("f", "Fence", "Create a fencing token for coordination"),
+            key("m", "Trim", "Remove old records up to a sequence"),
+            key("e", "Configure", "Modify stream settings"),
+            key("M", "Metrics", "View stream performance metrics"),
+            Line::from(""),
+            section("Multi-tasking"),
+            key("p", "Pin to PiP", "Monitor stream in picture-in-picture"),
+            key("P", "Toggle PiP", "Show/hide the PiP window"),
+            Line::from(""),
+            section("Navigation"),
+            key("esc", "Back", "Return to streams list"),
             Line::from(""),
         ],
-        Screen::ReadView(_) => vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  j/k ", Style::default().fg(GREEN).bold()),
-                Span::styled("Scroll", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("  g/G ", Style::default().fg(GREEN).bold()),
-                Span::styled("Top / Bottom", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("space ", Style::default().fg(GREEN).bold()),
-                Span::styled("Pause / Resume", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    p ", Style::default().fg(CYAN).bold()),
-                Span::styled("Pin to PiP", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("  esc ", Style::default().fg(GREEN).bold()),
-                Span::styled("Back", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(""),
-        ],
-        Screen::AppendView(_) => vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  j/k ", Style::default().fg(GREEN).bold()),
-                Span::styled("Navigate fields", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("enter ", Style::default().fg(GREEN).bold()),
-                Span::styled("Edit field / Send record", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    d ", Style::default().fg(GREEN).bold()),
-                Span::styled("Delete last header", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("  tab ", Style::default().fg(GREEN).bold()),
-                Span::styled("Switch header key/value", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("  esc ", Style::default().fg(GREEN).bold()),
-                Span::styled("Stop editing / Back", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(""),
-        ],
+        Screen::ReadView(state) => {
+            let mut lines = vec![
+                Line::from(""),
+                section("Scrolling"),
+                key("j / k", "Scroll down / up", "Move through records"),
+                key("g / G", "Jump to top / bottom", ""),
+                key("[ / ]", "Seek backward / forward", "Jump by larger increments"),
+            ];
+            if state.is_tailing {
+                lines.push(Line::from(""));
+                lines.push(section("Live Tailing"));
+                lines.push(key("space", "Pause / Resume", "Temporarily stop live updates"));
+            }
+            lines.extend(vec![
+                Line::from(""),
+                section("Display"),
+                key("h", "Toggle headers", "Show/hide record headers"),
+                key("T", "Timeline", "Open timeline scrubber"),
+                key("tab", "Toggle record list", "Switch focus to record list"),
+                key("enter", "Record detail", "View full record content"),
+                Line::from(""),
+                section("Multi-tasking"),
+                key("p", "Pin to PiP", "Continue monitoring in background"),
+                Line::from(""),
+                section("Navigation"),
+                key("esc", "Back", "Return to stream detail"),
+                Line::from(""),
+            ]);
+            lines
+        },
+        Screen::AppendView(state) => {
+            if state.editing {
+                vec![
+                    Line::from(""),
+                    section("Text Input"),
+                    key("type", "Enter text", "Type your content"),
+                    key("enter", "Confirm", "Save the current field"),
+                    key("esc", "Cancel", "Discard changes to field"),
+                    Line::from(""),
+                    section("Header Fields"),
+                    key("tab", "Switch key/value", "Toggle between header key and value"),
+                    Line::from(""),
+                ]
+            } else {
+                vec![
+                    Line::from(""),
+                    section("Navigation"),
+                    key("j / k", "Move down / up", "Navigate between fields"),
+                    Line::from(""),
+                    section("Editing"),
+                    key("enter", "Edit / Send", "Edit selected field, or send record"),
+                    key("d", "Delete header", "Remove the last header entry"),
+                    Line::from(""),
+                    section("Navigation"),
+                    key("esc", "Back", "Return to stream detail"),
+                    Line::from(""),
+                ]
+            }
+        },
         Screen::AccessTokens(_) => vec![
             Line::from(""),
-            Line::from(vec![
-                Span::styled("  j/k ", Style::default().fg(GREEN).bold()),
-                Span::styled("Navigate", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("  g/G ", Style::default().fg(GREEN).bold()),
-                Span::styled("Top / Bottom", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    / ", Style::default().fg(GREEN).bold()),
-                Span::styled("Filter", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    c ", Style::default().fg(GREEN).bold()),
-                Span::styled("Issue new token", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    d ", Style::default().fg(GREEN).bold()),
-                Span::styled("Revoke token", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    r ", Style::default().fg(GREEN).bold()),
-                Span::styled("Refresh", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("  tab ", Style::default().fg(GREEN).bold()),
-                Span::styled("Switch to Basins", Style::default().fg(TEXT_SECONDARY)),
-            ]),
-            Line::from(vec![
-                Span::styled("    q ", Style::default().fg(GREEN).bold()),
-                Span::styled("Quit", Style::default().fg(TEXT_SECONDARY)),
-            ]),
+            section("Navigation"),
+            key("j / k", "Move down / up", "Navigate token list"),
+            key("g / G", "Jump to top / bottom", ""),
+            key("/", "Filter", "Search tokens by ID"),
+            Line::from(""),
+            section("Token Actions"),
+            key("c", "Issue token", "Create a new access token"),
+            key("d", "Revoke", "Invalidate the selected token"),
+            key("r", "Refresh", "Reload token list from server"),
+            Line::from(""),
+            section("Application"),
+            key("tab", "Switch tab", "Go to Basins or Settings"),
+            key("q", "Quit", "Exit the application"),
             Line::from(""),
         ],
         Screen::MetricsView(state) => {
             let mut lines = vec![
                 Line::from(""),
-                Line::from(vec![
-                    Span::styled("  j/k ", Style::default().fg(GREEN).bold()),
-                    Span::styled("Scroll", Style::default().fg(TEXT_SECONDARY)),
-                ]),
-                Line::from(vec![
-                    Span::styled("    r ", Style::default().fg(GREEN).bold()),
-                    Span::styled("Refresh", Style::default().fg(TEXT_SECONDARY)),
-                ]),
+                section("Navigation"),
+                key("j / k", "Scroll down / up", "Navigate metrics display"),
             ];
-            if matches!(state.metrics_type, MetricsType::Basin { .. }) {
-                lines.push(Line::from(vec![
-                    Span::styled("  ←/→ ", Style::default().fg(GREEN).bold()),
-                    Span::styled("Change metric", Style::default().fg(TEXT_SECONDARY)),
-                ]));
+            if matches!(state.metrics_type, MetricsType::Basin { .. } | MetricsType::Account) {
+                lines.push(key("← / →", "Change category", "Switch between metric types"));
             }
-            lines.push(Line::from(vec![
-                Span::styled("  esc ", Style::default().fg(GREEN).bold()),
-                Span::styled("Back", Style::default().fg(TEXT_SECONDARY)),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled("    q ", Style::default().fg(GREEN).bold()),
-                Span::styled("Quit", Style::default().fg(TEXT_SECONDARY)),
-            ]));
-            lines.push(Line::from(""));
+            lines.extend(vec![
+                Line::from(""),
+                section("Actions"),
+                key("r", "Refresh", "Reload metrics from server"),
+                key("t", "Time range", "Open time range picker"),
+                Line::from(""),
+                section("Navigation"),
+                key("esc", "Back", "Return to previous screen"),
+                key("q", "Quit", "Exit the application"),
+                Line::from(""),
+            ]);
             lines
         },
         Screen::BenchView(state) => {
             if state.config_phase {
                 vec![
                     Line::from(""),
-                    Line::from(vec![
-                        Span::styled("  j/k ", Style::default().fg(GREEN).bold()),
-                        Span::styled("Navigate", Style::default().fg(TEXT_SECONDARY)),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("  h/l ", Style::default().fg(GREEN).bold()),
-                        Span::styled("Adjust value", Style::default().fg(TEXT_SECONDARY)),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("enter ", Style::default().fg(GREEN).bold()),
-                        Span::styled("Edit / Start", Style::default().fg(TEXT_SECONDARY)),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("  esc ", Style::default().fg(GREEN).bold()),
-                        Span::styled("Back", Style::default().fg(TEXT_SECONDARY)),
-                    ]),
+                    section("Configuration"),
+                    key("j / k", "Move down / up", "Navigate benchmark settings"),
+                    key("h / l", "Decrease / Increase", "Adjust numeric values"),
+                    key("enter", "Edit / Start", "Edit field or start benchmark"),
+                    Line::from(""),
+                    section("Navigation"),
+                    key("esc", "Back", "Return to basin view"),
+                    key("q", "Quit", "Exit the application"),
                     Line::from(""),
                 ]
             } else if state.running {
                 vec![
                     Line::from(""),
-                    Line::from(vec![
-                        Span::styled("space ", Style::default().fg(GREEN).bold()),
-                        Span::styled("Pause / Resume", Style::default().fg(TEXT_SECONDARY)),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("    q ", Style::default().fg(GREEN).bold()),
-                        Span::styled("Stop benchmark", Style::default().fg(TEXT_SECONDARY)),
-                    ]),
+                    section("Benchmark Control"),
+                    key("space", "Pause / Resume", "Temporarily stop/continue benchmark"),
+                    key("q", "Stop", "End benchmark and show results"),
                     Line::from(""),
                 ]
             } else {
                 vec![
                     Line::from(""),
-                    Line::from(vec![
-                        Span::styled("    r ", Style::default().fg(GREEN).bold()),
-                        Span::styled("Restart benchmark", Style::default().fg(TEXT_SECONDARY)),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("  esc ", Style::default().fg(GREEN).bold()),
-                        Span::styled("Back", Style::default().fg(TEXT_SECONDARY)),
-                    ]),
+                    section("Results"),
+                    key("r", "Restart", "Run the benchmark again"),
+                    Line::from(""),
+                    section("Navigation"),
+                    key("esc", "Back", "Return to basin view"),
+                    key("q", "Quit", "Exit the application"),
                     Line::from(""),
                 ]
             }
         },
     };
 
+    // Add dismiss hint at the bottom
+    if !help_text.is_empty() {
+        help_text.push(Line::from(vec![
+            Span::styled("  Press ", Style::default().fg(TEXT_MUTED)),
+            Span::styled("?", Style::default().fg(CYAN).bold()),
+            Span::styled(" or ", Style::default().fg(TEXT_MUTED)),
+            Span::styled("Esc", Style::default().fg(CYAN).bold()),
+            Span::styled(" to close this help", Style::default().fg(TEXT_MUTED)),
+        ]));
+    }
+
+    let title = format!(" {} · Keyboard Shortcuts ", screen_title);
     let block = Block::default()
-        .title(Line::from(Span::styled(" Help ", Style::default().fg(TEXT_PRIMARY).bold())))
+        .title(Line::from(Span::styled(title, Style::default().fg(TEXT_PRIMARY).bold())))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ACCENT))
-        .style(Style::default().bg(BG_DARK));
+        .style(Style::default().bg(BG_DARK))
+        .padding(Padding::horizontal(1));
 
     let help = Paragraph::new(help_text).block(block);
 
@@ -5021,9 +4967,37 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
     let dialog = Paragraph::new(content).block(block);
     f.render_widget(dialog, chunks[0]);
 
-    let hint_line = Line::from(Span::styled(hint, Style::default().fg(TEXT_MUTED)));
+    // Parse and render hint with highlighted keys for better accessibility
+    let hint_spans = render_hint_with_keys(hint);
+    let hint_line = Line::from(hint_spans);
     let hint_para = Paragraph::new(hint_line).alignment(Alignment::Center);
     f.render_widget(hint_para, chunks[1]);
+}
+
+/// Parse a hint string and render keys (before descriptions) with highlighting.
+/// Format expected: "key1 desc1 · key2 desc2 · ..."
+fn render_hint_with_keys(hint: &str) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let parts: Vec<&str> = hint.split(" · ").collect();
+
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", Style::default().fg(GRAY_650)));
+        }
+
+        // Split into key and description (first word is the key)
+        if let Some(space_idx) = part.find(' ') {
+            let key = &part[..space_idx];
+            let desc = &part[space_idx..];
+            spans.push(Span::styled(key.to_string(), Style::default().fg(CYAN).bold()));
+            spans.push(Span::styled(desc.to_string(), Style::default().fg(TEXT_MUTED)));
+        } else {
+            // No space, treat whole thing as key
+            spans.push(Span::styled(part.to_string(), Style::default().fg(CYAN).bold()));
+        }
+    }
+
+    spans
 }
 
 fn draw_bench_view(f: &mut Frame, area: Rect, state: &BenchViewState) {
