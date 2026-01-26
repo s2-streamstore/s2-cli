@@ -1,8 +1,6 @@
 mod app;
 mod event;
-mod screens;
 mod ui;
-mod widgets;
 
 use std::io;
 
