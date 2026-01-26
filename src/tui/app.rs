@@ -150,6 +150,37 @@ pub struct AppendViewState {
     pub editing_header_key: bool,
     pub history: Vec<AppendResult>,
     pub appending: bool,
+    // File append support
+    pub input_file: String,              // Path to file to append from
+    pub input_format: InputFormat,       // Format for file records (text, json, json-base64)
+    pub file_append_progress: Option<(usize, usize)>,  // (done, total) during file append
+}
+
+/// Input format for file append (mirrors CLI's RecordFormat)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InputFormat {
+    #[default]
+    Text,
+    Json,
+    JsonBase64,
+}
+
+impl InputFormat {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Text => Self::Json,
+            Self::Json => Self::JsonBase64,
+            Self::JsonBase64 => Self::Text,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Json => "json",
+            Self::JsonBase64 => "json-base64",
+        }
+    }
 }
 
 /// Result of an append operation
@@ -691,6 +722,53 @@ pub enum RetentionPolicyOption {
 impl Default for RetentionPolicyOption {
     fn default() -> Self {
         Self::Infinite
+    }
+}
+
+impl RetentionPolicyOption {
+    pub fn toggle(&self) -> Self {
+        match self {
+            Self::Infinite => Self::Age,
+            Self::Age => Self::Infinite,
+        }
+    }
+}
+
+/// Cycle storage class forward: None -> Standard -> Express -> None
+fn storage_class_next(sc: &Option<StorageClass>) -> Option<StorageClass> {
+    match sc {
+        None => Some(StorageClass::Standard),
+        Some(StorageClass::Standard) => Some(StorageClass::Express),
+        Some(StorageClass::Express) => None,
+    }
+}
+
+/// Cycle storage class backward: None -> Express -> Standard -> None
+fn storage_class_prev(sc: &Option<StorageClass>) -> Option<StorageClass> {
+    match sc {
+        None => Some(StorageClass::Express),
+        Some(StorageClass::Standard) => None,
+        Some(StorageClass::Express) => Some(StorageClass::Standard),
+    }
+}
+
+/// Cycle timestamping mode forward: None -> ClientPrefer -> ClientRequire -> Arrival -> None
+fn timestamping_mode_next(tm: &Option<TimestampingMode>) -> Option<TimestampingMode> {
+    match tm {
+        None => Some(TimestampingMode::ClientPrefer),
+        Some(TimestampingMode::ClientPrefer) => Some(TimestampingMode::ClientRequire),
+        Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::Arrival),
+        Some(TimestampingMode::Arrival) => None,
+    }
+}
+
+/// Cycle timestamping mode backward: None -> Arrival -> ClientRequire -> ClientPrefer -> None
+fn timestamping_mode_prev(tm: &Option<TimestampingMode>) -> Option<TimestampingMode> {
+    match tm {
+        None => Some(TimestampingMode::Arrival),
+        Some(TimestampingMode::ClientPrefer) => None,
+        Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::ClientPrefer),
+        Some(TimestampingMode::Arrival) => Some(TimestampingMode::ClientRequire),
     }
 }
 
@@ -1695,6 +1773,42 @@ impl App {
                 }
             }
 
+            Event::FileAppendProgress { appended, total, last_seq } => {
+                if let Screen::AppendView(state) = &mut self.screen {
+                    state.file_append_progress = Some((appended, total));
+                    if let Some(seq) = last_seq {
+                        // Add to history as we go
+                        state.history.push(AppendResult {
+                            seq_num: seq,
+                            body_preview: format!("batch #{}", appended),
+                            header_count: 0,
+                        });
+                    }
+                }
+            }
+
+            Event::FileAppendComplete(result) => {
+                if let Screen::AppendView(state) = &mut self.screen {
+                    state.appending = false;
+                    state.file_append_progress = None;
+                    match result {
+                        Ok((total, first_seq, last_seq)) => {
+                            state.input_file.clear();
+                            self.message = Some(StatusMessage {
+                                text: format!("Appended {} records (seq {}..{})", total, first_seq, last_seq),
+                                level: MessageLevel::Success,
+                            });
+                        }
+                        Err(e) => {
+                            self.message = Some(StatusMessage {
+                                text: format!("File append failed: {e}"),
+                                level: MessageLevel::Error,
+                            });
+                        }
+                    }
+                }
+            }
+
             Event::AccessTokensLoaded(result) => {
                 if let Screen::AccessTokens(state) = &mut self.screen {
                     state.loading = false;
@@ -2186,70 +2300,20 @@ impl App {
                             }
                         }
                         KeyCode::Left | KeyCode::Char('h') => {
-
                             match *selected {
-                                1 => {
-
-                                }
-                                2 => {
-                                    *storage_class = match storage_class {
-                                        None => Some(StorageClass::Express),
-                                        Some(StorageClass::Standard) => None,
-                                        Some(StorageClass::Express) => Some(StorageClass::Standard),
-                                    };
-                                }
-                                3 => {
-                                    *retention_policy = match retention_policy {
-                                        RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
-                                        RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
-                                    };
-                                }
-                                5 => {
-                                    *timestamping_mode = match timestamping_mode {
-                                        None => Some(TimestampingMode::Arrival),
-                                        Some(TimestampingMode::ClientPrefer) => None,
-                                        Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::ClientPrefer),
-                                        Some(TimestampingMode::Arrival) => Some(TimestampingMode::ClientRequire),
-                                    };
-                                }
-                                7 => {
-
-                                    *delete_on_empty_enabled = !*delete_on_empty_enabled;
-                                }
+                                2 => *storage_class = storage_class_prev(storage_class),
+                                3 => *retention_policy = retention_policy.toggle(),
+                                5 => *timestamping_mode = timestamping_mode_prev(timestamping_mode),
+                                7 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
                                 _ => {}
                             }
                         }
                         KeyCode::Right | KeyCode::Char('l') => {
-
                             match *selected {
-                                1 => {
-
-                                }
-                                2 => {
-                                    *storage_class = match storage_class {
-                                        None => Some(StorageClass::Standard),
-                                        Some(StorageClass::Standard) => Some(StorageClass::Express),
-                                        Some(StorageClass::Express) => None,
-                                    };
-                                }
-                                3 => {
-                                    *retention_policy = match retention_policy {
-                                        RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
-                                        RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
-                                    };
-                                }
-                                5 => {
-                                    *timestamping_mode = match timestamping_mode {
-                                        None => Some(TimestampingMode::ClientPrefer),
-                                        Some(TimestampingMode::ClientPrefer) => Some(TimestampingMode::ClientRequire),
-                                        Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::Arrival),
-                                        Some(TimestampingMode::Arrival) => None,
-                                    };
-                                }
-                                7 => {
-
-                                    *delete_on_empty_enabled = !*delete_on_empty_enabled;
-                                }
+                                2 => *storage_class = storage_class_next(storage_class),
+                                3 => *retention_policy = retention_policy.toggle(),
+                                5 => *timestamping_mode = timestamping_mode_next(timestamping_mode),
+                                7 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
                                 _ => {}
                             }
                         }
@@ -2377,64 +2441,20 @@ impl App {
                             }
                         }
                         KeyCode::Left | KeyCode::Char('h') => {
-
                             match *selected {
-                                1 => {
-                                    *storage_class = match storage_class {
-                                        None => Some(StorageClass::Express),
-                                        Some(StorageClass::Standard) => None,
-                                        Some(StorageClass::Express) => Some(StorageClass::Standard),
-                                    };
-                                }
-                                2 => {
-                                    *retention_policy = match retention_policy {
-                                        RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
-                                        RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
-                                    };
-                                }
-                                4 => {
-                                    *timestamping_mode = match timestamping_mode {
-                                        None => Some(TimestampingMode::Arrival),
-                                        Some(TimestampingMode::ClientPrefer) => None,
-                                        Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::ClientPrefer),
-                                        Some(TimestampingMode::Arrival) => Some(TimestampingMode::ClientRequire),
-                                    };
-                                }
-                                6 => {
-
-                                    *delete_on_empty_enabled = !*delete_on_empty_enabled;
-                                }
+                                1 => *storage_class = storage_class_prev(storage_class),
+                                2 => *retention_policy = retention_policy.toggle(),
+                                4 => *timestamping_mode = timestamping_mode_prev(timestamping_mode),
+                                6 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
                                 _ => {}
                             }
                         }
                         KeyCode::Right | KeyCode::Char('l') => {
-
                             match *selected {
-                                1 => {
-                                    *storage_class = match storage_class {
-                                        None => Some(StorageClass::Standard),
-                                        Some(StorageClass::Standard) => Some(StorageClass::Express),
-                                        Some(StorageClass::Express) => None,
-                                    };
-                                }
-                                2 => {
-                                    *retention_policy = match retention_policy {
-                                        RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
-                                        RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
-                                    };
-                                }
-                                4 => {
-                                    *timestamping_mode = match timestamping_mode {
-                                        None => Some(TimestampingMode::ClientPrefer),
-                                        Some(TimestampingMode::ClientPrefer) => Some(TimestampingMode::ClientRequire),
-                                        Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::Arrival),
-                                        Some(TimestampingMode::Arrival) => None,
-                                    };
-                                }
-                                6 => {
-
-                                    *delete_on_empty_enabled = !*delete_on_empty_enabled;
-                                }
+                                1 => *storage_class = storage_class_next(storage_class),
+                                2 => *retention_policy = retention_policy.toggle(),
+                                4 => *timestamping_mode = timestamping_mode_next(timestamping_mode),
+                                6 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
                                 _ => {}
                             }
                         }
@@ -2544,56 +2564,18 @@ impl App {
                         }
                     }
                     KeyCode::Left | KeyCode::Char('h') => {
-
                         match *selected {
-                            0 => {
-                                *storage_class = match storage_class {
-                                    None => Some(StorageClass::Express),
-                                    Some(StorageClass::Standard) => None,
-                                    Some(StorageClass::Express) => Some(StorageClass::Standard),
-                                };
-                            }
-                            1 => {
-                                *retention_policy = match retention_policy {
-                                    RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
-                                    RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
-                                };
-                            }
-                            3 => {
-                                *timestamping_mode = match timestamping_mode {
-                                    None => Some(TimestampingMode::Arrival),
-                                    Some(TimestampingMode::ClientPrefer) => None,
-                                    Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::ClientPrefer),
-                                    Some(TimestampingMode::Arrival) => Some(TimestampingMode::ClientRequire),
-                                };
-                            }
+                            0 => *storage_class = storage_class_prev(storage_class),
+                            1 => *retention_policy = retention_policy.toggle(),
+                            3 => *timestamping_mode = timestamping_mode_prev(timestamping_mode),
                             _ => {}
                         }
                     }
                     KeyCode::Right | KeyCode::Char('l') => {
-
                         match *selected {
-                            0 => {
-                                *storage_class = match storage_class {
-                                    None => Some(StorageClass::Standard),
-                                    Some(StorageClass::Standard) => Some(StorageClass::Express),
-                                    Some(StorageClass::Express) => None,
-                                };
-                            }
-                            1 => {
-                                *retention_policy = match retention_policy {
-                                    RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
-                                    RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
-                                };
-                            }
-                            3 => {
-                                *timestamping_mode = match timestamping_mode {
-                                    None => Some(TimestampingMode::ClientPrefer),
-                                    Some(TimestampingMode::ClientPrefer) => Some(TimestampingMode::ClientRequire),
-                                    Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::Arrival),
-                                    Some(TimestampingMode::Arrival) => None,
-                                };
-                            }
+                            0 => *storage_class = storage_class_next(storage_class),
+                            1 => *retention_policy = retention_policy.toggle(),
+                            3 => *timestamping_mode = timestamping_mode_next(timestamping_mode),
                             _ => {}
                         }
                     }
@@ -2710,64 +2692,20 @@ impl App {
                         }
                     }
                     KeyCode::Left | KeyCode::Char('h') => {
-
                         match *selected {
-                            0 => {
-                                *storage_class = match storage_class {
-                                    None => Some(StorageClass::Express),
-                                    Some(StorageClass::Standard) => None,
-                                    Some(StorageClass::Express) => Some(StorageClass::Standard),
-                                };
-                            }
-                            1 => {
-                                *retention_policy = match retention_policy {
-                                    RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
-                                    RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
-                                };
-                            }
-                            3 => {
-                                *timestamping_mode = match timestamping_mode {
-                                    None => Some(TimestampingMode::Arrival),
-                                    Some(TimestampingMode::ClientPrefer) => None,
-                                    Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::ClientPrefer),
-                                    Some(TimestampingMode::Arrival) => Some(TimestampingMode::ClientRequire),
-                                };
-                            }
-                            5 => {
-
-                                *delete_on_empty_enabled = !*delete_on_empty_enabled;
-                            }
+                            0 => *storage_class = storage_class_prev(storage_class),
+                            1 => *retention_policy = retention_policy.toggle(),
+                            3 => *timestamping_mode = timestamping_mode_prev(timestamping_mode),
+                            5 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
                             _ => {}
                         }
                     }
                     KeyCode::Right | KeyCode::Char('l') => {
-
                         match *selected {
-                            0 => {
-                                *storage_class = match storage_class {
-                                    None => Some(StorageClass::Standard),
-                                    Some(StorageClass::Standard) => Some(StorageClass::Express),
-                                    Some(StorageClass::Express) => None,
-                                };
-                            }
-                            1 => {
-                                *retention_policy = match retention_policy {
-                                    RetentionPolicyOption::Infinite => RetentionPolicyOption::Age,
-                                    RetentionPolicyOption::Age => RetentionPolicyOption::Infinite,
-                                };
-                            }
-                            3 => {
-                                *timestamping_mode = match timestamping_mode {
-                                    None => Some(TimestampingMode::ClientPrefer),
-                                    Some(TimestampingMode::ClientPrefer) => Some(TimestampingMode::ClientRequire),
-                                    Some(TimestampingMode::ClientRequire) => Some(TimestampingMode::Arrival),
-                                    Some(TimestampingMode::Arrival) => None,
-                                };
-                            }
-                            5 => {
-
-                                *delete_on_empty_enabled = !*delete_on_empty_enabled;
-                            }
+                            0 => *storage_class = storage_class_next(storage_class),
+                            1 => *retention_policy = retention_policy.toggle(),
+                            3 => *timestamping_mode = timestamping_mode_next(timestamping_mode),
+                            5 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
                             _ => {}
                         }
                     }
@@ -4637,6 +4575,9 @@ impl App {
             editing_header_key: true,
             history: Vec::new(),
             appending: false,
+            input_file: String::new(),
+            input_format: InputFormat::Text,
+            file_append_progress: None,
         });
     }
 
@@ -4698,6 +4639,7 @@ impl App {
                         }
                         2 => { state.match_seq_num.pop(); }
                         3 => { state.fencing_token.pop(); }
+                        4 => { state.input_file.pop(); }
                         _ => {}
                     }
                 }
@@ -4712,12 +4654,12 @@ impl App {
                             }
                         }
                         2 => {
-
                             if c.is_ascii_digit() {
                                 state.match_seq_num.push(c);
                             }
                         }
                         3 => { state.fencing_token.push(c); }
+                        4 => { state.input_file.push(c); }
                         _ => {}
                     }
                 }
@@ -4743,19 +4685,37 @@ impl App {
                 self.load_stream_detail(basin_name, stream_name, tx);
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                state.selected = (state.selected + 1).min(4);
+                state.selected = (state.selected + 1).min(6);
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 state.selected = state.selected.saturating_sub(1);
             }
             KeyCode::Char('d') if state.selected == 1 => {
-
                 state.headers.pop();
             }
+            // Cycle format with h/l or space when on format field
+            KeyCode::Char('h') | KeyCode::Char('l') | KeyCode::Char(' ') if state.selected == 5 => {
+                state.input_format = state.input_format.next();
+            }
             KeyCode::Enter => {
-                if state.selected == 4 {
-                    // Send button - append the record
-                    if !state.body.is_empty() {
+                if state.selected == 6 {
+                    // Send button - check if we have file input or body
+                    if !state.input_file.is_empty() {
+                        // Append from file
+                        let basin_name = state.basin_name.clone();
+                        let stream_name = state.stream_name.clone();
+                        let file_path = state.input_file.clone();
+                        let input_format = state.input_format;
+                        let fencing_token = if state.fencing_token.is_empty() {
+                            None
+                        } else {
+                            Some(state.fencing_token.clone())
+                        };
+                        state.appending = true;
+                        state.file_append_progress = Some((0, 0));
+                        self.append_from_file(basin_name, stream_name, file_path, input_format, fencing_token, tx);
+                    } else if !state.body.is_empty() {
+                        // Append single record
                         let basin_name = state.basin_name.clone();
                         let stream_name = state.stream_name.clone();
                         let body = state.body.clone();
@@ -4767,7 +4727,6 @@ impl App {
                             Some(state.fencing_token.clone())
                         };
                         state.body.clear();
-
                         state.appending = true;
                         self.append_record(basin_name, stream_name, body, headers, match_seq_num, fencing_token, tx);
                     }
@@ -4871,6 +4830,204 @@ impl App {
                     ))));
                 }
             }
+        });
+    }
+
+    /// Append records from a file (one record per line)
+    fn append_from_file(
+        &self,
+        basin_name: BasinName,
+        stream_name: StreamName,
+        file_path: String,
+        input_format: InputFormat,
+        fencing_token: Option<String>,
+        tx: mpsc::UnboundedSender<Event>,
+    ) {
+        let s2 = self.s2.clone().expect("S2 client not initialized");
+
+        tokio::spawn(async move {
+            use s2_sdk::types::{AppendInput, AppendRecord, AppendRecordBatch, FencingToken, Header};
+            use tokio::io::{AsyncBufReadExt, BufReader};
+            use base64ct::{Base64, Encoding};
+
+            // Open and read the file
+            let file = match tokio::fs::File::open(&file_path).await {
+                Ok(f) => f,
+                Err(e) => {
+                    let _ = tx.send(Event::FileAppendComplete(Err(crate::error::CliError::RecordReaderInit(
+                        format!("Failed to open file '{}': {}", file_path, e),
+                    ))));
+                    return;
+                }
+            };
+
+            let reader = BufReader::new(file);
+            let mut lines = reader.lines();
+
+            // Collect all lines first to get total count
+            let mut all_lines = Vec::new();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if !line.is_empty() {
+                    all_lines.push(line);
+                }
+            }
+
+            let total = all_lines.len();
+            if total == 0 {
+                let _ = tx.send(Event::FileAppendComplete(Err(crate::error::CliError::RecordReaderInit(
+                    "File is empty or contains no valid records".to_string(),
+                ))));
+                return;
+            }
+
+            let stream = s2.basin(basin_name).stream(stream_name);
+
+            // Helper to parse a line into an AppendRecord based on format
+            let parse_line = |line: &str, format: InputFormat| -> Result<AppendRecord, String> {
+                match format {
+                    InputFormat::Text => {
+                        AppendRecord::new(line.as_bytes().to_vec())
+                            .map_err(|e| e.to_string())
+                    }
+                    InputFormat::Json | InputFormat::JsonBase64 => {
+                        // Parse JSON: {"body": "...", "headers": [["key", "value"], ...], "timestamp": ...}
+                        #[derive(serde::Deserialize)]
+                        struct JsonRecord {
+                            #[serde(default)]
+                            body: String,
+                            #[serde(default)]
+                            headers: Vec<(String, String)>,
+                            #[serde(default)]
+                            timestamp: Option<u64>,
+                        }
+
+                        let parsed: JsonRecord = serde_json::from_str(line)
+                            .map_err(|e| format!("Invalid JSON: {}", e))?;
+
+                        // Decode body (base64 if json-base64, otherwise UTF-8)
+                        let body_bytes = if format == InputFormat::JsonBase64 {
+                            Base64::decode_vec(&parsed.body)
+                                .map_err(|_| format!("Invalid base64 in body: {}", parsed.body))?
+                        } else {
+                            parsed.body.into_bytes()
+                        };
+
+                        let mut record = AppendRecord::new(body_bytes)
+                            .map_err(|e| e.to_string())?;
+
+                        // Add headers
+                        if !parsed.headers.is_empty() {
+                            let headers: Result<Vec<Header>, String> = parsed.headers
+                                .into_iter()
+                                .map(|(k, v)| {
+                                    let key_bytes = if format == InputFormat::JsonBase64 {
+                                        Base64::decode_vec(&k).map_err(|_| format!("Invalid base64 in header key: {}", k))?
+                                    } else {
+                                        k.into_bytes()
+                                    };
+                                    let val_bytes = if format == InputFormat::JsonBase64 {
+                                        Base64::decode_vec(&v).map_err(|_| format!("Invalid base64 in header value: {}", v))?
+                                    } else {
+                                        v.into_bytes()
+                                    };
+                                    Ok(Header::new(key_bytes, val_bytes))
+                                })
+                                .collect();
+                            record = record.with_headers(headers?)
+                                .map_err(|e| e.to_string())?;
+                        }
+
+                        // Add timestamp if provided
+                        if let Some(ts) = parsed.timestamp {
+                            record = record.with_timestamp(ts);
+                        }
+
+                        Ok(record)
+                    }
+                }
+            };
+
+            // Process in batches
+            let batch_size = 100;
+            let mut appended = 0;
+            let mut first_seq: Option<u64> = None;
+            let mut last_seq: u64 = 0;
+
+            for chunk in all_lines.chunks(batch_size) {
+                // Create records from lines
+                let records: Result<Vec<AppendRecord>, String> = chunk
+                    .iter()
+                    .map(|line| parse_line(line, input_format))
+                    .collect();
+
+                let records = match records {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let _ = tx.send(Event::FileAppendComplete(Err(crate::error::CliError::RecordWrite(
+                            format!("Invalid record: {}", e),
+                        ))));
+                        return;
+                    }
+                };
+
+                let batch = match AppendRecordBatch::try_from_iter(records) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        let _ = tx.send(Event::FileAppendComplete(Err(crate::error::CliError::RecordWrite(
+                            format!("Failed to create batch: {}", e),
+                        ))));
+                        return;
+                    }
+                };
+
+                let mut input = AppendInput::new(batch);
+
+                // Apply fencing token if provided
+                if let Some(ref token_str) = fencing_token {
+                    match token_str.parse::<FencingToken>() {
+                        Ok(token) => {
+                            input = input.with_fencing_token(token);
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Event::FileAppendComplete(Err(crate::error::CliError::RecordWrite(
+                                format!("Invalid fencing token: {}", e),
+                            ))));
+                            return;
+                        }
+                    }
+                }
+
+                match stream.append(input).await {
+                    Ok(output) => {
+                        if first_seq.is_none() {
+                            first_seq = Some(output.start.seq_num);
+                        }
+                        last_seq = output.end.seq_num;
+                        appended += chunk.len();
+
+                        // Send progress update
+                        let _ = tx.send(Event::FileAppendProgress {
+                            appended,
+                            total,
+                            last_seq: Some(last_seq),
+                        });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Event::FileAppendComplete(Err(crate::error::CliError::op(
+                            crate::error::OpKind::Append,
+                            e,
+                        ))));
+                        return;
+                    }
+                }
+            }
+
+            // Send completion
+            let _ = tx.send(Event::FileAppendComplete(Ok((
+                total,
+                first_seq.unwrap_or(0),
+                last_seq,
+            ))));
         });
     }
 

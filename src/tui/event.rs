@@ -81,6 +81,12 @@ pub enum Event {
     /// Record appended successfully (seq_num, body_preview, header_count)
     RecordAppended(Result<(u64, String, usize), CliError>),
 
+    /// File append progress update (appended_count, total_lines, last_seq_num)
+    FileAppendProgress { appended: usize, total: usize, last_seq: Option<u64> },
+
+    /// File append completed (total_records, first_seq, last_seq)
+    FileAppendComplete(Result<(usize, u64, u64), CliError>),
+
     /// Stream fenced successfully (new token)
     StreamFenced(Result<String, CliError>),
 

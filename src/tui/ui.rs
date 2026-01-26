@@ -90,10 +90,6 @@ fn render_logo() -> Vec<Line<'static>> {
         .collect()
 }
 
-// ============================================================================
-// SHARED UI COMPONENTS
-// ============================================================================
-
 /// Render a toggle switch with consistent styling
 fn render_toggle(on: bool, is_selected: bool) -> Vec<Span<'static>> {
     if on {
@@ -215,6 +211,33 @@ fn render_checkbox(checked: bool) -> &'static str {
 #[allow(dead_code)]
 fn render_radio(active: bool) -> &'static str {
     if active { "●" } else { "○" }
+}
+
+/// Render a search/filter bar with consistent styling
+fn render_search_bar(filter: &str, filter_active: bool, placeholder: &str) -> (Block<'static>, Line<'static>) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(if filter_active { GREEN } else { BORDER }))
+        .style(Style::default().bg(BG_PANEL));
+
+    let line = if filter_active {
+        Line::from(vec![
+            Span::styled(" [/] ", Style::default().fg(GREEN)),
+            Span::styled(filter.to_string(), Style::default().fg(TEXT_PRIMARY)),
+            Span::styled("_", Style::default().fg(GREEN)),
+        ])
+    } else if filter.is_empty() {
+        Line::from(vec![
+            Span::styled(format!(" [/] {}...", placeholder), Style::default().fg(TEXT_MUTED)),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled(" [/] ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(filter.to_string(), Style::default().fg(TEXT_PRIMARY)),
+        ])
+    };
+
+    (block, line)
 }
 
 pub fn draw(f: &mut Frame, app: &App) {
@@ -716,32 +739,9 @@ fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
             .borders(Borders::BOTTOM)
             .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
     f.render_widget(title_block, chunks[0]);
-    let search_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(if state.filter_active { GREEN } else { BORDER }))
-        .style(Style::default().bg(BG_PANEL));
 
-    let search_text = if state.filter_active {
-        Line::from(vec![
-            Span::styled(" [/] ", Style::default().fg(GREEN)),
-            Span::styled(&state.filter, Style::default().fg(TEXT_PRIMARY)),
-            Span::styled("_", Style::default().fg(GREEN)),
-        ])
-    } else if !state.filter.is_empty() {
-        Line::from(vec![
-            Span::styled(" [/] ", Style::default().fg(TEXT_MUTED)),
-            Span::styled(&state.filter, Style::default().fg(TEXT_PRIMARY)),
-        ])
-    } else {
-        Line::from(vec![
-            Span::styled(" [/] Filter by token ID...", Style::default().fg(TEXT_MUTED)),
-        ])
-    };
-
-    let search_para = Paragraph::new(search_text)
-        .block(search_block)
-        .style(Style::default().bg(BG_PANEL));
-    f.render_widget(search_para, chunks[1]);
+    let (search_block, search_text) = render_search_bar(&state.filter, state.filter_active, "Filter by token ID");
+    f.render_widget(Paragraph::new(search_text).block(search_block), chunks[1]);
 
     let header = Line::from(vec![
         Span::styled("  ", Style::default()),  // Space for selection prefix
@@ -1974,34 +1974,11 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
             .borders(Borders::BOTTOM)
             .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
     f.render_widget(title_block, chunks[0]);
-    let search_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(if state.filter_active { GREEN } else { BORDER }))
-        .style(Style::default().bg(BG_PANEL));
 
-    let search_text = if state.filter_active {
-        Line::from(vec![
-            Span::styled(" [/] ", Style::default().fg(GREEN)),
-            Span::styled(&state.filter, Style::default().fg(TEXT_PRIMARY)),
-            Span::styled("_", Style::default().fg(GREEN)),
-        ])
-    } else if state.filter.is_empty() {
-        Line::from(vec![
-            Span::styled(" [/] Filter by prefix...", Style::default().fg(TEXT_MUTED)),
-        ])
-    } else {
-        Line::from(vec![
-            Span::styled(" [/] ", Style::default().fg(TEXT_MUTED)),
-            Span::styled(&state.filter, Style::default().fg(TEXT_PRIMARY)),
-        ])
-    };
+    let (search_block, search_text) = render_search_bar(&state.filter, state.filter_active, "Filter by prefix");
+    f.render_widget(Paragraph::new(search_text).block(search_block), chunks[1]);
 
-    let search = Paragraph::new(search_text).block(search_block);
-    f.render_widget(search, chunks[1]);
-
-    // === Table Header ===
     let header_area = chunks[2];
-    // Calculate column widths: Name takes most space, State and Scope are fixed
     let total_width = header_area.width as usize;
     let state_col = 12;
     let scope_col = 16;
@@ -2019,12 +1996,10 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
         Rect::new(header_area.x, header_area.y + 1, header_area.width, 1),
     );
 
-    // === Filter basins ===
     let filtered: Vec<_> = state.basins.iter()
         .filter(|b| state.filter.is_empty() || b.name.to_string().to_lowercase().contains(&state.filter.to_lowercase()))
         .collect();
 
-    // === Table Rows ===
     let table_area = chunks[3];
 
     if filtered.is_empty() && !state.loading {
@@ -2050,14 +2025,12 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
     let total = filtered.len();
     let selected = state.selected.min(total.saturating_sub(1));
 
-    // Scroll offset
     let scroll_offset = if selected >= visible_height {
         selected - visible_height + 1
     } else {
         0
     };
 
-    // Draw rows
     for (view_idx, basin) in filtered.iter().enumerate().skip(scroll_offset).take(visible_height) {
         let y = table_area.y + (view_idx - scroll_offset) as u16;
         if y >= table_area.y + table_area.height {
@@ -2067,7 +2040,6 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
         let is_selected = view_idx == selected;
         let row_area = Rect::new(table_area.x, y, table_area.width, 1);
 
-        // Selection highlight
         if is_selected {
             f.render_widget(
                 Block::default().style(Style::default().bg(Color::Rgb(39, 39, 42))),
@@ -2075,24 +2047,20 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
             );
         }
 
-        // Name column
         let name = basin.name.to_string();
         let max_name_len = name_col.saturating_sub(2);
         let display_name = truncate_str(&name, max_name_len, "…");
 
-        // State badge
         let (state_text, state_bg) = match basin.state {
             s2_sdk::types::BasinState::Active => ("Active", Color::Rgb(22, 101, 52)),
             s2_sdk::types::BasinState::Creating => ("Creating", Color::Rgb(113, 63, 18)),
             s2_sdk::types::BasinState::Deleting => ("Deleting", Color::Rgb(127, 29, 29)),
         };
 
-        // Scope
         let scope = basin.scope.as_ref()
             .map(|s| match s { s2_sdk::types::BasinScope::AwsUsEast1 => "aws:us-east-1" })
             .unwrap_or("—");
 
-        // Render name
         let name_style = if is_selected {
             Style::default().fg(TEXT_PRIMARY).bold()
         } else {
@@ -2103,7 +2071,6 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
             Rect::new(row_area.x, y, name_col as u16, 1),
         );
 
-        // Render state badge
         let badge_x = row_area.x + name_col as u16;
         f.render_widget(
             Paragraph::new(Span::styled(
@@ -2113,7 +2080,6 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
             Rect::new(badge_x, y, state_col as u16, 1),
         );
 
-        // Render scope
         let scope_x = badge_x + state_col as u16;
         f.render_widget(
             Paragraph::new(Span::styled(scope, Style::default().fg(TEXT_MUTED))),
@@ -2160,32 +2126,10 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
             .borders(Borders::BOTTOM)
             .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
     f.render_widget(title_block, chunks[0]);
-    let search_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(if state.filter_active { GREEN } else { BORDER }))
-        .style(Style::default().bg(BG_PANEL));
 
-    let search_text = if state.filter_active {
-        Line::from(vec![
-            Span::styled(" [/] ", Style::default().fg(GREEN)),
-            Span::styled(&state.filter, Style::default().fg(TEXT_PRIMARY)),
-            Span::styled("_", Style::default().fg(GREEN)),
-        ])
-    } else if state.filter.is_empty() {
-        Line::from(vec![
-            Span::styled(" [/] Filter by prefix...", Style::default().fg(TEXT_MUTED)),
-        ])
-    } else {
-        Line::from(vec![
-            Span::styled(" [/] ", Style::default().fg(TEXT_MUTED)),
-            Span::styled(&state.filter, Style::default().fg(TEXT_PRIMARY)),
-        ])
-    };
+    let (search_block, search_text) = render_search_bar(&state.filter, state.filter_active, "Filter by prefix");
+    f.render_widget(Paragraph::new(search_text).block(search_block), chunks[1]);
 
-    let search = Paragraph::new(search_text).block(search_block);
-    f.render_widget(search, chunks[1]);
-
-    // === Table Header ===
     let header_area = chunks[2];
     let total_width = header_area.width as usize;
     let created_col = 24;
@@ -2202,12 +2146,10 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
         Rect::new(header_area.x, header_area.y + 1, header_area.width, 1),
     );
 
-    // === Filter streams ===
     let filtered: Vec<_> = state.streams.iter()
         .filter(|s| state.filter.is_empty() || s.name.to_string().to_lowercase().contains(&state.filter.to_lowercase()))
         .collect();
 
-    // === Table Rows ===
     let table_area = chunks[3];
 
     if filtered.is_empty() && !state.loading {
@@ -2233,14 +2175,12 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
     let total = filtered.len();
     let selected = state.selected.min(total.saturating_sub(1));
 
-    // Scroll offset
     let scroll_offset = if selected >= visible_height {
         selected - visible_height + 1
     } else {
         0
     };
 
-    // Draw rows
     for (view_idx, stream) in filtered.iter().enumerate().skip(scroll_offset).take(visible_height) {
         let y = table_area.y + (view_idx - scroll_offset) as u16;
         if y >= table_area.y + table_area.height {
@@ -2250,7 +2190,6 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
         let is_selected = view_idx == selected;
         let row_area = Rect::new(table_area.x, y, table_area.width, 1);
 
-        // Selection highlight
         if is_selected {
             f.render_widget(
                 Block::default().style(Style::default().bg(Color::Rgb(39, 39, 42))),
@@ -2258,15 +2197,12 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
             );
         }
 
-        // Name column
         let name = stream.name.to_string();
         let max_name_len = name_col.saturating_sub(2);
         let display_name = truncate_str(&name, max_name_len, "…");
 
-        // Created timestamp - S2DateTime implements Display
         let created = stream.created_at.to_string();
 
-        // Render name
         let name_style = if is_selected {
             Style::default().fg(TEXT_PRIMARY).bold()
         } else {
@@ -2277,7 +2213,6 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
             Rect::new(row_area.x, y, name_col as u16, 1),
         );
 
-        // Render created timestamp
         let created_x = row_area.x + name_col as u16;
         f.render_widget(
             Paragraph::new(Span::styled(created, Style::default().fg(TEXT_MUTED))),
@@ -2293,11 +2228,10 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
         .constraints([
             Constraint::Length(3),
             Constraint::Length(5),  // Stats cards
-            Constraint::Min(12),    // Actions
+            Constraint::Min(12),
         ])
         .split(area);
 
-    // === HEADER ===
     let basin_str = state.basin_name.to_string();
     let stream_str = state.stream_name.to_string();
     let header_lines = vec![
@@ -2315,7 +2249,6 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
             .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
     f.render_widget(header, chunks[0]);
 
-    // === STATS ROW ===
     let stats_area = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -2335,7 +2268,6 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
         ])
         .split(stats_area);
 
-    // Stat card helper with icon and color
     fn render_stat_card_v2(f: &mut Frame, area: Rect, icon: &str, label: &str, value: &str, value_color: Color) {
         let lines = vec![
             Line::from(vec![
@@ -2358,7 +2290,7 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
     // Tail Position
     let (tail_val, tail_color) = if let Some(pos) = &state.tail_position {
         if pos.seq_num > 0 {
-            (format!("{}", pos.seq_num), Color::Rgb(34, 211, 238)) // Cyan
+            (format!("{}", pos.seq_num), Color::Rgb(34, 211, 238))
         } else {
             ("0".to_string(), Color::Rgb(100, 100, 100))
         }
@@ -2386,13 +2318,12 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
             } else {
                 format!("{}d ago", age_secs / 86400)
             };
-            // Color based on recency
             let color = if age_secs < 60 {
-                Color::Rgb(74, 222, 128) // Green - very recent
+                Color::Rgb(74, 222, 128)
             } else if age_secs < 3600 {
-                Color::Rgb(250, 204, 21) // Yellow - recent
+                Color::Rgb(250, 204, 21)
             } else {
-                Color::Rgb(180, 180, 180) // Gray - old
+                Color::Rgb(180, 180, 180)
             };
             (val, color)
         } else {
@@ -2410,8 +2341,8 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
             .map(|s| format!("{:?}", s).to_lowercase())
             .unwrap_or_else(|| "default".to_string());
         let color = match val.as_str() {
-            "express" => Color::Rgb(251, 146, 60), // Orange for express
-            "standard" => Color::Rgb(147, 197, 253), // Light blue for standard
+            "express" => Color::Rgb(251, 146, 60),
+            "standard" => Color::Rgb(147, 197, 253),
             _ => Color::Rgb(180, 180, 180),
         };
         (val, color)
@@ -2439,7 +2370,7 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
             })
             .unwrap_or_else(|| "∞".to_string());
         let color = if val == "∞" {
-            Color::Rgb(167, 139, 250) // Purple for infinite
+            Color::Rgb(167, 139, 250)
         } else {
             Color::Rgb(180, 180, 180)
         };
@@ -2449,7 +2380,6 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
     };
     render_stat_card_v2(f, stats_chunks[3], "◔", "Retention", &retention_val, retention_color);
 
-    // === ACTIONS ===
     let actions_outer = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -2459,7 +2389,6 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
         ])
         .split(chunks[2])[1];
 
-    // Split into two columns: Data Operations | Stream Management
     let action_cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -2467,8 +2396,6 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
             Constraint::Ratio(1, 2),
         ])
         .split(actions_outer);
-
-    // Data operations (left column)
     let data_ops: Vec<(&str, &str, &str, &str)> = vec![
         ("t", "Tail", "Live stream, see records as they arrive", "◉"),
         ("r", "Read", "Read with custom start position & limits", "◎"),
@@ -2560,7 +2487,6 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
         ])
         .split(area);
 
-    // === HEADER ===
     let basin_str = state.basin_name.to_string();
     let stream_str = state.stream_name.to_string();
     let record_count = format!("  {} records", state.records.len());
@@ -2575,7 +2501,6 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
         Span::styled(&record_count, Style::default().fg(Color::Rgb(100, 100, 100))),
     ];
 
-    // Add throughput indicator when tailing
     if state.is_tailing && state.current_mibps > 0.0 {
         header_spans.push(Span::styled("  ", Style::default()));
         header_spans.push(Span::styled(
@@ -2588,7 +2513,6 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
         ));
     }
 
-    // Add output file indicator if writing to file
     if let Some(ref output) = state.output_file {
         header_spans.push(Span::styled("  → ", Style::default().fg(Color::Rgb(100, 100, 100))));
         header_spans.push(Span::styled(output, Style::default().fg(YELLOW)));
@@ -2604,7 +2528,6 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
             .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
     f.render_widget(header, main_chunks[0]);
 
-    // === SPARKLINES (when tailing) ===
     if show_sparklines {
         draw_tail_sparklines(f, main_chunks[1], &state.throughput_history, &state.records_per_sec_history);
     }
@@ -2658,7 +2581,6 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
             0
         };
 
-        // === Left pane: Record list ===
         for (view_idx, record) in state.records.iter().enumerate().skip(scroll_offset).take(visible_height) {
             let y = list_area.y + (view_idx - scroll_offset) as u16;
             if y >= list_area.y + list_area.height {
@@ -2669,7 +2591,6 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
             let has_headers = !record.headers.is_empty();
             let row_area = Rect::new(list_area.x, y, list_area.width, 1);
 
-            // Selection highlight
             if is_selected {
                 f.render_widget(
                     Block::default().style(Style::default().bg(Color::Rgb(39, 39, 42))),
@@ -2710,7 +2631,6 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
         panes[1]
     };
 
-    // === Body preview of selected record ===
     if let Some(record) = state.records.get(selected) {
         let body = String::from_utf8_lossy(&record.body);
         let body_width = body_area.width.saturating_sub(2) as usize;
@@ -2926,11 +2846,10 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Min(1),     // Content
+            Constraint::Min(1),
         ])
         .split(area);
 
-    // === HEADER ===
     let basin_str = state.basin_name.to_string();
     let stream_str = state.stream_name.to_string();
     let header_lines = vec![
@@ -2949,16 +2868,15 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
             .borders(Borders::BOTTOM)
             .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
     f.render_widget(header, outer_chunks[0]);
-    // Split into form (left) and history (right)
+
     let main_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(50),  // Form
-            Constraint::Percentage(50),  // History
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
         ])
         .split(outer_chunks[1]);
 
-    // === Form pane ===
     let form_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Rgb(50, 50, 50)))
@@ -2968,7 +2886,6 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
     let form_inner = form_block.inner(main_chunks[0]);
     f.render_widget(form_block, main_chunks[0]);
 
-    // Helper functions
     let cursor = |editing: bool| if editing { "▎" } else { "" };
     let selected_marker = |sel: bool| if sel { "▸ " } else { "  " };
 
@@ -3071,8 +2988,61 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
     ]));
     lines.push(Line::from(""));
 
-    let send_selected = state.selected == 4;
-    let can_send = !state.body.is_empty() && !state.appending;
+    // Separator between single record and batch mode
+    lines.push(Line::from(vec![
+        Span::styled("  ─── ", Style::default().fg(GRAY_650)),
+        Span::styled("or batch from file", Style::default().fg(TEXT_MUTED)),
+        Span::styled(" ───────────────", Style::default().fg(GRAY_650)),
+    ]));
+    lines.push(Line::from(""));
+
+    // Input file field
+    let file_selected = state.selected == 4;
+    let file_editing = file_selected && state.editing;
+    lines.push(Line::from(vec![
+        Span::styled(selected_marker(file_selected), Style::default().fg(GREEN)),
+        Span::styled("Input File", Style::default().fg(if file_selected { TEXT_PRIMARY } else { TEXT_MUTED })),
+        Span::styled("  ", Style::default()),
+        Span::styled(
+            if state.input_file.is_empty() && !file_editing {
+                "(none)".to_string()
+            } else {
+                format!("{}{}", &state.input_file, cursor(file_editing))
+            },
+            Style::default().fg(if file_editing { GREEN } else if state.input_file.is_empty() { TEXT_MUTED } else { CYAN })
+        ),
+    ]));
+
+    // Format selector (only shown when file is set)
+    let format_selected = state.selected == 5;
+    let format_opts = [
+        ("Text", state.input_format == super::app::InputFormat::Text),
+        ("JSON", state.input_format == super::app::InputFormat::Json),
+        ("JSON+Base64", state.input_format == super::app::InputFormat::JsonBase64),
+    ];
+    lines.push(Line::from(vec![
+        Span::styled(selected_marker(format_selected), Style::default().fg(GREEN)),
+        Span::styled("Format", Style::default().fg(if format_selected { TEXT_PRIMARY } else { TEXT_MUTED })),
+        Span::styled("      ", Style::default()),
+        render_pill(format_opts[0].0, format_selected, format_opts[0].1),
+        Span::raw(" "),
+        render_pill(format_opts[1].0, format_selected, format_opts[1].1),
+        Span::raw(" "),
+        render_pill(format_opts[2].0, format_selected, format_opts[2].1),
+    ]));
+
+    // Show progress if appending from file
+    if let Some((done, total)) = state.file_append_progress {
+        let pct = if total > 0 { (done * 100) / total } else { 0 };
+        lines.push(Line::from(vec![
+            Span::styled("    ", Style::default()),
+            Span::styled(format!("Progress: {}/{} records ({}%)", done, total, pct), Style::default().fg(YELLOW)),
+        ]));
+    }
+    lines.push(Line::from(""));
+
+    let send_selected = state.selected == 6;
+    let can_send = (!state.body.is_empty() || !state.input_file.is_empty()) && !state.appending;
     let (btn_fg, btn_bg) = if state.appending {
         (BG_DARK, YELLOW)
     } else if send_selected && can_send {
@@ -3080,18 +3050,25 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
     } else {
         (if can_send { GREEN } else { TEXT_MUTED }, BG_PANEL)
     };
+    let btn_text = if state.appending {
+        if state.file_append_progress.is_some() {
+            " ◌ APPENDING FILE... "
+        } else {
+            " ◌ SENDING... "
+        }
+    } else if !state.input_file.is_empty() {
+        " ▶ APPEND FILE "
+    } else {
+        " ▶ SEND "
+    };
     lines.push(Line::from(vec![
         Span::styled(selected_marker(send_selected), Style::default().fg(GREEN)),
-        Span::styled(
-            if state.appending { " ◌ SENDING... " } else { " ▶ SEND " },
-            Style::default().fg(btn_fg).bg(btn_bg).bold()
-        ),
+        Span::styled(btn_text, Style::default().fg(btn_fg).bg(btn_bg).bold()),
     ]));
 
     let form_para = Paragraph::new(lines);
     f.render_widget(form_para, form_inner);
 
-    // === History pane ===
     let history_block = Block::default()
         .title(Line::from(vec![
             Span::styled(" History ", Style::default().fg(TEXT_PRIMARY)),
@@ -3513,9 +3490,13 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
                     section("Navigation"),
                     key("j / k", "Move down / up", "Navigate between fields"),
                     Line::from(""),
-                    section("Editing"),
-                    key("enter", "Edit / Send", "Edit selected field, or send record"),
+                    section("Single Record"),
+                    key("enter", "Edit / Send", "Edit field or send the record"),
                     key("d", "Delete header", "Remove the last header entry"),
+                    Line::from(""),
+                    section("Batch from File"),
+                    key("enter", "Edit file path", "Enter path to file with records"),
+                    key("", "(one record per line)", "Each line becomes a record body"),
                     Line::from(""),
                     section("Navigation"),
                     key("esc", "Back", "Return to stream detail"),
@@ -4287,25 +4268,7 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             selected,
             editing,
         } => {
-            // Stylish indicators
-            let radio = |active: bool| if active { "●" } else { "○" };
-            let check = |on: bool| if on { "x" } else { " " };
-
-            // Value display - clean with ∞ for unlimited
-            let show_val = |value: &str, is_editing: bool, placeholder: &str| -> String {
-                if is_editing {
-                    if value.is_empty() {
-                        "▎".to_string()
-                    } else {
-                        format!("{}▎", value)
-                    }
-                } else if value.is_empty() {
-                    placeholder.to_string()
-                } else {
-                    value.to_string()
-                }
-            };
-
+            // Unit options for "time ago"
             let unit_str = match ago_unit {
                 AgoUnit::Seconds => "sec",
                 AgoUnit::Minutes => "min",
@@ -4313,145 +4276,138 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 AgoUnit::Days => "day",
             };
 
-            let mut lines = vec![
-                Line::from(vec![
-                    Span::styled("  ", Style::default()),
-                    Span::styled(format!("s2://{}/{}", basin, stream), Style::default().fg(GREEN)),
-                ]),
-                Line::from(""),
-                Line::from(Span::styled("  START POSITION", Style::default().fg(TEXT_MUTED))),
+            // Format options
+            let format_opts = [
+                ("Text", format.as_str() == "text"),
+                ("JSON", format.as_str() == "json"),
+                ("JSON+Base64", format.as_str() == "json-base64"),
             ];
 
-            // Row 0: Sequence number
+            let mut lines = vec![];
+
+            // Stream info header
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("   Reading from: ", Style::default().fg(TEXT_MUTED)),
+                Span::styled(format!("s2://{}/{}", basin, stream), Style::default().fg(GREEN).bold()),
+            ]));
+
+            // Start position section
+            lines.push(Line::from(""));
+            lines.push(render_section_header("Start position", 48));
+            lines.push(Line::from(""));
+
+            // Row 0: Sequence number option
             let is_seq = *start_from == ReadStartFrom::SeqNum;
-            lines.push(Line::from(vec![
-                Span::styled(if *selected == 0 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
-                Span::styled(format!("{} ", radio(is_seq)), Style::default().fg(if is_seq { GREEN } else { BORDER })),
-                Span::styled("Sequence #  ", Style::default().fg(if *selected == 0 { TEXT_PRIMARY } else { TEXT_MUTED })),
-                Span::styled(
-                    show_val(seq_num_value, *editing && *selected == 0, "0"),
-                    Style::default().fg(if *editing && *selected == 0 { GREEN } else if is_seq { TEXT_PRIMARY } else { TEXT_MUTED })
-                ),
-            ]));
+            let (ind, lbl) = render_field_row(0, "Sequence #", *selected);
+            let mut seq_spans = vec![ind];
+            seq_spans.push(Span::styled(if is_seq { "● " } else { "○ " }, Style::default().fg(if is_seq { GREEN } else { GRAY_650 })));
+            seq_spans.push(lbl);
+            seq_spans.push(Span::raw("  "));
+            seq_spans.extend(render_text_input(seq_num_value, *selected == 0 && *editing, "0", if is_seq { GREEN } else { TEXT_MUTED }));
+            lines.push(Line::from(seq_spans));
 
-            // Row 1: Timestamp
+            // Row 1: Timestamp option
             let is_ts = *start_from == ReadStartFrom::Timestamp;
-            lines.push(Line::from(vec![
-                Span::styled(if *selected == 1 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
-                Span::styled(format!("{} ", radio(is_ts)), Style::default().fg(if is_ts { GREEN } else { BORDER })),
-                Span::styled("Timestamp   ", Style::default().fg(if *selected == 1 { TEXT_PRIMARY } else { TEXT_MUTED })),
-                Span::styled(
-                    show_val(timestamp_value, *editing && *selected == 1, "0"),
-                    Style::default().fg(if *editing && *selected == 1 { GREEN } else if is_ts { TEXT_PRIMARY } else { TEXT_MUTED })
-                ),
-                Span::styled(" ms", Style::default().fg(TEXT_MUTED)),
-            ]));
+            let (ind, lbl) = render_field_row(1, "Timestamp", *selected);
+            let mut ts_spans = vec![ind];
+            ts_spans.push(Span::styled(if is_ts { "● " } else { "○ " }, Style::default().fg(if is_ts { GREEN } else { GRAY_650 })));
+            ts_spans.push(lbl);
+            ts_spans.push(Span::raw("  "));
+            ts_spans.extend(render_text_input(timestamp_value, *selected == 1 && *editing, "0", if is_ts { GREEN } else { TEXT_MUTED }));
+            ts_spans.push(Span::styled("  ms", Style::default().fg(TEXT_MUTED)));
+            lines.push(Line::from(ts_spans));
 
-            // Row 2: Time ago
+            // Row 2: Time ago option
             let is_ago = *start_from == ReadStartFrom::Ago;
-            lines.push(Line::from(vec![
-                Span::styled(if *selected == 2 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
-                Span::styled(format!("{} ", radio(is_ago)), Style::default().fg(if is_ago { GREEN } else { BORDER })),
-                Span::styled("Time ago    ", Style::default().fg(if *selected == 2 { TEXT_PRIMARY } else { TEXT_MUTED })),
-                Span::styled(
-                    show_val(ago_value, *editing && *selected == 2, "5"),
-                    Style::default().fg(if *editing && *selected == 2 { GREEN } else if is_ago { TEXT_PRIMARY } else { TEXT_MUTED })
-                ),
-                Span::styled(format!(" {} ", unit_str), Style::default().fg(if is_ago { TEXT_SECONDARY } else { TEXT_MUTED })),
-                Span::styled("‹tab›", Style::default().fg(BORDER)),
-            ]));
+            let (ind, lbl) = render_field_row(2, "Time ago", *selected);
+            let mut ago_spans = vec![ind];
+            ago_spans.push(Span::styled(if is_ago { "● " } else { "○ " }, Style::default().fg(if is_ago { GREEN } else { GRAY_650 })));
+            ago_spans.push(lbl);
+            ago_spans.push(Span::raw("  "));
+            ago_spans.extend(render_text_input(ago_value, *selected == 2 && *editing, "5", if is_ago { GREEN } else { TEXT_MUTED }));
+            ago_spans.push(Span::styled(format!(" {}", unit_str), Style::default().fg(if is_ago { TEXT_SECONDARY } else { TEXT_MUTED })));
+            ago_spans.push(Span::styled("  ‹tab› cycle", Style::default().fg(GRAY_600).italic()));
+            lines.push(Line::from(ago_spans));
 
-            // Row 3: Tail offset
+            // Row 3: Tail offset option
             let is_off = *start_from == ReadStartFrom::TailOffset;
-            lines.push(Line::from(vec![
-                Span::styled(if *selected == 3 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
-                Span::styled(format!("{} ", radio(is_off)), Style::default().fg(if is_off { GREEN } else { BORDER })),
-                Span::styled("Tail offset ", Style::default().fg(if *selected == 3 { TEXT_PRIMARY } else { TEXT_MUTED })),
-                Span::styled(
-                    show_val(tail_offset_value, *editing && *selected == 3, "10"),
-                    Style::default().fg(if *editing && *selected == 3 { GREEN } else if is_off { TEXT_PRIMARY } else { TEXT_MUTED })
-                ),
-                Span::styled(" back", Style::default().fg(TEXT_MUTED)),
-            ]));
+            let (ind, lbl) = render_field_row(3, "Tail offset", *selected);
+            let mut off_spans = vec![ind];
+            off_spans.push(Span::styled(if is_off { "● " } else { "○ " }, Style::default().fg(if is_off { GREEN } else { GRAY_650 })));
+            off_spans.push(lbl);
+            off_spans.push(Span::raw("  "));
+            off_spans.extend(render_text_input(tail_offset_value, *selected == 3 && *editing, "10", if is_off { GREEN } else { TEXT_MUTED }));
+            off_spans.push(Span::styled("  back", Style::default().fg(TEXT_MUTED)));
+            lines.push(Line::from(off_spans));
 
+            // Limits section
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled("  LIMITS", Style::default().fg(TEXT_MUTED))));
-
-            // Row 4: Count
-            lines.push(Line::from(vec![
-                Span::styled(if *selected == 4 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
-                Span::styled("Max records ", Style::default().fg(if *selected == 4 { TEXT_PRIMARY } else { TEXT_MUTED })),
-                Span::styled(
-                    show_val(count_limit, *editing && *selected == 4, "∞"),
-                    Style::default().fg(if *editing && *selected == 4 { GREEN } else { TEXT_SECONDARY })
-                ),
-            ]));
-
-            // Row 5: Bytes
-            lines.push(Line::from(vec![
-                Span::styled(if *selected == 5 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
-                Span::styled("Max bytes   ", Style::default().fg(if *selected == 5 { TEXT_PRIMARY } else { TEXT_MUTED })),
-                Span::styled(
-                    show_val(byte_limit, *editing && *selected == 5, "∞"),
-                    Style::default().fg(if *editing && *selected == 5 { GREEN } else { TEXT_SECONDARY })
-                ),
-            ]));
-
-            // Row 6: Until
-            lines.push(Line::from(vec![
-                Span::styled(if *selected == 6 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
-                Span::styled("Until       ", Style::default().fg(if *selected == 6 { TEXT_PRIMARY } else { TEXT_MUTED })),
-                Span::styled(
-                    show_val(until_timestamp, *editing && *selected == 6, "∞"),
-                    Style::default().fg(if *editing && *selected == 6 { GREEN } else { TEXT_SECONDARY })
-                ),
-                Span::styled(" ms", Style::default().fg(TEXT_MUTED)),
-            ]));
-
+            lines.push(render_section_header("Limits", 48));
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled("  OPTIONS", Style::default().fg(TEXT_MUTED))));
 
-            // Row 7: Clamp
-            lines.push(Line::from(vec![
-                Span::styled(if *selected == 7 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
-                Span::styled(format!("[{}] ", check(*clamp)), Style::default().fg(if *clamp { GREEN } else { BORDER })),
-                Span::styled("Clamp to tail", Style::default().fg(if *selected == 7 { TEXT_PRIMARY } else { TEXT_MUTED })),
-            ]));
+            // Row 4: Max records
+            let (ind, lbl) = render_field_row(4, "Max records", *selected);
+            let mut count_spans = vec![ind, lbl, Span::raw("  ")];
+            count_spans.extend(render_text_input(count_limit, *selected == 4 && *editing, "∞ unlimited", YELLOW));
+            lines.push(Line::from(count_spans));
+
+            // Row 5: Max bytes
+            let (ind, lbl) = render_field_row(5, "Max bytes", *selected);
+            let mut bytes_spans = vec![ind, lbl, Span::raw("  ")];
+            bytes_spans.extend(render_text_input(byte_limit, *selected == 5 && *editing, "∞ unlimited", YELLOW));
+            lines.push(Line::from(bytes_spans));
+
+            // Row 6: Until timestamp
+            let (ind, lbl) = render_field_row(6, "Until", *selected);
+            let mut until_spans = vec![ind, lbl, Span::raw("  ")];
+            until_spans.extend(render_text_input(until_timestamp, *selected == 6 && *editing, "∞ unlimited", YELLOW));
+            until_spans.push(Span::styled("  ms", Style::default().fg(TEXT_MUTED)));
+            lines.push(Line::from(until_spans));
+
+            // Options section
+            lines.push(Line::from(""));
+            lines.push(render_section_header("Options", 48));
+            lines.push(Line::from(""));
+
+            // Row 7: Clamp toggle
+            let (ind, lbl) = render_field_row(7, "Clamp to tail", *selected);
+            let mut clamp_spans = vec![ind, lbl, Span::raw("  ")];
+            clamp_spans.extend(render_toggle(*clamp, *selected == 7));
+            lines.push(Line::from(clamp_spans));
 
             // Row 8: Format
-            lines.push(Line::from(vec![
-                Span::styled(if *selected == 8 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
-                Span::styled("Format      ", Style::default().fg(if *selected == 8 { TEXT_PRIMARY } else { TEXT_MUTED })),
-                Span::styled(format!("‹ {} ›", format.as_str()), Style::default().fg(if *selected == 8 { GREEN } else { TEXT_SECONDARY })),
-            ]));
+            let (ind, lbl) = render_field_row(8, "Format", *selected);
+            let mut format_spans = vec![ind, lbl, Span::raw("  ")];
+            for (label, active) in &format_opts {
+                format_spans.push(render_pill(label, *selected == 8, *active));
+                format_spans.push(Span::raw(" "));
+            }
+            lines.push(Line::from(format_spans));
 
             // Row 9: Output file
-            lines.push(Line::from(vec![
-                Span::styled(if *selected == 9 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
-                Span::styled("Output      ", Style::default().fg(if *selected == 9 { TEXT_PRIMARY } else { TEXT_MUTED })),
-                Span::styled(
-                    show_val(output_file, *editing && *selected == 9, "(display only)"),
-                    Style::default().fg(if *editing && *selected == 9 { GREEN } else if output_file.is_empty() { TEXT_MUTED } else { TEXT_SECONDARY })
-                ),
-            ]));
+            lines.push(Line::from(""));
+            let (ind, lbl) = render_field_row(9, "Output file", *selected);
+            let mut output_spans = vec![ind, lbl, Span::raw("  ")];
+            output_spans.extend(render_text_input(output_file, *selected == 9 && *editing, "display only", TEXT_SECONDARY));
+            lines.push(Line::from(output_spans));
 
+            // Divider and button
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("─".repeat(52), Style::default().fg(GRAY_750)),
+            ]));
             lines.push(Line::from(""));
 
             // Row 10: Start button
-            let (btn_fg, btn_bg) = if *selected == 10 {
-                (BG_DARK, GREEN)
-            } else {
-                (GREEN, BG_PANEL)
-            };
-            lines.push(Line::from(vec![
-                Span::styled(if *selected == 10 { "  ▸ " } else { "    " }, Style::default().fg(GREEN)),
-                Span::styled(" ▶ START ", Style::default().fg(btn_fg).bg(btn_bg).bold()),
-            ]));
+            lines.push(render_button("START READING", *selected == 10, true, GREEN));
+
+            lines.push(Line::from(""));
 
             (
-                " Read ",
+                " Read Stream ",
                 lines,
-                "↑↓ nav  ⏎ edit  ␣ toggle  ⇥ unit  esc",
+                "j/k navigate · Enter edit/select · Space toggle · Tab unit · Esc cancel",
             )
         }
 
