@@ -890,43 +890,63 @@ fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
         )));
         f.render_widget(empty, chunks[3]);
     } else {
-        let list_height = chunks[3].height as usize;
-        let start = state.selected.saturating_sub(list_height / 2);
-        let visible_tokens = filtered_tokens.iter().skip(start).take(list_height);
+        let table_area = chunks[3];
+        let visible_height = table_area.height as usize;
+        let total = filtered_tokens.len();
+        let selected = state.selected.min(total.saturating_sub(1));
 
-        let lines: Vec<Line> = visible_tokens
+        let scroll_offset = if selected >= visible_height {
+            selected - visible_height + 1
+        } else {
+            0
+        };
+
+        for (view_idx, token) in filtered_tokens
+            .iter()
             .enumerate()
-            .map(|(i, token)| {
-                let actual_index = start + i;
-                let is_selected = actual_index == state.selected;
-                let scope_summary = format_scope_summary(token);
+            .skip(scroll_offset)
+            .take(visible_height)
+        {
+            let y = table_area.y + (view_idx - scroll_offset) as u16;
+            if y >= table_area.y + table_area.height {
+                break;
+            }
 
-                let style = if is_selected {
-                    Style::default().fg(GREEN).bold()
-                } else {
-                    Style::default().fg(TEXT_PRIMARY)
-                };
+            let is_selected = view_idx == selected;
+            let row_area = Rect::new(table_area.x, y, table_area.width, 1);
 
-                let prefix = if is_selected { "▶ " } else { "  " };
-                let token_id_str = token.id.to_string();
-                let token_id_display = truncate_str(&token_id_str, 28, "…");
-                let expires_str = token.expires_at.to_string();
-                let expires_display = truncate_str(&expires_str, 26, "…");
+            if is_selected {
+                f.render_widget(
+                    Block::default().style(Style::default().bg(BG_SELECTED)),
+                    row_area,
+                );
+            }
 
-                Line::from(vec![
-                    Span::styled(prefix, style),
-                    Span::styled(format!("{:<30}", token_id_display), style),
-                    Span::styled(
-                        format!("{:<28}", expires_display),
-                        Style::default().fg(TEXT_MUTED),
-                    ),
-                    Span::styled(scope_summary, Style::default().fg(TEXT_MUTED)),
-                ])
-            })
-            .collect();
+            let scope_summary = format_scope_summary(token);
+            let prefix = if is_selected { "▸ " } else { "  " };
+            let token_id_str = token.id.to_string();
+            let token_id_display = truncate_str(&token_id_str, 28, "…");
+            let expires_str = token.expires_at.to_string();
+            let expires_display = truncate_str(&expires_str, 26, "…");
 
-        let list = Paragraph::new(lines);
-        f.render_widget(list, chunks[3]);
+            let name_style = if is_selected {
+                Style::default().fg(TEXT_PRIMARY).bold()
+            } else {
+                Style::default().fg(TEXT_PRIMARY)
+            };
+
+            let line = Line::from(vec![
+                Span::styled(prefix, Style::default().fg(if is_selected { GREEN } else { TEXT_PRIMARY })),
+                Span::styled(format!("{:<30}", token_id_display), name_style),
+                Span::styled(
+                    format!("{:<28}", expires_display),
+                    Style::default().fg(TEXT_MUTED),
+                ),
+                Span::styled(scope_summary, Style::default().fg(TEXT_MUTED)),
+            ]);
+
+            f.render_widget(Paragraph::new(line), row_area);
+        }
     }
 }
 
@@ -2368,13 +2388,17 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
             })
             .unwrap_or("—");
 
+        let prefix = if is_selected { "▸ " } else { "  " };
         let name_style = if is_selected {
             Style::default().fg(TEXT_PRIMARY).bold()
         } else {
             Style::default().fg(TEXT_SECONDARY)
         };
         f.render_widget(
-            Paragraph::new(Span::styled(format!("  {}", display_name), name_style)),
+            Paragraph::new(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(if is_selected { GREEN } else { TEXT_SECONDARY })),
+                Span::styled(display_name, name_style),
+            ])),
             Rect::new(row_area.x, y, name_col as u16, 1),
         );
 
@@ -2547,13 +2571,17 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
 
         let created = stream.created_at.to_string();
 
+        let prefix = if is_selected { "▸ " } else { "  " };
         let name_style = if is_selected {
             Style::default().fg(TEXT_PRIMARY).bold()
         } else {
             Style::default().fg(TEXT_SECONDARY)
         };
         f.render_widget(
-            Paragraph::new(Span::styled(format!("  {}", display_name), name_style)),
+            Paragraph::new(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(if is_selected { GREEN } else { TEXT_SECONDARY })),
+                Span::styled(display_name, name_style),
+            ])),
             Rect::new(row_area.x, y, name_col as u16, 1),
         );
 
