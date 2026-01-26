@@ -44,10 +44,7 @@ pub async fn run() -> Result<(), CliError> {
         cleanup_errors.push(format!("disable_raw_mode: {e}"));
     }
 
-    if let Err(e) = execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen
-    ) {
+    if let Err(e) = execute!(terminal.backend_mut(), LeaveAlternateScreen) {
         cleanup_errors.push(format!("leave_alternate_screen: {e}"));
     }
 
@@ -57,7 +54,10 @@ pub async fn run() -> Result<(), CliError> {
 
     // Log cleanup errors to stderr (won't be visible in alternate screen anyway)
     if !cleanup_errors.is_empty() {
-        eprintln!("Warning: terminal cleanup errors: {}", cleanup_errors.join(", "));
+        eprintln!(
+            "Warning: terminal cleanup errors: {}",
+            cleanup_errors.join(", ")
+        );
     }
 
     result

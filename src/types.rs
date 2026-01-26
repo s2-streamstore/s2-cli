@@ -695,7 +695,9 @@ impl From<sdk::types::AccessTokenScope> for AccessTokenScope {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, clap::ValueEnum, strum::Display, strum::EnumString)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, clap::ValueEnum, strum::Display, strum::EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[clap(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]

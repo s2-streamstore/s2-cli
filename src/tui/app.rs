@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::{Datelike, NaiveDate};
@@ -9,17 +9,29 @@ use base64ct::Encoding;
 use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use futures::StreamExt;
 use ratatui::{Terminal, prelude::Backend};
-use s2_sdk::types::{AccessTokenId, AccessTokenInfo, BasinInfo, BasinMetricSet, BasinName, StreamInfo, StreamMetricSet, StreamName, StreamPosition, TimeRange};
+use s2_sdk::types::{
+    AccessTokenId, AccessTokenInfo, BasinInfo, BasinMetricSet, BasinName, StreamInfo,
+    StreamMetricSet, StreamName, StreamPosition, TimeRange,
+};
 use tokio::sync::mpsc;
 
-use crate::cli::{CreateStreamArgs, IssueAccessTokenArgs, ListAccessTokensArgs, ListBasinsArgs, ListStreamsArgs, ReadArgs, ReconfigureBasinArgs, ReconfigureStreamArgs};
-use crate::config::{self, ConfigKey, Compression};
+use crate::cli::{
+    CreateStreamArgs, IssueAccessTokenArgs, ListAccessTokensArgs, ListBasinsArgs, ListStreamsArgs,
+    ReadArgs, ReconfigureBasinArgs, ReconfigureStreamArgs,
+};
+use crate::config::{self, Compression, ConfigKey};
 use crate::error::CliError;
 use crate::ops;
 use crate::record_format::{RecordFormat, RecordsOut};
-use crate::types::{BasinConfig, DeleteOnEmptyConfig, Operation, RetentionPolicy, S2BasinAndMaybeStreamUri, S2BasinAndStreamUri, S2BasinUri, StorageClass, StreamConfig, TimestampingConfig, TimestampingMode};
+use crate::types::{
+    BasinConfig, DeleteOnEmptyConfig, Operation, RetentionPolicy, S2BasinAndMaybeStreamUri,
+    S2BasinAndStreamUri, S2BasinUri, StorageClass, StreamConfig, TimestampingConfig,
+    TimestampingMode,
+};
 
-use super::event::{BasinConfigInfo, BenchFinalStats, BenchPhase, BenchSample, Event, StreamConfigInfo};
+use super::event::{
+    BasinConfigInfo, BenchFinalStats, BenchPhase, BenchSample, Event, StreamConfigInfo,
+};
 use super::ui;
 
 /// Maximum records to keep in read view buffer
@@ -140,20 +152,20 @@ pub struct AppendViewState {
     pub basin_name: BasinName,
     pub stream_name: StreamName,
     pub body: String,
-    pub headers: Vec<(String, String)>,  // List of (key, value) pairs
-    pub match_seq_num: String,           // Empty = none
+    pub headers: Vec<(String, String)>, // List of (key, value) pairs
+    pub match_seq_num: String,          // Empty = none
     pub fencing_token: String,
     pub selected: usize,
     pub editing: bool,
-    pub header_key_input: String,        // For adding new header
+    pub header_key_input: String, // For adding new header
     pub header_value_input: String,
     pub editing_header_key: bool,
     pub history: Vec<AppendResult>,
     pub appending: bool,
     // File append support
-    pub input_file: String,              // Path to file to append from
-    pub input_format: InputFormat,       // Format for file records (text, json, json-base64)
-    pub file_append_progress: Option<(usize, usize)>,  // (done, total) during file append
+    pub input_file: String,        // Path to file to append from
+    pub input_format: InputFormat, // Format for file records (text, json, json-base64)
+    pub file_append_progress: Option<(usize, usize)>, // (done, total) during file append
 }
 
 /// Input format for file append (mirrors CLI's RecordFormat)
@@ -232,11 +244,11 @@ impl CompressionOption {
 #[derive(Debug, Clone)]
 pub struct SettingsState {
     pub access_token: String,
-    pub access_token_masked: bool,  // Whether to show masked or plaintext
+    pub access_token_masked: bool, // Whether to show masked or plaintext
     pub account_endpoint: String,
     pub basin_endpoint: String,
     pub compression: CompressionOption,
-    pub selected: usize,  // 0=token, 1=account_endpoint, 2=basin_endpoint, 3=compression
+    pub selected: usize, // 0=token, 1=account_endpoint, 2=basin_endpoint, 3=compression
     pub editing: bool,
     pub has_changes: bool,
     pub message: Option<String>,
@@ -262,8 +274,13 @@ impl Default for SettingsState {
 #[derive(Debug, Clone)]
 pub enum MetricsType {
     Account,
-    Basin { basin_name: BasinName },
-    Stream { basin_name: BasinName, stream_name: StreamName },
+    Basin {
+        basin_name: BasinName,
+    },
+    Stream {
+        basin_name: BasinName,
+        stream_name: StreamName,
+    },
 }
 
 /// Which metric is currently selected (for basin/stream)
@@ -332,7 +349,10 @@ pub enum TimeRangeOption {
     ThreeDays,
     SevenDays,
     ThirtyDays,
-    Custom { start: u32, end: u32 }, // Unix timestamps
+    Custom {
+        start: u32,
+        end: u32,
+    }, // Unix timestamps
 }
 
 impl TimeRangeOption {
@@ -440,10 +460,10 @@ pub struct MetricsViewState {
     pub calendar_open: bool,
     pub calendar_year: i32,
     pub calendar_month: u32,
-    pub calendar_day: u32,         // Currently highlighted day
+    pub calendar_day: u32,                       // Currently highlighted day
     pub calendar_start: Option<(i32, u32, u32)>, // Selected start date (year, month, day)
     pub calendar_end: Option<(i32, u32, u32)>,   // Selected end date
-    pub calendar_selecting_end: bool, // true if selecting end date
+    pub calendar_selecting_end: bool,            // true if selecting end date
 }
 
 /// Benchmark configuration phase
@@ -485,10 +505,10 @@ pub struct BenchViewState {
     pub basin_name: BasinName,
     pub config_phase: bool,
     pub config_field: BenchConfigField,
-    pub record_size: u32,           // bytes (default 8KB)
-    pub target_mibps: u64,          // MiB/s (default 1)
-    pub duration_secs: u64,         // seconds (default 60)
-    pub catchup_delay_secs: u64,    // seconds (default 20)
+    pub record_size: u32,        // bytes (default 8KB)
+    pub target_mibps: u64,       // MiB/s (default 1)
+    pub duration_secs: u64,      // seconds (default 60)
+    pub catchup_delay_secs: u64, // seconds (default 20)
     pub editing: bool,
     pub edit_buffer: String,
     pub stream_name: Option<String>,
@@ -522,7 +542,7 @@ impl BenchViewState {
             basin_name,
             config_phase: true,
             config_field: BenchConfigField::default(),
-            record_size: 8 * 1024,      // 8 KB
+            record_size: 8 * 1024, // 8 KB
             target_mibps: 1,
             duration_secs: 60,
             catchup_delay_secs: 20,
@@ -571,9 +591,10 @@ pub struct StatusMessage {
 }
 
 /// Input mode for text input dialogs
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum InputMode {
     /// Not in input mode
+    #[default]
     Normal,
     /// Creating a new basin
     CreateBasin {
@@ -608,7 +629,10 @@ pub enum InputMode {
     /// Confirming basin deletion
     ConfirmDeleteBasin { basin: BasinName },
     /// Confirming stream deletion
-    ConfirmDeleteStream { basin: BasinName, stream: StreamName },
+    ConfirmDeleteStream {
+        basin: BasinName,
+        stream: StreamName,
+    },
     /// Reconfiguring a basin
     ReconfigureBasin {
         basin: BasinName,
@@ -662,8 +686,8 @@ pub enum InputMode {
         basin: BasinName,
         stream: StreamName,
         new_token: String,
-        current_token: String,  // Empty = no current token
-        selected: usize,        // 0=new_token, 1=current_token, 2=submit
+        current_token: String, // Empty = no current token
+        selected: usize,       // 0=new_token, 1=current_token, 2=submit
         editing: bool,
     },
     /// Trim a stream (delete records before seq num)
@@ -671,8 +695,8 @@ pub enum InputMode {
         basin: BasinName,
         stream: StreamName,
         trim_point: String,
-        fencing_token: String,  // Empty = no fencing token
-        selected: usize,        // 0=trim_point, 1=fencing_token, 2=submit
+        fencing_token: String, // Empty = no fencing token
+        selected: usize,       // 0=trim_point, 1=fencing_token, 2=submit
         editing: bool,
     },
     /// Issue a new access token
@@ -705,16 +729,11 @@ pub enum InputMode {
 }
 
 /// Retention policy option for UI
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum RetentionPolicyOption {
+    #[default]
     Infinite,
     Age,
-}
-
-impl Default for RetentionPolicyOption {
-    fn default() -> Self {
-        Self::Infinite
-    }
 }
 
 impl RetentionPolicyOption {
@@ -821,7 +840,7 @@ impl ExpiryOption {
         }
     }
 
-    pub fn to_duration_str(&self) -> Option<&'static str> {
+    pub fn duration_str(self) -> Option<&'static str> {
         match self {
             ExpiryOption::Never => None,
             ExpiryOption::OneDay => Some("1d"),
@@ -829,7 +848,7 @@ impl ExpiryOption {
             ExpiryOption::ThirtyDays => Some("30d"),
             ExpiryOption::NinetyDays => Some("90d"),
             ExpiryOption::OneYear => Some("365d"),
-            ExpiryOption::Custom => None, // Use custom value
+            ExpiryOption::Custom => None,
         }
     }
 }
@@ -874,9 +893,10 @@ impl ScopeOption {
 }
 
 /// Start position for read operation
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum ReadStartFrom {
     /// From current tail (live follow, no historical)
+    #[default]
     Tail,
     /// From specific sequence number
     SeqNum,
@@ -888,23 +908,18 @@ pub enum ReadStartFrom {
     TailOffset,
 }
 
-impl Default for ReadStartFrom {
-    fn default() -> Self {
-        Self::Tail
-    }
-}
-
 /// Time unit for "ago" option
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum AgoUnit {
     Seconds,
+    #[default]
     Minutes,
     Hours,
     Days,
 }
 
 impl AgoUnit {
-    pub fn to_seconds(&self, value: u64) -> u64 {
+    pub fn as_seconds(self, value: u64) -> u64 {
         match self {
             AgoUnit::Seconds => value,
             AgoUnit::Minutes => value * 60,
@@ -913,19 +928,13 @@ impl AgoUnit {
         }
     }
 
-    pub fn next(&self) -> Self {
+    pub fn next(self) -> Self {
         match self {
             AgoUnit::Seconds => AgoUnit::Minutes,
             AgoUnit::Minutes => AgoUnit::Hours,
             AgoUnit::Hours => AgoUnit::Days,
             AgoUnit::Days => AgoUnit::Seconds,
         }
-    }
-}
-
-impl Default for AgoUnit {
-    fn default() -> Self {
-        Self::Minutes
     }
 }
 
@@ -979,12 +988,6 @@ pub struct StreamReconfigureConfig {
     pub delete_on_empty_min_age: String,
 }
 
-impl Default for InputMode {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
-
 /// Main application state
 pub struct App {
     pub screen: Screen,
@@ -1000,6 +1003,7 @@ pub struct App {
 }
 
 /// Build a basin config from form values
+#[allow(clippy::too_many_arguments)]
 fn build_basin_config(
     create_stream_on_append: bool,
     create_stream_on_read: bool,
@@ -1011,19 +1015,20 @@ fn build_basin_config(
     delete_on_empty_enabled: bool,
     delete_on_empty_min_age: String,
 ) -> BasinConfig {
-
     let retention = match retention_policy {
         RetentionPolicyOption::Infinite => None,
-        RetentionPolicyOption::Age => {
-            humantime::parse_duration(&retention_age_input)
-                .ok()
-                .map(RetentionPolicy::Age)
-        }
+        RetentionPolicyOption::Age => humantime::parse_duration(&retention_age_input)
+            .ok()
+            .map(RetentionPolicy::Age),
     };
     let timestamping = if timestamping_mode.is_some() || timestamping_uncapped {
         Some(TimestampingConfig {
             timestamping_mode,
-            timestamping_uncapped: if timestamping_uncapped { Some(true) } else { None },
+            timestamping_uncapped: if timestamping_uncapped {
+                Some(true)
+            } else {
+                None
+            },
         })
     } else {
         None
@@ -1031,7 +1036,9 @@ fn build_basin_config(
     let delete_on_empty = if delete_on_empty_enabled {
         humantime::parse_duration(&delete_on_empty_min_age)
             .ok()
-            .map(|d| DeleteOnEmptyConfig { delete_on_empty_min_age: d })
+            .map(|d| DeleteOnEmptyConfig {
+                delete_on_empty_min_age: d,
+            })
     } else {
         None
     };
@@ -1057,19 +1064,20 @@ fn build_stream_config(
     delete_on_empty_enabled: bool,
     delete_on_empty_min_age: String,
 ) -> StreamConfig {
-
     let retention = match retention_policy {
         RetentionPolicyOption::Infinite => None,
-        RetentionPolicyOption::Age => {
-            humantime::parse_duration(&retention_age_input)
-                .ok()
-                .map(RetentionPolicy::Age)
-        }
+        RetentionPolicyOption::Age => humantime::parse_duration(&retention_age_input)
+            .ok()
+            .map(RetentionPolicy::Age),
     };
     let timestamping = if timestamping_mode.is_some() || timestamping_uncapped {
         Some(TimestampingConfig {
             timestamping_mode,
-            timestamping_uncapped: if timestamping_uncapped { Some(true) } else { None },
+            timestamping_uncapped: if timestamping_uncapped {
+                Some(true)
+            } else {
+                None
+            },
         })
     } else {
         None
@@ -1077,7 +1085,9 @@ fn build_stream_config(
     let delete_on_empty = if delete_on_empty_enabled {
         humantime::parse_duration(&delete_on_empty_min_age)
             .ok()
-            .map(|d| DeleteOnEmptyConfig { delete_on_empty_min_age: d })
+            .map(|d| DeleteOnEmptyConfig {
+                delete_on_empty_min_age: d,
+            })
     } else {
         None
     };
@@ -1121,14 +1131,16 @@ impl App {
 
     /// Load settings from config file
     fn load_settings_state() -> SettingsState {
-
         let file_config = config::load_config_file().unwrap_or_default();
 
         let env_config = config::load_cli_config().unwrap_or_default();
-        let access_token = file_config.access_token.clone()
+        let access_token = file_config
+            .access_token
+            .clone()
             .or_else(|| env_config.access_token.clone())
             .unwrap_or_default();
-        let token_from_env = file_config.access_token.is_none() && env_config.access_token.is_some();
+        let token_from_env =
+            file_config.access_token.is_none() && env_config.access_token.is_some();
 
         SettingsState {
             access_token,
@@ -1157,35 +1169,39 @@ impl App {
         if state.access_token.is_empty() {
             cli_config.unset(ConfigKey::AccessToken);
         } else {
-            cli_config.set(ConfigKey::AccessToken, state.access_token.clone())
-                .map_err(|e| CliError::Config(e))?;
+            cli_config
+                .set(ConfigKey::AccessToken, state.access_token.clone())
+                .map_err(CliError::Config)?;
         }
         if state.account_endpoint.is_empty() {
             cli_config.unset(ConfigKey::AccountEndpoint);
         } else {
-            cli_config.set(ConfigKey::AccountEndpoint, state.account_endpoint.clone())
-                .map_err(|e| CliError::Config(e))?;
+            cli_config
+                .set(ConfigKey::AccountEndpoint, state.account_endpoint.clone())
+                .map_err(CliError::Config)?;
         }
         if state.basin_endpoint.is_empty() {
             cli_config.unset(ConfigKey::BasinEndpoint);
         } else {
-            cli_config.set(ConfigKey::BasinEndpoint, state.basin_endpoint.clone())
-                .map_err(|e| CliError::Config(e))?;
+            cli_config
+                .set(ConfigKey::BasinEndpoint, state.basin_endpoint.clone())
+                .map_err(CliError::Config)?;
         }
         match state.compression {
             CompressionOption::None => cli_config.unset(ConfigKey::Compression),
             CompressionOption::Gzip => {
-                cli_config.set(ConfigKey::Compression, "gzip".to_string())
-                    .map_err(|e| CliError::Config(e))?;
+                cli_config
+                    .set(ConfigKey::Compression, "gzip".to_string())
+                    .map_err(CliError::Config)?;
             }
             CompressionOption::Zstd => {
-                cli_config.set(ConfigKey::Compression, "zstd".to_string())
-                    .map_err(|e| CliError::Config(e))?;
+                cli_config
+                    .set(ConfigKey::Compression, "zstd".to_string())
+                    .map_err(CliError::Config)?;
             }
         }
 
-        config::save_cli_config(&cli_config)
-            .map_err(|e| CliError::Config(e))?;
+        config::save_cli_config(&cli_config).map_err(CliError::Config)?;
         Ok(())
     }
 
@@ -1199,12 +1215,10 @@ impl App {
         let mut pending_basins: Option<Result<Vec<BasinInfo>, CliError>> = None;
 
         loop {
-
             terminal
                 .draw(|f| ui::draw(f, &self))
                 .map_err(|e| CliError::RecordWrite(format!("Failed to draw: {e}")))?;
             if matches!(self.screen, Screen::Splash) && splash_start.elapsed() >= splash_duration {
-
                 let mut basins_state = BasinsState {
                     loading: pending_basins.is_none(),
                     ..Default::default()
@@ -1231,36 +1245,33 @@ impl App {
             // even when async events are flooding in
             if event::poll(Duration::from_millis(0))
                 .map_err(|e| CliError::RecordWrite(format!("Failed to poll events: {e}")))?
-            {
-                if let CrosstermEvent::Key(key) = event::read()
+                && let CrosstermEvent::Key(key) = event::read()
                     .map_err(|e| CliError::RecordWrite(format!("Failed to read event: {e}")))?
-                {
-
-                    if matches!(self.screen, Screen::Splash) {
-                        let mut basins_state = BasinsState {
-                            loading: pending_basins.is_none(),
-                            ..Default::default()
-                        };
-                        if let Some(result) = pending_basins.take() {
-                            match result {
-                                Ok(basins) => {
-                                    basins_state.basins = basins;
-                                    basins_state.loading = false;
-                                }
-                                Err(e) => {
-                                    basins_state.loading = false;
-                                    self.message = Some(StatusMessage {
-                                        text: format!("Failed to load basins: {e}"),
-                                        level: MessageLevel::Error,
-                                    });
-                                }
+            {
+                if matches!(self.screen, Screen::Splash) {
+                    let mut basins_state = BasinsState {
+                        loading: pending_basins.is_none(),
+                        ..Default::default()
+                    };
+                    if let Some(result) = pending_basins.take() {
+                        match result {
+                            Ok(basins) => {
+                                basins_state.basins = basins;
+                                basins_state.loading = false;
+                            }
+                            Err(e) => {
+                                basins_state.loading = false;
+                                self.message = Some(StatusMessage {
+                                    text: format!("Failed to load basins: {e}"),
+                                    level: MessageLevel::Error,
+                                });
                             }
                         }
-                        self.screen = Screen::Basins(basins_state);
-                        continue;
                     }
-                    self.handle_key(key, tx.clone());
+                    self.screen = Screen::Basins(basins_state);
+                    continue;
                 }
+                self.handle_key(key, tx.clone());
             }
             if self.should_quit {
                 break;
@@ -1270,12 +1281,11 @@ impl App {
             tokio::select! {
                 Some(event) = rx.recv() => {
 
-                    if matches!(self.screen, Screen::Splash) {
-                        if let Event::BasinsLoaded(result) = event {
+                    if matches!(self.screen, Screen::Splash)
+                        && let Event::BasinsLoaded(result) = event {
                             pending_basins = Some(result);
                             continue;
                         }
-                    }
                     self.handle_event(event);
                 }
                 _ = tokio::time::sleep(Duration::from_millis(16)) => {}
@@ -1373,7 +1383,9 @@ impl App {
                         Ok(record) => {
                             if !state.paused {
                                 // Deduplicate by seq_num - skip if we already have this or a later record
-                                let dominated = state.records.back()
+                                let dominated = state
+                                    .records
+                                    .back()
                                     .map(|last| record.seq_num <= last.seq_num)
                                     .unwrap_or(false);
                                 if dominated {
@@ -1390,7 +1402,9 @@ impl App {
                                     let elapsed = last_tick.elapsed();
                                     if elapsed >= std::time::Duration::from_secs(1) {
                                         let secs = elapsed.as_secs_f64();
-                                        let mibps = (state.bytes_this_second as f64) / (1024.0 * 1024.0) / secs;
+                                        let mibps = (state.bytes_this_second as f64)
+                                            / (1024.0 * 1024.0)
+                                            / secs;
                                         let recps = (state.records_this_second as f64) / secs;
 
                                         state.current_mibps = mibps;
@@ -1457,7 +1471,9 @@ impl App {
                     match result {
                         Ok(record) => {
                             // Deduplicate by seq_num
-                            let dominated = pip.records.back()
+                            let dominated = pip
+                                .records
+                                .back()
                                 .map(|last| record.seq_num <= last.seq_num)
                                 .unwrap_or(false);
                             if dominated {
@@ -1474,7 +1490,8 @@ impl App {
                                 let elapsed = last_tick.elapsed();
                                 if elapsed >= std::time::Duration::from_secs(1) {
                                     let secs = elapsed.as_secs_f64();
-                                    pip.current_mibps = (pip.bytes_this_second as f64) / (1024.0 * 1024.0) / secs;
+                                    pip.current_mibps =
+                                        (pip.bytes_this_second as f64) / (1024.0 * 1024.0) / secs;
                                     pip.current_recps = (pip.records_this_second as f64) / secs;
                                     pip.bytes_this_second = 0;
                                     pip.records_this_second = 0;
@@ -1606,7 +1623,8 @@ impl App {
                     timestamping_uncapped,
                     age_input,
                     ..
-                } = &mut self.input_mode {
+                } = &mut self.input_mode
+                {
                     match result {
                         Ok(info) => {
                             *create_stream_on_append = Some(info.create_stream_on_append);
@@ -1644,7 +1662,8 @@ impl App {
                     delete_on_empty_min_age,
                     age_input,
                     ..
-                } = &mut self.input_mode {
+                } = &mut self.input_mode
+                {
                     match result {
                         Ok(info) => {
                             *storage_class = info.storage_class;
@@ -1753,7 +1772,11 @@ impl App {
                     state.appending = false;
                     match result {
                         Ok((seq_num, body_preview, header_count)) => {
-                            state.history.push(AppendResult { seq_num, body_preview, header_count });
+                            state.history.push(AppendResult {
+                                seq_num,
+                                body_preview,
+                                header_count,
+                            });
                         }
                         Err(e) => {
                             self.message = Some(StatusMessage {
@@ -1765,7 +1788,11 @@ impl App {
                 }
             }
 
-            Event::FileAppendProgress { appended, total, last_seq } => {
+            Event::FileAppendProgress {
+                appended,
+                total,
+                last_seq,
+            } => {
                 if let Screen::AppendView(state) = &mut self.screen {
                     state.file_append_progress = Some((appended, total));
                     if let Some(seq) = last_seq {
@@ -1787,7 +1814,10 @@ impl App {
                         Ok((total, first_seq, last_seq)) => {
                             state.input_file.clear();
                             self.message = Some(StatusMessage {
-                                text: format!("Appended {} records (seq {}..{})", total, first_seq, last_seq),
+                                text: format!(
+                                    "Appended {} records (seq {}..{})",
+                                    total, first_seq, last_seq
+                                ),
                                 level: MessageLevel::Success,
                             });
                         }
@@ -1826,10 +1856,12 @@ impl App {
                 self.input_mode = InputMode::Normal;
                 match result {
                     Ok(token) => {
-
-                        self.input_mode = InputMode::ShowIssuedToken { token: token.clone() };
+                        self.input_mode = InputMode::ShowIssuedToken {
+                            token: token.clone(),
+                        };
                         self.message = Some(StatusMessage {
-                            text: "Access token issued - copy it now, it won't be shown again!".to_string(),
+                            text: "Access token issued - copy it now, it won't be shown again!"
+                                .to_string(),
                             level: MessageLevel::Success,
                         });
 
@@ -1952,7 +1984,8 @@ impl App {
                     state.write_bytes = sample.bytes;
                     state.write_records = sample.records;
                     state.elapsed_secs = sample.elapsed.as_secs_f64();
-                    state.progress_pct = ((state.elapsed_secs / state.duration_secs as f64) * 100.0).min(100.0);
+                    state.progress_pct =
+                        ((state.elapsed_secs / state.duration_secs as f64) * 100.0).min(100.0);
 
                     state.write_history.push(sample.mib_per_sec);
                     if state.write_history.len() > 60 {
@@ -2019,7 +2052,6 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent, tx: mpsc::UnboundedSender<Event>) {
-
         self.message = None;
         if !matches!(self.input_mode, InputMode::Normal) {
             self.handle_input_key(key, tx);
@@ -2055,9 +2087,7 @@ impl App {
                 self.should_quit = true;
                 return;
             }
-            KeyCode::Char('q') if !matches!(self.screen, Screen::Basins(_)) => {
-
-            }
+            KeyCode::Char('q') if !matches!(self.screen, Screen::Basins(_)) => {}
             KeyCode::Char('q') => {
                 self.should_quit = true;
                 return;
@@ -2096,8 +2126,8 @@ impl App {
         // Handle IssueAccessToken submit separately to avoid borrow issues.
         // We need to extract values before calling the method since the match arm
         // holds borrows that conflict with the method call.
-        if matches!(key.code, KeyCode::Char(' ') | KeyCode::Enter) {
-            if let InputMode::IssueAccessToken {
+        if matches!(key.code, KeyCode::Char(' ') | KeyCode::Enter)
+            && let InputMode::IssueAccessToken {
                 id,
                 expiry,
                 expiry_custom,
@@ -2117,47 +2147,46 @@ impl App {
                 selected,
                 editing,
             } = &self.input_mode
-            {
-                if *selected == 16 && !*editing && !id.is_empty() {
-
-                    let id = id.clone();
-                    let expiry = *expiry;
-                    let expiry_custom = expiry_custom.clone();
-                    let basins_scope = *basins_scope;
-                    let basins_value = basins_value.clone();
-                    let streams_scope = *streams_scope;
-                    let streams_value = streams_value.clone();
-                    let tokens_scope = *tokens_scope;
-                    let tokens_value = tokens_value.clone();
-                    let account_read = *account_read;
-                    let account_write = *account_write;
-                    let basin_read = *basin_read;
-                    let basin_write = *basin_write;
-                    let stream_read = *stream_read;
-                    let stream_write = *stream_write;
-                    let auto_prefix_streams = *auto_prefix_streams;
-                    self.issue_access_token_v2(
-                        id,
-                        expiry,
-                        expiry_custom,
-                        basins_scope,
-                        basins_value,
-                        streams_scope,
-                        streams_value,
-                        tokens_scope,
-                        tokens_value,
-                        account_read,
-                        account_write,
-                        basin_read,
-                        basin_write,
-                        stream_read,
-                        stream_write,
-                        auto_prefix_streams,
-                        tx,
-                    );
-                    return;
-                }
-            }
+            && *selected == 16
+            && !*editing
+            && !id.is_empty()
+        {
+            let id = id.clone();
+            let expiry = *expiry;
+            let expiry_custom = expiry_custom.clone();
+            let basins_scope = *basins_scope;
+            let basins_value = basins_value.clone();
+            let streams_scope = *streams_scope;
+            let streams_value = streams_value.clone();
+            let tokens_scope = *tokens_scope;
+            let tokens_value = tokens_value.clone();
+            let account_read = *account_read;
+            let account_write = *account_write;
+            let basin_read = *basin_read;
+            let basin_write = *basin_write;
+            let stream_read = *stream_read;
+            let stream_write = *stream_write;
+            let auto_prefix_streams = *auto_prefix_streams;
+            self.issue_access_token_v2(
+                id,
+                expiry,
+                expiry_custom,
+                basins_scope,
+                basins_value,
+                streams_scope,
+                streams_value,
+                tokens_scope,
+                tokens_value,
+                account_read,
+                account_write,
+                basin_read,
+                basin_write,
+                stream_read,
+                stream_write,
+                auto_prefix_streams,
+                tx,
+            );
+            return;
         }
 
         match &mut self.input_mode {
@@ -2181,7 +2210,6 @@ impl App {
                 const FIELD_COUNT: usize = 12;
 
                 if *editing {
-
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter => {
                             *editing = false;
@@ -2197,20 +2225,15 @@ impl App {
                         }
                         KeyCode::Char(c) => {
                             if *selected == 0 {
-
                                 if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' {
                                     name.push(c);
                                 }
                             } else if *selected == 4 {
-
                                 if c.is_ascii_alphanumeric() {
                                     retention_age_input.push(c);
                                 }
-                            } else if *selected == 8 {
-
-                                if c.is_ascii_alphanumeric() {
-                                    delete_on_empty_min_age.push(c);
-                                }
+                            } else if *selected == 8 && c.is_ascii_alphanumeric() {
+                                delete_on_empty_min_age.push(c);
                             }
                         }
                         _ => {}
@@ -2228,7 +2251,8 @@ impl App {
                                     *selected = 7;
                                 }
 
-                                if *selected == 4 && *retention_policy != RetentionPolicyOption::Age {
+                                if *selected == 4 && *retention_policy != RetentionPolicyOption::Age
+                                {
                                     *selected = 3;
                                 }
                             }
@@ -2237,7 +2261,8 @@ impl App {
                             if *selected < FIELD_COUNT - 1 {
                                 *selected += 1;
 
-                                if *selected == 4 && *retention_policy != RetentionPolicyOption::Age {
+                                if *selected == 4 && *retention_policy != RetentionPolicyOption::Age
+                                {
                                     *selected = 5;
                                 }
 
@@ -2260,55 +2285,53 @@ impl App {
                                     }
                                 }
                                 11 => {
-
                                     if name.len() >= 8 {
-
                                         let basin_name = name.clone();
                                         let basin_scope = *scope;
                                         let csoa = *create_stream_on_append;
                                         let csor = *create_stream_on_read;
                                         let sc = storage_class.clone();
-                                        let rp = retention_policy.clone();
+                                        let rp = *retention_policy;
                                         let rai = retention_age_input.clone();
                                         let tm = timestamping_mode.clone();
                                         let tu = *timestamping_uncapped;
                                         let doe = *delete_on_empty_enabled;
                                         let doema = delete_on_empty_min_age.clone();
 
-                                        let config = build_basin_config(csoa, csor, sc, rp, rai, tm, tu, doe, doema);
-                                        self.create_basin_with_config(basin_name, basin_scope, config, tx.clone());
+                                        let config = build_basin_config(
+                                            csoa, csor, sc, rp, rai, tm, tu, doe, doema,
+                                        );
+                                        self.create_basin_with_config(
+                                            basin_name,
+                                            basin_scope,
+                                            config,
+                                            tx.clone(),
+                                        );
                                     }
                                 }
                                 _ => {}
                             }
                         }
-                        KeyCode::Char(' ') => {
-
-                            match *selected {
-                                6 => *timestamping_uncapped = !*timestamping_uncapped,
-                                9 => *create_stream_on_append = !*create_stream_on_append,
-                                10 => *create_stream_on_read = !*create_stream_on_read,
-                                _ => {}
-                            }
-                        }
-                        KeyCode::Left | KeyCode::Char('h') => {
-                            match *selected {
-                                2 => *storage_class = storage_class_prev(storage_class),
-                                3 => *retention_policy = retention_policy.toggle(),
-                                5 => *timestamping_mode = timestamping_mode_prev(timestamping_mode),
-                                7 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
-                                _ => {}
-                            }
-                        }
-                        KeyCode::Right | KeyCode::Char('l') => {
-                            match *selected {
-                                2 => *storage_class = storage_class_next(storage_class),
-                                3 => *retention_policy = retention_policy.toggle(),
-                                5 => *timestamping_mode = timestamping_mode_next(timestamping_mode),
-                                7 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
-                                _ => {}
-                            }
-                        }
+                        KeyCode::Char(' ') => match *selected {
+                            6 => *timestamping_uncapped = !*timestamping_uncapped,
+                            9 => *create_stream_on_append = !*create_stream_on_append,
+                            10 => *create_stream_on_read = !*create_stream_on_read,
+                            _ => {}
+                        },
+                        KeyCode::Left | KeyCode::Char('h') => match *selected {
+                            2 => *storage_class = storage_class_prev(storage_class),
+                            3 => *retention_policy = retention_policy.toggle(),
+                            5 => *timestamping_mode = timestamping_mode_prev(timestamping_mode),
+                            7 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
+                            _ => {}
+                        },
+                        KeyCode::Right | KeyCode::Char('l') => match *selected {
+                            2 => *storage_class = storage_class_next(storage_class),
+                            3 => *retention_policy = retention_policy.toggle(),
+                            5 => *timestamping_mode = timestamping_mode_next(timestamping_mode),
+                            7 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
+                            _ => {}
+                        },
                         _ => {}
                     }
                 }
@@ -2330,7 +2353,6 @@ impl App {
                 const FIELD_COUNT: usize = 9;
 
                 if *editing {
-
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter => {
                             *editing = false;
@@ -2346,18 +2368,13 @@ impl App {
                         }
                         KeyCode::Char(c) => {
                             if *selected == 0 {
-
                                 name.push(c);
                             } else if *selected == 3 {
-
                                 if c.is_ascii_alphanumeric() {
                                     retention_age_input.push(c);
                                 }
-                            } else if *selected == 7 {
-
-                                if c.is_ascii_alphanumeric() {
-                                    delete_on_empty_min_age.push(c);
-                                }
+                            } else if *selected == 7 && c.is_ascii_alphanumeric() {
+                                delete_on_empty_min_age.push(c);
                             }
                         }
                         _ => {}
@@ -2375,7 +2392,8 @@ impl App {
                                     *selected = 6;
                                 }
 
-                                if *selected == 3 && *retention_policy != RetentionPolicyOption::Age {
+                                if *selected == 3 && *retention_policy != RetentionPolicyOption::Age
+                                {
                                     *selected = 2;
                                 }
                             }
@@ -2384,7 +2402,8 @@ impl App {
                             if *selected < FIELD_COUNT - 1 {
                                 *selected += 1;
 
-                                if *selected == 3 && *retention_policy != RetentionPolicyOption::Age {
+                                if *selected == 3 && *retention_policy != RetentionPolicyOption::Age
+                                {
                                     *selected = 4;
                                 }
 
@@ -2407,80 +2426,76 @@ impl App {
                                     }
                                 }
                                 8 => {
-
                                     if !name.is_empty() {
                                         let basin_name = basin.clone();
                                         let stream_name = name.clone();
                                         let sc = storage_class.clone();
-                                        let rp = retention_policy.clone();
+                                        let rp = *retention_policy;
                                         let rai = retention_age_input.clone();
                                         let tm = timestamping_mode.clone();
                                         let tu = *timestamping_uncapped;
                                         let doe = *delete_on_empty_enabled;
                                         let doema = delete_on_empty_min_age.clone();
 
-                                        let config = build_stream_config(sc, rp, rai, tm, tu, doe, doema);
-                                        self.create_stream_with_config(basin_name, stream_name, config, tx.clone());
+                                        let config =
+                                            build_stream_config(sc, rp, rai, tm, tu, doe, doema);
+                                        self.create_stream_with_config(
+                                            basin_name,
+                                            stream_name,
+                                            config,
+                                            tx.clone(),
+                                        );
                                     }
                                 }
                                 _ => {}
                             }
                         }
                         KeyCode::Char(' ') => {
-
                             if *selected == 5 {
                                 *timestamping_uncapped = !*timestamping_uncapped;
                             }
                         }
-                        KeyCode::Left | KeyCode::Char('h') => {
-                            match *selected {
-                                1 => *storage_class = storage_class_prev(storage_class),
-                                2 => *retention_policy = retention_policy.toggle(),
-                                4 => *timestamping_mode = timestamping_mode_prev(timestamping_mode),
-                                6 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
-                                _ => {}
-                            }
-                        }
-                        KeyCode::Right | KeyCode::Char('l') => {
-                            match *selected {
-                                1 => *storage_class = storage_class_next(storage_class),
-                                2 => *retention_policy = retention_policy.toggle(),
-                                4 => *timestamping_mode = timestamping_mode_next(timestamping_mode),
-                                6 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
-                                _ => {}
-                            }
-                        }
+                        KeyCode::Left | KeyCode::Char('h') => match *selected {
+                            1 => *storage_class = storage_class_prev(storage_class),
+                            2 => *retention_policy = retention_policy.toggle(),
+                            4 => *timestamping_mode = timestamping_mode_prev(timestamping_mode),
+                            6 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
+                            _ => {}
+                        },
+                        KeyCode::Right | KeyCode::Char('l') => match *selected {
+                            1 => *storage_class = storage_class_next(storage_class),
+                            2 => *retention_policy = retention_policy.toggle(),
+                            4 => *timestamping_mode = timestamping_mode_next(timestamping_mode),
+                            6 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
+                            _ => {}
+                        },
                         _ => {}
                     }
                 }
             }
 
-            InputMode::ConfirmDeleteBasin { basin } => {
-                match key.code {
-                    KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
-                        self.input_mode = InputMode::Normal;
-                    }
-                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                        let basin = basin.clone();
-                        self.delete_basin(basin, tx.clone());
-                    }
-                    _ => {}
+            InputMode::ConfirmDeleteBasin { basin } => match key.code {
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                    self.input_mode = InputMode::Normal;
                 }
-            }
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    let basin = basin.clone();
+                    self.delete_basin(basin, tx.clone());
+                }
+                _ => {}
+            },
 
-            InputMode::ConfirmDeleteStream { basin, stream } => {
-                match key.code {
-                    KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
-                        self.input_mode = InputMode::Normal;
-                    }
-                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                        let basin = basin.clone();
-                        let stream = stream.clone();
-                        self.delete_stream(basin, stream, tx.clone());
-                    }
-                    _ => {}
+            InputMode::ConfirmDeleteStream { basin, stream } => match key.code {
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                    self.input_mode = InputMode::Normal;
                 }
-            }
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    let basin = basin.clone();
+                    let stream = stream.clone();
+                    self.delete_stream(basin, stream, tx.clone());
+                }
+                _ => {}
+            },
 
             InputMode::ReconfigureBasin {
                 basin,
@@ -2495,12 +2510,10 @@ impl App {
                 editing_age,
                 age_input,
             } => {
-
                 const BASIN_MAX_ROW: usize = 6;
                 if *editing_age {
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter => {
-
                             if let Ok(secs) = age_input.parse::<u64>() {
                                 *retention_age_secs = secs;
                             }
@@ -2539,38 +2552,33 @@ impl App {
                             }
                         }
                     }
-                    KeyCode::Char(' ') => {
-
-                        match *selected {
-                            4 => *timestamping_uncapped = Some(!timestamping_uncapped.unwrap_or(false)),
-                            5 => *create_stream_on_append = Some(!create_stream_on_append.unwrap_or(false)),
-                            6 => *create_stream_on_read = Some(!create_stream_on_read.unwrap_or(false)),
-                            _ => {}
+                    KeyCode::Char(' ') => match *selected {
+                        4 => *timestamping_uncapped = Some(!timestamping_uncapped.unwrap_or(false)),
+                        5 => {
+                            *create_stream_on_append =
+                                Some(!create_stream_on_append.unwrap_or(false))
                         }
-                    }
+                        6 => *create_stream_on_read = Some(!create_stream_on_read.unwrap_or(false)),
+                        _ => {}
+                    },
                     KeyCode::Enter => {
-
                         if *selected == 2 && *retention_policy == RetentionPolicyOption::Age {
                             *editing_age = true;
                             *age_input = retention_age_secs.to_string();
                         }
                     }
-                    KeyCode::Left | KeyCode::Char('h') => {
-                        match *selected {
-                            0 => *storage_class = storage_class_prev(storage_class),
-                            1 => *retention_policy = retention_policy.toggle(),
-                            3 => *timestamping_mode = timestamping_mode_prev(timestamping_mode),
-                            _ => {}
-                        }
-                    }
-                    KeyCode::Right | KeyCode::Char('l') => {
-                        match *selected {
-                            0 => *storage_class = storage_class_next(storage_class),
-                            1 => *retention_policy = retention_policy.toggle(),
-                            3 => *timestamping_mode = timestamping_mode_next(timestamping_mode),
-                            _ => {}
-                        }
-                    }
+                    KeyCode::Left | KeyCode::Char('h') => match *selected {
+                        0 => *storage_class = storage_class_prev(storage_class),
+                        1 => *retention_policy = retention_policy.toggle(),
+                        3 => *timestamping_mode = timestamping_mode_prev(timestamping_mode),
+                        _ => {}
+                    },
+                    KeyCode::Right | KeyCode::Char('l') => match *selected {
+                        0 => *storage_class = storage_class_next(storage_class),
+                        1 => *retention_policy = retention_policy.toggle(),
+                        3 => *timestamping_mode = timestamping_mode_next(timestamping_mode),
+                        _ => {}
+                    },
                     KeyCode::Char('s') => {
                         let b = basin.clone();
                         let config = BasinReconfigureConfig {
@@ -2602,18 +2610,14 @@ impl App {
                 editing_age,
                 age_input,
             } => {
-
                 if *editing_age {
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter => {
-
                             if *selected == 2 {
-
                                 if let Ok(secs) = age_input.parse::<u64>() {
                                     *retention_age_secs = secs;
                                 }
                             } else if *selected == 6 {
-
                             }
                             *editing_age = false;
                         }
@@ -2663,19 +2667,16 @@ impl App {
                             }
 
                             if *selected == 6 && !*delete_on_empty_enabled {
-
                                 *selected = 5;
                             }
                         }
                     }
                     KeyCode::Char(' ') => {
-
                         if *selected == 4 {
                             *timestamping_uncapped = Some(!timestamping_uncapped.unwrap_or(false));
                         }
                     }
                     KeyCode::Enter => {
-
                         if *selected == 2 && *retention_policy == RetentionPolicyOption::Age {
                             *editing_age = true;
                             *age_input = retention_age_secs.to_string();
@@ -2683,24 +2684,20 @@ impl App {
                             *editing_age = true;
                         }
                     }
-                    KeyCode::Left | KeyCode::Char('h') => {
-                        match *selected {
-                            0 => *storage_class = storage_class_prev(storage_class),
-                            1 => *retention_policy = retention_policy.toggle(),
-                            3 => *timestamping_mode = timestamping_mode_prev(timestamping_mode),
-                            5 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
-                            _ => {}
-                        }
-                    }
-                    KeyCode::Right | KeyCode::Char('l') => {
-                        match *selected {
-                            0 => *storage_class = storage_class_next(storage_class),
-                            1 => *retention_policy = retention_policy.toggle(),
-                            3 => *timestamping_mode = timestamping_mode_next(timestamping_mode),
-                            5 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
-                            _ => {}
-                        }
-                    }
+                    KeyCode::Left | KeyCode::Char('h') => match *selected {
+                        0 => *storage_class = storage_class_prev(storage_class),
+                        1 => *retention_policy = retention_policy.toggle(),
+                        3 => *timestamping_mode = timestamping_mode_prev(timestamping_mode),
+                        5 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
+                        _ => {}
+                    },
+                    KeyCode::Right | KeyCode::Char('l') => match *selected {
+                        0 => *storage_class = storage_class_next(storage_class),
+                        1 => *retention_policy = retention_policy.toggle(),
+                        3 => *timestamping_mode = timestamping_mode_next(timestamping_mode),
+                        5 => *delete_on_empty_enabled = !*delete_on_empty_enabled,
+                        _ => {}
+                    },
                     KeyCode::Char('s') => {
                         let b = basin.clone();
                         let s = stream.clone();
@@ -2737,41 +2734,51 @@ impl App {
                 selected,
                 editing,
             } => {
-
                 if *editing {
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter => {
                             *editing = false;
                         }
                         KeyCode::Tab if *selected == 2 => {
-
                             *ago_unit = ago_unit.next();
                         }
-                        KeyCode::Backspace => {
-                            match *selected {
-                                0 => { seq_num_value.pop(); }
-                                1 => { timestamp_value.pop(); }
-                                2 => { ago_value.pop(); }
-                                3 => { tail_offset_value.pop(); }
-                                4 => { count_limit.pop(); }
-                                5 => { byte_limit.pop(); }
-                                6 => { until_timestamp.pop(); }
-                                9 => { output_file.pop(); }
-                                _ => {}
+                        KeyCode::Backspace => match *selected {
+                            0 => {
+                                seq_num_value.pop();
                             }
-                        }
-                        KeyCode::Char(c) if c.is_ascii_digit() => {
-                            match *selected {
-                                0 => seq_num_value.push(c),
-                                1 => timestamp_value.push(c),
-                                2 => ago_value.push(c),
-                                3 => tail_offset_value.push(c),
-                                4 => count_limit.push(c),
-                                5 => byte_limit.push(c),
-                                6 => until_timestamp.push(c),
-                                _ => {}
+                            1 => {
+                                timestamp_value.pop();
                             }
-                        }
+                            2 => {
+                                ago_value.pop();
+                            }
+                            3 => {
+                                tail_offset_value.pop();
+                            }
+                            4 => {
+                                count_limit.pop();
+                            }
+                            5 => {
+                                byte_limit.pop();
+                            }
+                            6 => {
+                                until_timestamp.pop();
+                            }
+                            9 => {
+                                output_file.pop();
+                            }
+                            _ => {}
+                        },
+                        KeyCode::Char(c) if c.is_ascii_digit() => match *selected {
+                            0 => seq_num_value.push(c),
+                            1 => timestamp_value.push(c),
+                            2 => ago_value.push(c),
+                            3 => tail_offset_value.push(c),
+                            4 => count_limit.push(c),
+                            5 => byte_limit.push(c),
+                            6 => until_timestamp.push(c),
+                            _ => {}
+                        },
                         KeyCode::Char(c) if *selected == 9 => {
                             // Output file accepts any printable char
                             output_file.push(c);
@@ -2863,7 +2870,23 @@ impl App {
                                         level: MessageLevel::Info,
                                     });
                                 }
-                                self.start_custom_read(b, s, sf, snv, tsv, agv, agu, tov, cl, bl, ut, clp, fmt, of, tx.clone());
+                                self.start_custom_read(
+                                    b,
+                                    s,
+                                    sf,
+                                    snv,
+                                    tsv,
+                                    agv,
+                                    agu,
+                                    tov,
+                                    cl,
+                                    bl,
+                                    ut,
+                                    clp,
+                                    fmt,
+                                    of,
+                                    tx.clone(),
+                                );
                             }
                             _ => {}
                         }
@@ -2885,20 +2908,20 @@ impl App {
                         KeyCode::Esc | KeyCode::Enter => {
                             *editing = false;
                         }
-                        KeyCode::Backspace => {
-                            match *selected {
-                                0 => { new_token.pop(); }
-                                1 => { current_token.pop(); }
-                                _ => {}
+                        KeyCode::Backspace => match *selected {
+                            0 => {
+                                new_token.pop();
                             }
-                        }
-                        KeyCode::Char(c) => {
-                            match *selected {
-                                0 => new_token.push(c),
-                                1 => current_token.push(c),
-                                _ => {}
+                            1 => {
+                                current_token.pop();
                             }
-                        }
+                            _ => {}
+                        },
+                        KeyCode::Char(c) => match *selected {
+                            0 => new_token.push(c),
+                            1 => current_token.push(c),
+                            _ => {}
+                        },
                         _ => {}
                     }
                     return;
@@ -2956,20 +2979,20 @@ impl App {
                         KeyCode::Esc | KeyCode::Enter => {
                             *editing = false;
                         }
-                        KeyCode::Backspace => {
-                            match *selected {
-                                0 => { trim_point.pop(); }
-                                1 => { fencing_token.pop(); }
-                                _ => {}
+                        KeyCode::Backspace => match *selected {
+                            0 => {
+                                trim_point.pop();
                             }
-                        }
-                        KeyCode::Char(c) => {
-                            match *selected {
-                                0 if c.is_ascii_digit() => trim_point.push(c),
-                                1 => fencing_token.push(c),
-                                _ => {}
+                            1 => {
+                                fencing_token.pop();
                             }
-                        }
+                            _ => {}
+                        },
+                        KeyCode::Char(c) => match *selected {
+                            0 if c.is_ascii_digit() => trim_point.push(c),
+                            1 => fencing_token.push(c),
+                            _ => {}
+                        },
                         _ => {}
                     }
                     return;
@@ -3044,16 +3067,24 @@ impl App {
                         KeyCode::Esc | KeyCode::Enter => {
                             *editing = false;
                         }
-                        KeyCode::Backspace => {
-                            match *selected {
-                                0 => { id.pop(); }
-                                2 => { expiry_custom.pop(); }
-                                4 => { basins_value.pop(); }
-                                6 => { streams_value.pop(); }
-                                8 => { tokens_value.pop(); }
-                                _ => {}
+                        KeyCode::Backspace => match *selected {
+                            0 => {
+                                id.pop();
                             }
-                        }
+                            2 => {
+                                expiry_custom.pop();
+                            }
+                            4 => {
+                                basins_value.pop();
+                            }
+                            6 => {
+                                streams_value.pop();
+                            }
+                            8 => {
+                                tokens_value.pop();
+                            }
+                            _ => {}
+                        },
                         KeyCode::Char(c) => {
                             match *selected {
                                 0 => {
@@ -3090,13 +3121,22 @@ impl App {
                             if *selected == 2 && *expiry != ExpiryOption::Custom {
                                 *selected = 1;
                             }
-                            if *selected == 4 && !matches!(basins_scope, ScopeOption::Prefix | ScopeOption::Exact) {
+                            if *selected == 4
+                                && !matches!(basins_scope, ScopeOption::Prefix | ScopeOption::Exact)
+                            {
                                 *selected = 3;
                             }
-                            if *selected == 6 && !matches!(streams_scope, ScopeOption::Prefix | ScopeOption::Exact) {
+                            if *selected == 6
+                                && !matches!(
+                                    streams_scope,
+                                    ScopeOption::Prefix | ScopeOption::Exact
+                                )
+                            {
                                 *selected = 5;
                             }
-                            if *selected == 8 && !matches!(tokens_scope, ScopeOption::Prefix | ScopeOption::Exact) {
+                            if *selected == 8
+                                && !matches!(tokens_scope, ScopeOption::Prefix | ScopeOption::Exact)
+                            {
                                 *selected = 7;
                             }
                         }
@@ -3108,13 +3148,22 @@ impl App {
                             if *selected == 2 && *expiry != ExpiryOption::Custom {
                                 *selected = 3;
                             }
-                            if *selected == 4 && !matches!(basins_scope, ScopeOption::Prefix | ScopeOption::Exact) {
+                            if *selected == 4
+                                && !matches!(basins_scope, ScopeOption::Prefix | ScopeOption::Exact)
+                            {
                                 *selected = 5;
                             }
-                            if *selected == 6 && !matches!(streams_scope, ScopeOption::Prefix | ScopeOption::Exact) {
+                            if *selected == 6
+                                && !matches!(
+                                    streams_scope,
+                                    ScopeOption::Prefix | ScopeOption::Exact
+                                )
+                            {
                                 *selected = 7;
                             }
-                            if *selected == 8 && !matches!(tokens_scope, ScopeOption::Prefix | ScopeOption::Exact) {
+                            if *selected == 8
+                                && !matches!(tokens_scope, ScopeOption::Prefix | ScopeOption::Exact)
+                            {
                                 *selected = 9;
                             }
                         }
@@ -3122,10 +3171,34 @@ impl App {
                     KeyCode::Left | KeyCode::Right => {
                         let forward = key.code == KeyCode::Right;
                         match *selected {
-                            1 => *expiry = if forward { expiry.next() } else { expiry.prev() },
-                            3 => *basins_scope = if forward { basins_scope.next() } else { basins_scope.prev() },
-                            5 => *streams_scope = if forward { streams_scope.next() } else { streams_scope.prev() },
-                            7 => *tokens_scope = if forward { tokens_scope.next() } else { tokens_scope.prev() },
+                            1 => {
+                                *expiry = if forward {
+                                    expiry.next()
+                                } else {
+                                    expiry.prev()
+                                }
+                            }
+                            3 => {
+                                *basins_scope = if forward {
+                                    basins_scope.next()
+                                } else {
+                                    basins_scope.prev()
+                                }
+                            }
+                            5 => {
+                                *streams_scope = if forward {
+                                    streams_scope.next()
+                                } else {
+                                    streams_scope.prev()
+                                }
+                            }
+                            7 => {
+                                *tokens_scope = if forward {
+                                    tokens_scope.next()
+                                } else {
+                                    tokens_scope.prev()
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -3154,18 +3227,16 @@ impl App {
                 }
             }
 
-            InputMode::ConfirmRevokeToken { token_id } => {
-                match key.code {
-                    KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
-                        self.input_mode = InputMode::Normal;
-                    }
-                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                        let id = token_id.clone();
-                        self.revoke_access_token(id, tx.clone());
-                    }
-                    _ => {}
+            InputMode::ConfirmRevokeToken { token_id } => match key.code {
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                    self.input_mode = InputMode::Normal;
                 }
-            }
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    let id = token_id.clone();
+                    self.revoke_access_token(id, tx.clone());
+                }
+                _ => {}
+            },
 
             InputMode::ShowIssuedToken { .. } => {
                 // Any key dismisses the token display
@@ -3219,7 +3290,9 @@ impl App {
         }
 
         // Get filtered list length for bounds checking
-        let filtered: Vec<_> = state.basins.iter()
+        let filtered: Vec<_> = state
+            .basins
+            .iter()
             .filter(|b| state.filter.is_empty() || b.name.to_string().contains(&state.filter))
             .collect();
         let filtered_len = filtered.len();
@@ -3368,7 +3441,9 @@ impl App {
         }
 
         // Get filtered list length for bounds checking
-        let filtered: Vec<_> = state.streams.iter()
+        let filtered: Vec<_> = state
+            .streams
+            .iter()
             .filter(|s| state.filter.is_empty() || s.name.to_string().contains(&state.filter))
             .collect();
         let filtered_len = filtered.len();
@@ -3664,7 +3739,6 @@ impl App {
                 state.hide_list = !state.hide_list;
             }
             KeyCode::Enter | KeyCode::Char('h') => {
-
                 if !state.records.is_empty() {
                     state.show_detail = true;
                 }
@@ -3707,7 +3781,9 @@ impl App {
 
     fn load_basins(&self, tx: mpsc::UnboundedSender<Event>) {
         let Some(s2) = self.s2.clone() else {
-            let _ = tx.send(Event::BasinsLoaded(Err(CliError::Config(crate::error::CliConfigError::MissingAccessToken))));
+            let _ = tx.send(Event::BasinsLoaded(Err(CliError::Config(
+                crate::error::CliConfigError::MissingAccessToken,
+            ))));
             return;
         };
         tokio::spawn(async move {
@@ -3735,7 +3811,9 @@ impl App {
 
     fn load_streams(&self, basin_name: BasinName, tx: mpsc::UnboundedSender<Event>) {
         let Some(s2) = self.s2.clone() else {
-            let _ = tx.send(Event::StreamsLoaded(Err(CliError::Config(crate::error::CliConfigError::MissingAccessToken))));
+            let _ = tx.send(Event::StreamsLoaded(Err(CliError::Config(
+                crate::error::CliConfigError::MissingAccessToken,
+            ))));
             return;
         };
         tokio::spawn(async move {
@@ -3806,16 +3884,23 @@ impl App {
         });
     }
 
-    fn create_basin_with_config(&mut self, name: String, scope: BasinScopeOption, config: BasinConfig, tx: mpsc::UnboundedSender<Event>) {
+    fn create_basin_with_config(
+        &mut self,
+        name: String,
+        scope: BasinScopeOption,
+        config: BasinConfig,
+        tx: mpsc::UnboundedSender<Event>,
+    ) {
         self.input_mode = InputMode::Normal;
         let s2 = self.s2.clone().expect("S2 client not initialized");
         let tx_refresh = tx.clone();
         tokio::spawn(async move {
-
             let basin_name: BasinName = match name.parse() {
                 Ok(n) => n,
                 Err(e) => {
-                    let _ = tx.send(Event::BasinCreated(Err(CliError::RecordWrite(format!("Invalid basin name: {e}")))));
+                    let _ = tx.send(Event::BasinCreated(Err(CliError::RecordWrite(format!(
+                        "Invalid basin name: {e}"
+                    )))));
                     return;
                 }
             };
@@ -3826,7 +3911,11 @@ impl App {
                 .with_config(config.into())
                 .with_scope(sdk_scope);
 
-            match s2.create_basin(input).await.map_err(|e| CliError::op(crate::error::OpKind::CreateBasin, e)) {
+            match s2
+                .create_basin(input)
+                .await
+                .map_err(|e| CliError::op(crate::error::OpKind::CreateBasin, e))
+            {
                 Ok(info) => {
                     let _ = tx.send(Event::BasinCreated(Ok(info)));
                     // Trigger refresh
@@ -3883,17 +3972,24 @@ impl App {
         });
     }
 
-    fn create_stream_with_config(&mut self, basin: BasinName, name: String, config: StreamConfig, tx: mpsc::UnboundedSender<Event>) {
+    fn create_stream_with_config(
+        &mut self,
+        basin: BasinName,
+        name: String,
+        config: StreamConfig,
+        tx: mpsc::UnboundedSender<Event>,
+    ) {
         self.input_mode = InputMode::Normal;
         let s2 = self.s2.clone().expect("S2 client not initialized");
         let tx_refresh = tx.clone();
         let basin_clone = basin.clone();
         tokio::spawn(async move {
-
             let stream_name: StreamName = match name.parse() {
                 Ok(n) => n,
                 Err(e) => {
-                    let _ = tx.send(Event::StreamCreated(Err(CliError::RecordWrite(format!("Invalid stream name: {e}")))));
+                    let _ = tx.send(Event::StreamCreated(Err(CliError::RecordWrite(format!(
+                        "Invalid stream name: {e}"
+                    )))));
                     return;
                 }
             };
@@ -3934,7 +4030,12 @@ impl App {
         });
     }
 
-    fn delete_stream(&mut self, basin: BasinName, stream: StreamName, tx: mpsc::UnboundedSender<Event>) {
+    fn delete_stream(
+        &mut self,
+        basin: BasinName,
+        stream: StreamName,
+        tx: mpsc::UnboundedSender<Event>,
+    ) {
         let s2 = self.s2.clone().expect("S2 client not initialized");
         let tx_refresh = tx.clone();
         let name = stream.to_string();
@@ -4037,10 +4138,9 @@ impl App {
                                 }
                             }
                             Err(e) => {
-                                let _ = tx.send(Event::RecordReceived(Err(crate::error::CliError::op(
-                                    crate::error::OpKind::Read,
-                                    e,
-                                ))));
+                                let _ = tx.send(Event::RecordReceived(Err(
+                                    crate::error::CliError::op(crate::error::OpKind::Read, e),
+                                )));
                                 return;
                             }
                         }
@@ -4110,10 +4210,9 @@ impl App {
                                 }
                             }
                             Err(e) => {
-                                let _ = tx.send(Event::PipRecordReceived(Err(crate::error::CliError::op(
-                                    crate::error::OpKind::Read,
-                                    e,
-                                ))));
+                                let _ = tx.send(Event::PipRecordReceived(Err(
+                                    crate::error::CliError::op(crate::error::OpKind::Read, e),
+                                )));
                                 return;
                             }
                         }
@@ -4150,6 +4249,7 @@ impl App {
     }
 
     /// Start reading with custom configuration
+    #[allow(clippy::too_many_arguments)]
     fn start_custom_read(
         &mut self,
         basin_name: BasinName,
@@ -4179,7 +4279,11 @@ impl App {
             loading: true,
             show_detail: false,
             hide_list: false,
-            output_file: if has_output { Some(output_file.clone()) } else { None },
+            output_file: if has_output {
+                Some(output_file.clone())
+            } else {
+                None
+            },
             throughput_history: Vec::new(),
             records_per_sec_history: Vec::new(),
             current_mibps: 0.0,
@@ -4197,7 +4301,6 @@ impl App {
         };
 
         tokio::spawn(async move {
-
             let seq_num = if start_from == ReadStartFrom::SeqNum {
                 seq_num_value.parse().ok()
             } else {
@@ -4212,7 +4315,7 @@ impl App {
 
             let ago = if start_from == ReadStartFrom::Ago {
                 ago_value.parse::<u64>().ok().map(|v| {
-                    let secs = ago_unit.to_seconds(v);
+                    let secs = ago_unit.as_seconds(v);
                     humantime::Duration::from(std::time::Duration::from_secs(secs))
                 })
             } else {
@@ -4261,7 +4364,9 @@ impl App {
                 match tokio::fs::File::create(&output_file).await {
                     Ok(f) => Some(f),
                     Err(e) => {
-                        let _ = tx.send(Event::Error(crate::error::CliError::RecordWrite(e.to_string())));
+                        let _ = tx.send(Event::Error(crate::error::CliError::RecordWrite(
+                            e.to_string(),
+                        )));
                         return;
                     }
                 }
@@ -4281,33 +4386,42 @@ impl App {
                                     if let Some(ref mut writer) = file_writer {
                                         let line = match record_format {
                                             RecordFormat::Text => {
-                                                format!("{}\n", String::from_utf8_lossy(&record.body))
+                                                format!(
+                                                    "{}\n",
+                                                    String::from_utf8_lossy(&record.body)
+                                                )
                                             }
                                             RecordFormat::Json => {
-                                                format!("{}\n", serde_json::json!({
-                                                    "seq_num": record.seq_num,
-                                                    "timestamp": record.timestamp,
-                                                    "headers": record.headers.iter().map(|h| {
-                                                        serde_json::json!({
-                                                            "name": String::from_utf8_lossy(&h.name),
-                                                            "value": String::from_utf8_lossy(&h.value)
-                                                        })
-                                                    }).collect::<Vec<_>>(),
-                                                    "body": String::from_utf8_lossy(&record.body).to_string()
-                                                }))
+                                                format!(
+                                                    "{}\n",
+                                                    serde_json::json!({
+                                                        "seq_num": record.seq_num,
+                                                        "timestamp": record.timestamp,
+                                                        "headers": record.headers.iter().map(|h| {
+                                                            serde_json::json!({
+                                                                "name": String::from_utf8_lossy(&h.name),
+                                                                "value": String::from_utf8_lossy(&h.value)
+                                                            })
+                                                        }).collect::<Vec<_>>(),
+                                                        "body": String::from_utf8_lossy(&record.body).to_string()
+                                                    })
+                                                )
                                             }
                                             RecordFormat::JsonBase64 => {
-                                                format!("{}\n", serde_json::json!({
-                                                    "seq_num": record.seq_num,
-                                                    "timestamp": record.timestamp,
-                                                    "headers": record.headers.iter().map(|h| {
-                                                        serde_json::json!({
-                                                            "name": String::from_utf8_lossy(&h.name),
-                                                            "value": String::from_utf8_lossy(&h.value)
-                                                        })
-                                                    }).collect::<Vec<_>>(),
-                                                    "body": base64ct::Base64::encode_string(&record.body)
-                                                }))
+                                                format!(
+                                                    "{}\n",
+                                                    serde_json::json!({
+                                                        "seq_num": record.seq_num,
+                                                        "timestamp": record.timestamp,
+                                                        "headers": record.headers.iter().map(|h| {
+                                                            serde_json::json!({
+                                                                "name": String::from_utf8_lossy(&h.name),
+                                                                "value": String::from_utf8_lossy(&h.value)
+                                                            })
+                                                        }).collect::<Vec<_>>(),
+                                                        "body": base64ct::Base64::encode_string(&record.body)
+                                                    })
+                                                )
                                             }
                                         };
                                         let _ = writer.write_all(line.as_bytes()).await;
@@ -4319,10 +4433,9 @@ impl App {
                                 }
                             }
                             Err(e) => {
-                                let _ = tx.send(Event::RecordReceived(Err(crate::error::CliError::op(
-                                    crate::error::OpKind::Read,
-                                    e,
-                                ))));
+                                let _ = tx.send(Event::RecordReceived(Err(
+                                    crate::error::CliError::op(crate::error::OpKind::Read, e),
+                                )));
                                 return;
                             }
                         }
@@ -4342,22 +4455,30 @@ impl App {
             match ops::get_basin_config(&s2, &basin).await {
                 Ok(config) => {
                     // Extract default stream config info
-                    let (storage_class, retention_age_secs, timestamping_mode, timestamping_uncapped) =
-                        if let Some(default_config) = &config.default_stream_config {
-                            let sc = default_config.storage_class.map(StorageClass::from);
-                            let age = match default_config.retention_policy {
-                                Some(s2_sdk::types::RetentionPolicy::Age(secs)) => Some(secs),
-                                _ => None,
-                            };
-                            let ts_mode = default_config.timestamping.as_ref()
-                                .and_then(|t| t.mode.map(TimestampingMode::from));
-                            let ts_uncapped = default_config.timestamping.as_ref()
-                                .map(|t| t.uncapped)
-                                .unwrap_or(false);
-                            (sc, age, ts_mode, ts_uncapped)
-                        } else {
-                            (None, None, None, false)
+                    let (
+                        storage_class,
+                        retention_age_secs,
+                        timestamping_mode,
+                        timestamping_uncapped,
+                    ) = if let Some(default_config) = &config.default_stream_config {
+                        let sc = default_config.storage_class.map(StorageClass::from);
+                        let age = match default_config.retention_policy {
+                            Some(s2_sdk::types::RetentionPolicy::Age(secs)) => Some(secs),
+                            _ => None,
                         };
+                        let ts_mode = default_config
+                            .timestamping
+                            .as_ref()
+                            .and_then(|t| t.mode.map(TimestampingMode::from));
+                        let ts_uncapped = default_config
+                            .timestamping
+                            .as_ref()
+                            .map(|t| t.uncapped)
+                            .unwrap_or(false);
+                        (sc, age, ts_mode, ts_uncapped)
+                    } else {
+                        (None, None, None, false)
+                    };
 
                     let info = BasinConfigInfo {
                         create_stream_on_append: config.create_stream_on_append,
@@ -4392,13 +4513,17 @@ impl App {
                         Some(s2_sdk::types::RetentionPolicy::Age(secs)) => Some(secs),
                         _ => None,
                     };
-                    let timestamping_mode = config.timestamping.as_ref()
+                    let timestamping_mode = config
+                        .timestamping
+                        .as_ref()
                         .and_then(|t| t.mode.map(TimestampingMode::from));
-                    let timestamping_uncapped = config.timestamping.as_ref()
+                    let timestamping_uncapped = config
+                        .timestamping
+                        .as_ref()
                         .map(|t| t.uncapped)
                         .unwrap_or(false);
-                    let delete_on_empty_min_age_secs = config.delete_on_empty
-                        .map(|d| d.min_age_secs);
+                    let delete_on_empty_min_age_secs =
+                        config.delete_on_empty.map(|d| d.min_age_secs);
 
                     let info = StreamConfigInfo {
                         storage_class,
@@ -4425,20 +4550,22 @@ impl App {
         let s2 = self.s2.clone().expect("S2 client not initialized");
         let tx_refresh = tx.clone();
         tokio::spawn(async move {
-
             let retention_policy = match config.retention_policy {
                 RetentionPolicyOption::Infinite => Some(crate::types::RetentionPolicy::Infinite),
-                RetentionPolicyOption::Age => Some(crate::types::RetentionPolicy::Age(Duration::from_secs(config.retention_age_secs))),
+                RetentionPolicyOption::Age => Some(crate::types::RetentionPolicy::Age(
+                    Duration::from_secs(config.retention_age_secs),
+                )),
             };
 
-            let timestamping = if config.timestamping_mode.is_some() || config.timestamping_uncapped.is_some() {
-                Some(crate::types::TimestampingConfig {
-                    timestamping_mode: config.timestamping_mode,
-                    timestamping_uncapped: config.timestamping_uncapped,
-                })
-            } else {
-                None
-            };
+            let timestamping =
+                if config.timestamping_mode.is_some() || config.timestamping_uncapped.is_some() {
+                    Some(crate::types::TimestampingConfig {
+                        timestamping_mode: config.timestamping_mode,
+                        timestamping_uncapped: config.timestamping_uncapped,
+                    })
+                } else {
+                    None
+                };
 
             let default_stream_config = StreamConfig {
                 storage_class: config.storage_class,
@@ -4492,22 +4619,27 @@ impl App {
         tokio::spawn(async move {
             let retention_policy = match config.retention_policy {
                 RetentionPolicyOption::Infinite => Some(crate::types::RetentionPolicy::Infinite),
-                RetentionPolicyOption::Age => Some(crate::types::RetentionPolicy::Age(Duration::from_secs(config.retention_age_secs))),
+                RetentionPolicyOption::Age => Some(crate::types::RetentionPolicy::Age(
+                    Duration::from_secs(config.retention_age_secs),
+                )),
             };
 
-            let timestamping = if config.timestamping_mode.is_some() || config.timestamping_uncapped.is_some() {
-                Some(crate::types::TimestampingConfig {
-                    timestamping_mode: config.timestamping_mode,
-                    timestamping_uncapped: config.timestamping_uncapped,
-                })
-            } else {
-                None
-            };
+            let timestamping =
+                if config.timestamping_mode.is_some() || config.timestamping_uncapped.is_some() {
+                    Some(crate::types::TimestampingConfig {
+                        timestamping_mode: config.timestamping_mode,
+                        timestamping_uncapped: config.timestamping_uncapped,
+                    })
+                } else {
+                    None
+                };
 
             let delete_on_empty = if config.delete_on_empty_enabled {
                 humantime::parse_duration(&config.delete_on_empty_min_age)
                     .ok()
-                    .map(|d| crate::types::DeleteOnEmptyConfig { delete_on_empty_min_age: d })
+                    .map(|d| crate::types::DeleteOnEmptyConfig {
+                        delete_on_empty_min_age: d,
+                    })
             } else {
                 None
             };
@@ -4599,7 +4731,6 @@ impl App {
                                 state.editing_header_key = false;
                             }
                         } else {
-
                             if !state.header_key_input.is_empty() {
                                 state.headers.push((
                                     state.header_key_input.clone(),
@@ -4619,42 +4750,52 @@ impl App {
                     // Toggle between key and value in headers
                     state.editing_header_key = !state.editing_header_key;
                 }
-                KeyCode::Backspace => {
-                    match state.selected {
-                        0 => { state.body.pop(); }
-                        1 => {
-                            if state.editing_header_key {
-                                state.header_key_input.pop();
-                            } else {
-                                state.header_value_input.pop();
-                            }
-                        }
-                        2 => { state.match_seq_num.pop(); }
-                        3 => { state.fencing_token.pop(); }
-                        4 => { state.input_file.pop(); }
-                        _ => {}
+                KeyCode::Backspace => match state.selected {
+                    0 => {
+                        state.body.pop();
                     }
-                }
-                KeyCode::Char(c) => {
-                    match state.selected {
-                        0 => { state.body.push(c); }
-                        1 => {
-                            if state.editing_header_key {
-                                state.header_key_input.push(c);
-                            } else {
-                                state.header_value_input.push(c);
-                            }
+                    1 => {
+                        if state.editing_header_key {
+                            state.header_key_input.pop();
+                        } else {
+                            state.header_value_input.pop();
                         }
-                        2 => {
-                            if c.is_ascii_digit() {
-                                state.match_seq_num.push(c);
-                            }
-                        }
-                        3 => { state.fencing_token.push(c); }
-                        4 => { state.input_file.push(c); }
-                        _ => {}
                     }
-                }
+                    2 => {
+                        state.match_seq_num.pop();
+                    }
+                    3 => {
+                        state.fencing_token.pop();
+                    }
+                    4 => {
+                        state.input_file.pop();
+                    }
+                    _ => {}
+                },
+                KeyCode::Char(c) => match state.selected {
+                    0 => {
+                        state.body.push(c);
+                    }
+                    1 => {
+                        if state.editing_header_key {
+                            state.header_key_input.push(c);
+                        } else {
+                            state.header_value_input.push(c);
+                        }
+                    }
+                    2 => {
+                        if c.is_ascii_digit() {
+                            state.match_seq_num.push(c);
+                        }
+                    }
+                    3 => {
+                        state.fencing_token.push(c);
+                    }
+                    4 => {
+                        state.input_file.push(c);
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
             return;
@@ -4705,7 +4846,14 @@ impl App {
                         };
                         state.appending = true;
                         state.file_append_progress = Some((0, 0));
-                        self.append_from_file(basin_name, stream_name, file_path, input_format, fencing_token, tx);
+                        self.append_from_file(
+                            basin_name,
+                            stream_name,
+                            file_path,
+                            input_format,
+                            fencing_token,
+                            tx,
+                        );
                     } else if !state.body.is_empty() {
                         // Append single record
                         let basin_name = state.basin_name.clone();
@@ -4720,7 +4868,15 @@ impl App {
                         };
                         state.body.clear();
                         state.appending = true;
-                        self.append_record(basin_name, stream_name, body, headers, match_seq_num, fencing_token, tx);
+                        self.append_record(
+                            basin_name,
+                            stream_name,
+                            body,
+                            headers,
+                            match_seq_num,
+                            fencing_token,
+                            tx,
+                        );
                     }
                 } else {
                     // Start editing the selected field
@@ -4735,6 +4891,7 @@ impl App {
     }
 
     /// Append a single record to the stream
+    #[allow(clippy::too_many_arguments)]
     fn append_record(
         &self,
         basin_name: BasinName,
@@ -4754,16 +4911,18 @@ impl App {
         let header_count = headers.len();
 
         tokio::spawn(async move {
-            use s2_sdk::types::{AppendInput, AppendRecord, AppendRecordBatch, FencingToken, Header};
+            use s2_sdk::types::{
+                AppendInput, AppendRecord, AppendRecordBatch, FencingToken, Header,
+            };
 
             let stream = s2.basin(basin_name).stream(stream_name);
 
             let mut record = match AppendRecord::new(body.into_bytes()) {
                 Ok(r) => r,
                 Err(e) => {
-                    let _ = tx.send(Event::RecordAppended(Err(crate::error::CliError::RecordWrite(
-                        e.to_string(),
-                    ))));
+                    let _ = tx.send(Event::RecordAppended(Err(
+                        crate::error::CliError::RecordWrite(e.to_string()),
+                    )));
                     return;
                 }
             };
@@ -4775,9 +4934,9 @@ impl App {
                 record = match record.with_headers(parsed_headers) {
                     Ok(r) => r,
                     Err(e) => {
-                        let _ = tx.send(Event::RecordAppended(Err(crate::error::CliError::RecordWrite(
-                            e.to_string(),
-                        ))));
+                        let _ = tx.send(Event::RecordAppended(Err(
+                            crate::error::CliError::RecordWrite(e.to_string()),
+                        )));
                         return;
                     }
                 };
@@ -4786,9 +4945,9 @@ impl App {
             let records = match AppendRecordBatch::try_from_iter([record]) {
                 Ok(batch) => batch,
                 Err(e) => {
-                    let _ = tx.send(Event::RecordAppended(Err(crate::error::CliError::RecordWrite(
-                        e.to_string(),
-                    ))));
+                    let _ = tx.send(Event::RecordAppended(Err(
+                        crate::error::CliError::RecordWrite(e.to_string()),
+                    )));
                     return;
                 }
             };
@@ -4803,9 +4962,12 @@ impl App {
                         input = input.with_fencing_token(token);
                     }
                     Err(e) => {
-                        let _ = tx.send(Event::RecordAppended(Err(crate::error::CliError::RecordWrite(
-                            format!("Invalid fencing token: {}", e),
-                        ))));
+                        let _ = tx.send(Event::RecordAppended(Err(
+                            crate::error::CliError::RecordWrite(format!(
+                                "Invalid fencing token: {}",
+                                e
+                            )),
+                        )));
                         return;
                     }
                 }
@@ -4813,7 +4975,11 @@ impl App {
 
             match stream.append(input).await {
                 Ok(output) => {
-                    let _ = tx.send(Event::RecordAppended(Ok((output.start.seq_num, body_preview, header_count))));
+                    let _ = tx.send(Event::RecordAppended(Ok((
+                        output.start.seq_num,
+                        body_preview,
+                        header_count,
+                    ))));
                 }
                 Err(e) => {
                     let _ = tx.send(Event::RecordAppended(Err(crate::error::CliError::op(
@@ -4838,17 +5004,22 @@ impl App {
         let s2 = self.s2.clone().expect("S2 client not initialized");
 
         tokio::spawn(async move {
-            use s2_sdk::types::{AppendInput, AppendRecord, AppendRecordBatch, FencingToken, Header};
-            use tokio::io::{AsyncBufReadExt, BufReader};
             use base64ct::{Base64, Encoding};
+            use s2_sdk::types::{
+                AppendInput, AppendRecord, AppendRecordBatch, FencingToken, Header,
+            };
+            use tokio::io::{AsyncBufReadExt, BufReader};
 
             // Open and read the file
             let file = match tokio::fs::File::open(&file_path).await {
                 Ok(f) => f,
                 Err(e) => {
-                    let _ = tx.send(Event::FileAppendComplete(Err(crate::error::CliError::RecordReaderInit(
-                        format!("Failed to open file '{}': {}", file_path, e),
-                    ))));
+                    let _ = tx.send(Event::FileAppendComplete(Err(
+                        crate::error::CliError::RecordReaderInit(format!(
+                            "Failed to open file '{}': {}",
+                            file_path, e
+                        )),
+                    )));
                     return;
                 }
             };
@@ -4866,9 +5037,11 @@ impl App {
 
             let total = all_lines.len();
             if total == 0 {
-                let _ = tx.send(Event::FileAppendComplete(Err(crate::error::CliError::RecordReaderInit(
-                    "File is empty or contains no valid records".to_string(),
-                ))));
+                let _ = tx.send(Event::FileAppendComplete(Err(
+                    crate::error::CliError::RecordReaderInit(
+                        "File is empty or contains no valid records".to_string(),
+                    ),
+                )));
                 return;
             }
 
@@ -4878,8 +5051,7 @@ impl App {
             let parse_line = |line: &str, format: InputFormat| -> Result<AppendRecord, String> {
                 match format {
                     InputFormat::Text => {
-                        AppendRecord::new(line.as_bytes().to_vec())
-                            .map_err(|e| e.to_string())
+                        AppendRecord::new(line.as_bytes().to_vec()).map_err(|e| e.to_string())
                     }
                     InputFormat::Json | InputFormat::JsonBase64 => {
                         // Parse JSON: {"body": "...", "headers": [["key", "value"], ...], "timestamp": ...}
@@ -4904,29 +5076,33 @@ impl App {
                             parsed.body.into_bytes()
                         };
 
-                        let mut record = AppendRecord::new(body_bytes)
-                            .map_err(|e| e.to_string())?;
+                        let mut record =
+                            AppendRecord::new(body_bytes).map_err(|e| e.to_string())?;
 
                         // Add headers
                         if !parsed.headers.is_empty() {
-                            let headers: Result<Vec<Header>, String> = parsed.headers
+                            let headers: Result<Vec<Header>, String> = parsed
+                                .headers
                                 .into_iter()
                                 .map(|(k, v)| {
                                     let key_bytes = if format == InputFormat::JsonBase64 {
-                                        Base64::decode_vec(&k).map_err(|_| format!("Invalid base64 in header key: {}", k))?
+                                        Base64::decode_vec(&k).map_err(|_| {
+                                            format!("Invalid base64 in header key: {}", k)
+                                        })?
                                     } else {
                                         k.into_bytes()
                                     };
                                     let val_bytes = if format == InputFormat::JsonBase64 {
-                                        Base64::decode_vec(&v).map_err(|_| format!("Invalid base64 in header value: {}", v))?
+                                        Base64::decode_vec(&v).map_err(|_| {
+                                            format!("Invalid base64 in header value: {}", v)
+                                        })?
                                     } else {
                                         v.into_bytes()
                                     };
                                     Ok(Header::new(key_bytes, val_bytes))
                                 })
                                 .collect();
-                            record = record.with_headers(headers?)
-                                .map_err(|e| e.to_string())?;
+                            record = record.with_headers(headers?).map_err(|e| e.to_string())?;
                         }
 
                         // Add timestamp if provided
@@ -4955,9 +5131,9 @@ impl App {
                 let records = match records {
                     Ok(r) => r,
                     Err(e) => {
-                        let _ = tx.send(Event::FileAppendComplete(Err(crate::error::CliError::RecordWrite(
-                            format!("Invalid record: {}", e),
-                        ))));
+                        let _ = tx.send(Event::FileAppendComplete(Err(
+                            crate::error::CliError::RecordWrite(format!("Invalid record: {}", e)),
+                        )));
                         return;
                     }
                 };
@@ -4965,9 +5141,12 @@ impl App {
                 let batch = match AppendRecordBatch::try_from_iter(records) {
                     Ok(b) => b,
                     Err(e) => {
-                        let _ = tx.send(Event::FileAppendComplete(Err(crate::error::CliError::RecordWrite(
-                            format!("Failed to create batch: {}", e),
-                        ))));
+                        let _ = tx.send(Event::FileAppendComplete(Err(
+                            crate::error::CliError::RecordWrite(format!(
+                                "Failed to create batch: {}",
+                                e
+                            )),
+                        )));
                         return;
                     }
                 };
@@ -4981,9 +5160,12 @@ impl App {
                             input = input.with_fencing_token(token);
                         }
                         Err(e) => {
-                            let _ = tx.send(Event::FileAppendComplete(Err(crate::error::CliError::RecordWrite(
-                                format!("Invalid fencing token: {}", e),
-                            ))));
+                            let _ = tx.send(Event::FileAppendComplete(Err(
+                                crate::error::CliError::RecordWrite(format!(
+                                    "Invalid fencing token: {}",
+                                    e
+                                )),
+                            )));
                             return;
                         }
                     }
@@ -5005,10 +5187,9 @@ impl App {
                         });
                     }
                     Err(e) => {
-                        let _ = tx.send(Event::FileAppendComplete(Err(crate::error::CliError::op(
-                            crate::error::OpKind::Append,
-                            e,
-                        ))));
+                        let _ = tx.send(Event::FileAppendComplete(Err(
+                            crate::error::CliError::op(crate::error::OpKind::Append, e),
+                        )));
                         return;
                     }
                 }
@@ -5066,9 +5247,12 @@ impl App {
             let new_fencing_token = match new_token.parse::<FencingToken>() {
                 Ok(token) => token,
                 Err(e) => {
-                    let _ = tx.send(Event::StreamFenced(Err(crate::error::CliError::RecordWrite(
-                        format!("Invalid new fencing token: {}", e),
-                    ))));
+                    let _ = tx.send(Event::StreamFenced(Err(
+                        crate::error::CliError::RecordWrite(format!(
+                            "Invalid new fencing token: {}",
+                            e
+                        )),
+                    )));
                     return;
                 }
             };
@@ -5077,26 +5261,29 @@ impl App {
             let records = match AppendRecordBatch::try_from_iter([record]) {
                 Ok(batch) => batch,
                 Err(e) => {
-                    let _ = tx.send(Event::StreamFenced(Err(crate::error::CliError::RecordWrite(
-                        e.to_string(),
-                    ))));
+                    let _ = tx.send(Event::StreamFenced(Err(
+                        crate::error::CliError::RecordWrite(e.to_string()),
+                    )));
                     return;
                 }
             };
 
             let mut input = AppendInput::new(records);
-            if let Some(token_str) = current_token {
-                if !token_str.is_empty() {
-                    match token_str.parse::<FencingToken>() {
-                        Ok(token) => {
-                            input = input.with_fencing_token(token);
-                        }
-                        Err(e) => {
-                            let _ = tx.send(Event::StreamFenced(Err(crate::error::CliError::RecordWrite(
-                                format!("Invalid current fencing token: {}", e),
-                            ))));
-                            return;
-                        }
+            if let Some(token_str) = current_token
+                && !token_str.is_empty()
+            {
+                match token_str.parse::<FencingToken>() {
+                    Ok(token) => {
+                        input = input.with_fencing_token(token);
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Event::StreamFenced(Err(
+                            crate::error::CliError::RecordWrite(format!(
+                                "Invalid current fencing token: {}",
+                                e
+                            )),
+                        )));
+                        return;
                     }
                 }
             }
@@ -5135,26 +5322,29 @@ impl App {
             let records = match AppendRecordBatch::try_from_iter([record]) {
                 Ok(batch) => batch,
                 Err(e) => {
-                    let _ = tx.send(Event::StreamTrimmed(Err(crate::error::CliError::RecordWrite(
-                        e.to_string(),
-                    ))));
+                    let _ = tx.send(Event::StreamTrimmed(Err(
+                        crate::error::CliError::RecordWrite(e.to_string()),
+                    )));
                     return;
                 }
             };
 
             let mut input = AppendInput::new(records);
-            if let Some(token_str) = fencing_token {
-                if !token_str.is_empty() {
-                    match token_str.parse::<FencingToken>() {
-                        Ok(token) => {
-                            input = input.with_fencing_token(token);
-                        }
-                        Err(e) => {
-                            let _ = tx.send(Event::StreamTrimmed(Err(crate::error::CliError::RecordWrite(
-                                format!("Invalid fencing token: {}", e),
-                            ))));
-                            return;
-                        }
+            if let Some(token_str) = fencing_token
+                && !token_str.is_empty()
+            {
+                match token_str.parse::<FencingToken>() {
+                    Ok(token) => {
+                        input = input.with_fencing_token(token);
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Event::StreamTrimmed(Err(
+                            crate::error::CliError::RecordWrite(format!(
+                                "Invalid fencing token: {}",
+                                e
+                            )),
+                        )));
+                        return;
                     }
                 }
             }
@@ -5235,7 +5425,10 @@ impl App {
             .iter()
             .filter(|t| {
                 state.filter.is_empty()
-                    || t.id.to_string().to_lowercase().contains(&state.filter.to_lowercase())
+                    || t.id
+                        .to_string()
+                        .to_lowercase()
+                        .contains(&state.filter.to_lowercase())
             })
             .collect();
 
@@ -5265,7 +5458,6 @@ impl App {
                 state.filter_active = true;
             }
             KeyCode::Char('c') => {
-
                 self.input_mode = InputMode::IssueAccessToken {
                     id: String::new(),
                     expiry: ExpiryOption::ThirtyDays,
@@ -5288,7 +5480,6 @@ impl App {
                 };
             }
             KeyCode::Char('d') => {
-
                 if let Some(token) = filtered_tokens.get(state.selected) {
                     self.input_mode = InputMode::ConfirmRevokeToken {
                         token_id: token.id.to_string(),
@@ -5296,7 +5487,6 @@ impl App {
                 }
             }
             KeyCode::Char('r') => {
-
                 state.loading = true;
                 self.load_access_tokens(tx);
             }
@@ -5338,7 +5528,10 @@ impl App {
                 match Self::create_s2_client(&state.access_token) {
                     Ok(s2) => {
                         // Save the token to config
-                        if let Err(e) = config::set_config_value(ConfigKey::AccessToken, state.access_token.clone()) {
+                        if let Err(e) = config::set_config_value(
+                            ConfigKey::AccessToken,
+                            state.access_token.clone(),
+                        ) {
                             state.error = Some(format!("Failed to save config: {}", e));
                             state.validating = false;
                             return;
@@ -5392,9 +5585,15 @@ impl App {
                 }
                 KeyCode::Backspace => {
                     match state.selected {
-                        0 => { state.access_token.pop(); }
-                        1 => { state.account_endpoint.pop(); }
-                        2 => { state.basin_endpoint.pop(); }
+                        0 => {
+                            state.access_token.pop();
+                        }
+                        1 => {
+                            state.account_endpoint.pop();
+                        }
+                        2 => {
+                            state.basin_endpoint.pop();
+                        }
                         _ => {}
                     }
                     state.has_changes = true;
@@ -5418,7 +5617,8 @@ impl App {
                 self.should_quit = true;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                if state.selected < 4 {  // 0=token, 1=account, 2=basin, 3=compression, 4=save
+                if state.selected < 4 {
+                    // 0=token, 1=account, 2=basin, 3=compression, 4=save
                     state.selected += 1;
                 }
             }
@@ -5428,7 +5628,6 @@ impl App {
                 }
             }
             KeyCode::Char('e') | KeyCode::Enter if state.selected < 3 => {
-
                 state.editing = true;
             }
             KeyCode::Char('h') | KeyCode::Left if state.selected == 3 => {
@@ -5463,7 +5662,8 @@ impl App {
                                     self.s2 = Some(s2);
                                 }
                                 Err(e) => {
-                                    state.message = Some(format!("Token saved but client error: {}", e));
+                                    state.message =
+                                        Some(format!("Token saved but client error: {}", e));
                                 }
                             }
                         }
@@ -5531,7 +5731,6 @@ impl App {
         let tx_refresh = tx.clone();
 
         tokio::spawn(async move {
-
             let token_id: AccessTokenId = match id.parse() {
                 Ok(id) => id,
                 Err(e) => {
@@ -5591,9 +5790,13 @@ impl App {
             let expires_in_str = match expiry {
                 ExpiryOption::Never => None,
                 ExpiryOption::Custom => {
-                    if expiry_custom.is_empty() { None } else { Some(expiry_custom.clone()) }
+                    if expiry_custom.is_empty() {
+                        None
+                    } else {
+                        Some(expiry_custom.clone())
+                    }
                 }
-                _ => expiry.to_duration_str().map(|s| s.to_string()),
+                _ => expiry.duration_str().map(|s| s.to_string()),
             };
             let basins_matcher = match basins_scope {
                 ScopeOption::All => None,
@@ -5620,17 +5823,21 @@ impl App {
                 expires_in: expires_in_str.and_then(|s| s.parse().ok()),
                 expires_at: None,
                 auto_prefix_streams,
-                basins: basins_matcher.and_then(|s| if s.is_empty() && matches!(basins_scope, ScopeOption::None) {
-                    // For "None" scope, we don't pass anything (API default is all)
-                    // Actually, to restrict to none, we need special handling
-                    None
-                } else if s.is_empty() {
-                    None
-                } else {
-                    s.parse().ok()
+                basins: basins_matcher.and_then(|s| {
+                    if s.is_empty() && matches!(basins_scope, ScopeOption::None) {
+                        // For "None" scope, we don't pass anything (API default is all)
+                        // Actually, to restrict to none, we need special handling
+                        None
+                    } else if s.is_empty() {
+                        None
+                    } else {
+                        s.parse().ok()
+                    }
                 }),
-                streams: streams_matcher.and_then(|s| if s.is_empty() { None } else { s.parse().ok() }),
-                access_tokens: tokens_matcher.and_then(|s| if s.is_empty() { None } else { s.parse().ok() }),
+                streams: streams_matcher
+                    .and_then(|s| if s.is_empty() { None } else { s.parse().ok() }),
+                access_tokens: tokens_matcher
+                    .and_then(|s| if s.is_empty() { None } else { s.parse().ok() }),
                 op_group_perms: None,
                 ops: operations,
             };
@@ -5667,7 +5874,6 @@ impl App {
         let tx_refresh = tx.clone();
 
         tokio::spawn(async move {
-
             let token_id: AccessTokenId = match id.parse() {
                 Ok(id) => id,
                 Err(e) => {
@@ -5731,7 +5937,9 @@ impl App {
     fn open_basin_metrics(&mut self, basin_name: BasinName, tx: mpsc::UnboundedSender<Event>) {
         let (year, month, day) = Self::today();
         self.screen = Screen::MetricsView(MetricsViewState {
-            metrics_type: MetricsType::Basin { basin_name: basin_name.clone() },
+            metrics_type: MetricsType::Basin {
+                basin_name: basin_name.clone(),
+            },
             metrics: Vec::new(),
             selected_category: MetricCategory::Storage,
             time_range: TimeRangeOption::default(),
@@ -5747,14 +5955,27 @@ impl App {
             calendar_end: None,
             calendar_selecting_end: false,
         });
-        self.load_basin_metrics(basin_name, MetricCategory::Storage, TimeRangeOption::default(), tx);
+        self.load_basin_metrics(
+            basin_name,
+            MetricCategory::Storage,
+            TimeRangeOption::default(),
+            tx,
+        );
     }
 
     /// Open stream metrics view
-    fn open_stream_metrics(&mut self, basin_name: BasinName, stream_name: StreamName, tx: mpsc::UnboundedSender<Event>) {
+    fn open_stream_metrics(
+        &mut self,
+        basin_name: BasinName,
+        stream_name: StreamName,
+        tx: mpsc::UnboundedSender<Event>,
+    ) {
         let (year, month, day) = Self::today();
         self.screen = Screen::MetricsView(MetricsViewState {
-            metrics_type: MetricsType::Stream { basin_name: basin_name.clone(), stream_name: stream_name.clone() },
+            metrics_type: MetricsType::Stream {
+                basin_name: basin_name.clone(),
+                stream_name: stream_name.clone(),
+            },
             metrics: Vec::new(),
             selected_category: MetricCategory::Storage,
             time_range: TimeRangeOption::default(),
@@ -5782,7 +6003,12 @@ impl App {
 
     /// Load basin metrics
     /// Load account metrics
-    fn load_account_metrics(&self, category: MetricCategory, time_range: TimeRangeOption, tx: mpsc::UnboundedSender<Event>) {
+    fn load_account_metrics(
+        &self,
+        category: MetricCategory,
+        time_range: TimeRangeOption,
+        tx: mpsc::UnboundedSender<Event>,
+    ) {
         use s2_sdk::types::AccountMetricSet;
 
         let s2 = self.s2.clone().expect("S2 client not initialized");
@@ -5790,9 +6016,11 @@ impl App {
 
         tokio::spawn(async move {
             let set = match category {
-                MetricCategory::ActiveBasins => AccountMetricSet::ActiveBasins(TimeRange::new(start, end)),
+                MetricCategory::ActiveBasins => {
+                    AccountMetricSet::ActiveBasins(TimeRange::new(start, end))
+                }
                 MetricCategory::AccountOps => AccountMetricSet::AccountOps(
-                    s2_sdk::types::TimeRangeAndInterval::new(start, end)
+                    s2_sdk::types::TimeRangeAndInterval::new(start, end),
                 ),
                 _ => return, // Other categories not valid for account
             };
@@ -5812,28 +6040,34 @@ impl App {
         });
     }
 
-    fn load_basin_metrics(&self, basin_name: BasinName, category: MetricCategory, time_range: TimeRangeOption, tx: mpsc::UnboundedSender<Event>) {
+    fn load_basin_metrics(
+        &self,
+        basin_name: BasinName,
+        category: MetricCategory,
+        time_range: TimeRangeOption,
+        tx: mpsc::UnboundedSender<Event>,
+    ) {
         let s2 = self.s2.clone().expect("S2 client not initialized");
         let (start, end) = time_range.get_range();
 
         tokio::spawn(async move {
             let set = match category {
                 MetricCategory::Storage => BasinMetricSet::Storage(TimeRange::new(start, end)),
-                MetricCategory::AppendOps => BasinMetricSet::AppendOps(
-                    s2_sdk::types::TimeRangeAndInterval::new(start, end)
-                ),
-                MetricCategory::ReadOps => BasinMetricSet::ReadOps(
-                    s2_sdk::types::TimeRangeAndInterval::new(start, end)
-                ),
+                MetricCategory::AppendOps => {
+                    BasinMetricSet::AppendOps(s2_sdk::types::TimeRangeAndInterval::new(start, end))
+                }
+                MetricCategory::ReadOps => {
+                    BasinMetricSet::ReadOps(s2_sdk::types::TimeRangeAndInterval::new(start, end))
+                }
                 MetricCategory::AppendThroughput => BasinMetricSet::AppendThroughput(
-                    s2_sdk::types::TimeRangeAndInterval::new(start, end)
+                    s2_sdk::types::TimeRangeAndInterval::new(start, end),
                 ),
                 MetricCategory::ReadThroughput => BasinMetricSet::ReadThroughput(
-                    s2_sdk::types::TimeRangeAndInterval::new(start, end)
+                    s2_sdk::types::TimeRangeAndInterval::new(start, end),
                 ),
-                MetricCategory::BasinOps => BasinMetricSet::BasinOps(
-                    s2_sdk::types::TimeRangeAndInterval::new(start, end)
-                ),
+                MetricCategory::BasinOps => {
+                    BasinMetricSet::BasinOps(s2_sdk::types::TimeRangeAndInterval::new(start, end))
+                }
                 _ => return,
             };
 
@@ -5853,7 +6087,13 @@ impl App {
     }
 
     /// Load stream metrics
-    fn load_stream_metrics(&self, basin_name: BasinName, stream_name: StreamName, time_range: TimeRangeOption, tx: mpsc::UnboundedSender<Event>) {
+    fn load_stream_metrics(
+        &self,
+        basin_name: BasinName,
+        stream_name: StreamName,
+        time_range: TimeRangeOption,
+        tx: mpsc::UnboundedSender<Event>,
+    ) {
         let s2 = self.s2.clone().expect("S2 client not initialized");
         let (start, end) = time_range.get_range();
 
@@ -5900,7 +6140,11 @@ impl App {
             let Screen::MetricsView(state) = &self.screen else {
                 return;
             };
-            (state.metrics_type.clone(), state.selected_category, state.time_range.clone())
+            (
+                state.metrics_type.clone(),
+                state.selected_category,
+                state.time_range,
+            )
         };
 
         match key.code {
@@ -5930,7 +6174,10 @@ impl App {
                         });
                         self.load_streams(basin_name, tx);
                     }
-                    MetricsType::Stream { basin_name, stream_name } => {
+                    MetricsType::Stream {
+                        basin_name,
+                        stream_name,
+                    } => {
                         let basin_name = basin_name.clone();
                         let stream_name = stream_name.clone();
                         self.screen = Screen::StreamDetail(StreamDetailState {
@@ -5952,7 +6199,9 @@ impl App {
                     // Set picker selection to current time range
                     state.time_picker_selected = TimeRangeOption::PRESETS
                         .iter()
-                        .position(|p| std::mem::discriminant(p) == std::mem::discriminant(&state.time_range))
+                        .position(|p| {
+                            std::mem::discriminant(p) == std::mem::discriminant(&state.time_range)
+                        })
                         .unwrap_or(3);
                 }
             }
@@ -6007,10 +6256,10 @@ impl App {
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if let Screen::MetricsView(state) = &mut self.screen {
-                    if state.scroll > 0 {
-                        state.scroll -= 1;
-                    }
+                if let Screen::MetricsView(state) = &mut self.screen
+                    && state.scroll > 0
+                {
+                    state.scroll -= 1;
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -6019,7 +6268,6 @@ impl App {
                 }
             }
             KeyCode::Char('r') => {
-
                 if let Screen::MetricsView(state) = &mut self.screen {
                     state.loading = true;
                     state.metrics.clear();
@@ -6029,10 +6277,23 @@ impl App {
                         self.load_account_metrics(selected_category, time_range, tx);
                     }
                     MetricsType::Basin { basin_name } => {
-                        self.load_basin_metrics(basin_name.clone(), selected_category, time_range, tx);
+                        self.load_basin_metrics(
+                            basin_name.clone(),
+                            selected_category,
+                            time_range,
+                            tx,
+                        );
                     }
-                    MetricsType::Stream { basin_name, stream_name } => {
-                        self.load_stream_metrics(basin_name.clone(), stream_name.clone(), time_range, tx);
+                    MetricsType::Stream {
+                        basin_name,
+                        stream_name,
+                    } => {
+                        self.load_stream_metrics(
+                            basin_name.clone(),
+                            stream_name.clone(),
+                            time_range,
+                            tx,
+                        );
                     }
                 }
             }
@@ -6040,7 +6301,7 @@ impl App {
                 // Previous time range
                 let new_time_range = time_range.prev();
                 if let Screen::MetricsView(state) = &mut self.screen {
-                    state.time_range = new_time_range.clone();
+                    state.time_range = new_time_range;
                     state.loading = true;
                     state.metrics.clear();
                 }
@@ -6049,10 +6310,23 @@ impl App {
                         self.load_account_metrics(selected_category, new_time_range, tx);
                     }
                     MetricsType::Basin { basin_name } => {
-                        self.load_basin_metrics(basin_name.clone(), selected_category, new_time_range, tx);
+                        self.load_basin_metrics(
+                            basin_name.clone(),
+                            selected_category,
+                            new_time_range,
+                            tx,
+                        );
                     }
-                    MetricsType::Stream { basin_name, stream_name } => {
-                        self.load_stream_metrics(basin_name.clone(), stream_name.clone(), new_time_range, tx);
+                    MetricsType::Stream {
+                        basin_name,
+                        stream_name,
+                    } => {
+                        self.load_stream_metrics(
+                            basin_name.clone(),
+                            stream_name.clone(),
+                            new_time_range,
+                            tx,
+                        );
                     }
                 }
             }
@@ -6060,7 +6334,7 @@ impl App {
                 // Next time range
                 let new_time_range = time_range.next();
                 if let Screen::MetricsView(state) = &mut self.screen {
-                    state.time_range = new_time_range.clone();
+                    state.time_range = new_time_range;
                     state.loading = true;
                     state.metrics.clear();
                 }
@@ -6069,10 +6343,23 @@ impl App {
                         self.load_account_metrics(selected_category, new_time_range, tx);
                     }
                     MetricsType::Basin { basin_name } => {
-                        self.load_basin_metrics(basin_name.clone(), selected_category, new_time_range, tx);
+                        self.load_basin_metrics(
+                            basin_name.clone(),
+                            selected_category,
+                            new_time_range,
+                            tx,
+                        );
                     }
-                    MetricsType::Stream { basin_name, stream_name } => {
-                        self.load_stream_metrics(basin_name.clone(), stream_name.clone(), new_time_range, tx);
+                    MetricsType::Stream {
+                        basin_name,
+                        stream_name,
+                    } => {
+                        self.load_stream_metrics(
+                            basin_name.clone(),
+                            stream_name.clone(),
+                            new_time_range,
+                            tx,
+                        );
                     }
                 }
             }
@@ -6100,17 +6387,17 @@ impl App {
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if let Screen::MetricsView(state) = &mut self.screen {
-                    if state.time_picker_selected > 0 {
-                        state.time_picker_selected -= 1;
-                    }
+                if let Screen::MetricsView(state) = &mut self.screen
+                    && state.time_picker_selected > 0
+                {
+                    state.time_picker_selected -= 1;
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if let Screen::MetricsView(state) = &mut self.screen {
-                    if state.time_picker_selected < CUSTOM_INDEX {
-                        state.time_picker_selected += 1;
-                    }
+                if let Screen::MetricsView(state) = &mut self.screen
+                    && state.time_picker_selected < CUSTOM_INDEX
+                {
+                    state.time_picker_selected += 1;
                 }
             }
             KeyCode::Enter => {
@@ -6140,7 +6427,7 @@ impl App {
                             .get(state.time_picker_selected)
                             .cloned()
                             .unwrap_or_default();
-                        state.time_range = selected.clone();
+                        state.time_range = selected;
                         state.time_picker_open = false;
                         state.loading = true;
                         state.metrics.clear();
@@ -6153,10 +6440,23 @@ impl App {
                             self.load_account_metrics(selected_category, new_time_range, tx);
                         }
                         MetricsType::Basin { basin_name } => {
-                            self.load_basin_metrics(basin_name.clone(), selected_category, new_time_range, tx);
+                            self.load_basin_metrics(
+                                basin_name.clone(),
+                                selected_category,
+                                new_time_range,
+                                tx,
+                            );
                         }
-                        MetricsType::Stream { basin_name, stream_name } => {
-                            self.load_stream_metrics(basin_name.clone(), stream_name.clone(), new_time_range, tx);
+                        MetricsType::Stream {
+                            basin_name,
+                            stream_name,
+                        } => {
+                            self.load_stream_metrics(
+                                basin_name.clone(),
+                                stream_name.clone(),
+                                new_time_range,
+                                tx,
+                            );
                         }
                     }
                 }
@@ -6196,7 +6496,8 @@ impl App {
                             state.calendar_month = 12;
                             state.calendar_year -= 1;
                         }
-                        state.calendar_day = Self::days_in_month(state.calendar_year, state.calendar_month);
+                        state.calendar_day =
+                            Self::days_in_month(state.calendar_year, state.calendar_month);
                     }
                 }
             }
@@ -6230,7 +6531,8 @@ impl App {
                             state.calendar_month = 12;
                             state.calendar_year -= 1;
                         }
-                        let prev_month_days = Self::days_in_month(state.calendar_year, state.calendar_month);
+                        let prev_month_days =
+                            Self::days_in_month(state.calendar_year, state.calendar_month);
                         state.calendar_day = prev_month_days.saturating_sub(7 - state.calendar_day);
                     }
                 }
@@ -6249,7 +6551,10 @@ impl App {
                             state.calendar_month = 1;
                             state.calendar_year += 1;
                         }
-                        state.calendar_day = overflow.min(Self::days_in_month(state.calendar_year, state.calendar_month));
+                        state.calendar_day = overflow.min(Self::days_in_month(
+                            state.calendar_year,
+                            state.calendar_month,
+                        ));
                     }
                 }
             }
@@ -6285,7 +6590,11 @@ impl App {
                     let Screen::MetricsView(state) = &mut self.screen else {
                         return;
                     };
-                    let selected_date = (state.calendar_year, state.calendar_month, state.calendar_day);
+                    let selected_date = (
+                        state.calendar_year,
+                        state.calendar_month,
+                        state.calendar_day,
+                    );
 
                     if state.calendar_start.is_none() {
                         // First selection: set start date
@@ -6311,8 +6620,12 @@ impl App {
                             return;
                         };
 
-                        let start_date = state.calendar_start.unwrap();
-                        let end_date = state.calendar_end.unwrap();
+                        let start_date = state
+                            .calendar_start
+                            .expect("calendar_start set before should_apply");
+                        let end_date = state
+                            .calendar_end
+                            .expect("calendar_end set before should_apply");
 
                         // Ensure start <= end
                         let (start, end) = if start_date <= end_date {
@@ -6325,8 +6638,11 @@ impl App {
                         let start_ts = Self::date_to_timestamp(start.0, start.1, start.2, true);
                         let end_ts = Self::date_to_timestamp(end.0, end.1, end.2, false);
 
-                        let time_range = TimeRangeOption::Custom { start: start_ts, end: end_ts };
-                        state.time_range = time_range.clone();
+                        let time_range = TimeRangeOption::Custom {
+                            start: start_ts,
+                            end: end_ts,
+                        };
+                        state.time_range = time_range;
                         state.calendar_open = false;
                         state.loading = true;
                         state.metrics.clear();
@@ -6339,10 +6655,23 @@ impl App {
                             self.load_account_metrics(selected_category, new_time_range, tx);
                         }
                         MetricsType::Basin { basin_name } => {
-                            self.load_basin_metrics(basin_name.clone(), selected_category, new_time_range, tx);
+                            self.load_basin_metrics(
+                                basin_name.clone(),
+                                selected_category,
+                                new_time_range,
+                                tx,
+                            );
                         }
-                        MetricsType::Stream { basin_name, stream_name } => {
-                            self.load_stream_metrics(basin_name.clone(), stream_name.clone(), new_time_range, tx);
+                        MetricsType::Stream {
+                            basin_name,
+                            stream_name,
+                        } => {
+                            self.load_stream_metrics(
+                                basin_name.clone(),
+                                stream_name.clone(),
+                                new_time_range,
+                                tx,
+                            );
                         }
                     }
                 }
@@ -6364,9 +6693,13 @@ impl App {
     fn date_to_timestamp(year: i32, month: u32, day: u32, start_of_day: bool) -> u32 {
         use chrono::{TimeZone, Utc};
         let dt = if start_of_day {
-            Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).unwrap()
+            Utc.with_ymd_and_hms(year, month, day, 0, 0, 0)
+                .single()
+                .expect("invalid date selected in calendar")
         } else {
-            Utc.with_ymd_and_hms(year, month, day, 23, 59, 59).unwrap()
+            Utc.with_ymd_and_hms(year, month, day, 23, 59, 59)
+                .single()
+                .expect("invalid date selected in calendar")
         };
         dt.timestamp() as u32
     }
@@ -6491,7 +6824,14 @@ impl App {
                     let duration_secs = state.duration_secs;
                     let catchup_delay_secs = state.catchup_delay_secs;
                     state.config_phase = false;
-                    self.start_benchmark(basin_name, record_size, target_mibps, duration_secs, catchup_delay_secs, tx);
+                    self.start_benchmark(
+                        basin_name,
+                        record_size,
+                        target_mibps,
+                        duration_secs,
+                        catchup_delay_secs,
+                        tx,
+                    );
                 } else {
                     // Edit the field
                     state.editing = true;
@@ -6535,7 +6875,8 @@ impl App {
                         state.duration_secs = state.duration_secs.saturating_add(10).min(600);
                     }
                     BenchConfigField::CatchupDelay => {
-                        state.catchup_delay_secs = state.catchup_delay_secs.saturating_add(5).min(120);
+                        state.catchup_delay_secs =
+                            state.catchup_delay_secs.saturating_add(5).min(120);
                     }
                     BenchConfigField::Start => {}
                 }
@@ -6565,7 +6906,10 @@ impl App {
         self.bench_stop_signal = Some(user_stop.clone());
 
         tokio::spawn(async move {
-            use s2_sdk::types::{CreateStreamInput, DeleteStreamInput, StreamName, StreamConfig as SdkStreamConfig, RetentionPolicy, TimestampingConfig, TimestampingMode, DeleteOnEmptyConfig};
+            use s2_sdk::types::{
+                CreateStreamInput, DeleteOnEmptyConfig, DeleteStreamInput, RetentionPolicy,
+                StreamConfig as SdkStreamConfig, StreamName, TimestampingConfig, TimestampingMode,
+            };
             use std::num::NonZeroU64;
             use std::time::Duration;
             let stream_name: StreamName = format!("_bench_{}", uuid::Uuid::new_v4())
@@ -6586,7 +6930,9 @@ impl App {
 
             let basin = s2.basin(basin_name.clone());
             if let Err(e) = basin
-                .create_stream(CreateStreamInput::new(stream_name.clone()).with_config(stream_config))
+                .create_stream(
+                    CreateStreamInput::new(stream_name.clone()).with_config(stream_config),
+                )
                 .await
             {
                 let _ = tx.send(Event::BenchStreamCreated(Err(CliError::op(
@@ -6614,7 +6960,9 @@ impl App {
             .await;
 
             // Clean up the stream
-            let _ = basin.delete_stream(DeleteStreamInput::new(stream_name)).await;
+            let _ = basin
+                .delete_stream(DeleteStreamInput::new(stream_name))
+                .await;
 
             let _ = tx.send(Event::BenchComplete(result));
         });
@@ -6815,7 +7163,9 @@ async fn run_bench_with_events(
         }
         match result {
             Ok(sample) => {
-                let mibps = sample.bytes as f64 / (1024.0 * 1024.0) / sample.elapsed.as_secs_f64().max(0.001);
+                let mibps = sample.bytes as f64
+                    / (1024.0 * 1024.0)
+                    / sample.elapsed.as_secs_f64().max(0.001);
                 let recps = sample.records as f64 / sample.elapsed.as_secs_f64().max(0.001);
                 let _ = tx.send(Event::BenchCatchupSample(BenchSample {
                     bytes: sample.bytes,

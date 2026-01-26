@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use s2_sdk::types::{AccessTokenInfo, BasinInfo, Metric, SequencedRecord, StreamInfo, StreamPosition};
+use s2_sdk::types::{
+    AccessTokenInfo, BasinInfo, Metric, SequencedRecord, StreamInfo, StreamPosition,
+};
 
 use crate::error::CliError;
 use crate::types::{LatencyStats, StorageClass, StreamConfig, TimestampingMode};
@@ -12,7 +14,7 @@ pub struct BasinConfigInfo {
     pub create_stream_on_read: bool,
     // Default stream config
     pub storage_class: Option<StorageClass>,
-    pub retention_age_secs: Option<u64>,  // None = infinite
+    pub retention_age_secs: Option<u64>, // None = infinite
     pub timestamping_mode: Option<TimestampingMode>,
     pub timestamping_uncapped: bool,
 }
@@ -21,10 +23,10 @@ pub struct BasinConfigInfo {
 #[derive(Debug, Clone)]
 pub struct StreamConfigInfo {
     pub storage_class: Option<StorageClass>,
-    pub retention_age_secs: Option<u64>,  // None = infinite
+    pub retention_age_secs: Option<u64>, // None = infinite
     pub timestamping_mode: Option<TimestampingMode>,
     pub timestamping_uncapped: bool,
-    pub delete_on_empty_min_age_secs: Option<u64>,  // None = disabled
+    pub delete_on_empty_min_age_secs: Option<u64>, // None = disabled
 }
 
 /// Events that can occur in the TUI
@@ -82,7 +84,11 @@ pub enum Event {
     RecordAppended(Result<(u64, String, usize), CliError>),
 
     /// File append progress update (appended_count, total_lines, last_seq_num)
-    FileAppendProgress { appended: usize, total: usize, last_seq: Option<u64> },
+    FileAppendProgress {
+        appended: usize,
+        total: usize,
+        last_seq: Option<u64>,
+    },
 
     /// File append completed (total_records, first_seq, last_seq)
     FileAppendComplete(Result<(usize, u64, u64), CliError>),
