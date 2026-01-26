@@ -828,18 +828,6 @@ impl ExpiryOption {
         }
     }
 
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ExpiryOption::Never => "Never (permanent)",
-            ExpiryOption::OneDay => "1 day",
-            ExpiryOption::SevenDays => "7 days",
-            ExpiryOption::ThirtyDays => "30 days",
-            ExpiryOption::NinetyDays => "90 days",
-            ExpiryOption::OneYear => "1 year",
-            ExpiryOption::Custom => "Custom",
-        }
-    }
-
     pub fn duration_str(self) -> Option<&'static str> {
         match self {
             ExpiryOption::Never => None,
@@ -879,15 +867,6 @@ impl ScopeOption {
             ScopeOption::Prefix => ScopeOption::All,
             ScopeOption::Exact => ScopeOption::Prefix,
             ScopeOption::None => ScopeOption::Exact,
-        }
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ScopeOption::All => "All",
-            ScopeOption::Prefix => "Prefix",
-            ScopeOption::Exact => "Exact",
-            ScopeOption::None => "None",
         }
     }
 }
