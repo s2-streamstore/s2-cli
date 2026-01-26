@@ -48,6 +48,12 @@ pub enum Event {
     /// Read stream ended
     ReadEnded,
 
+    /// A record was received for the PiP (picture-in-picture) tail
+    PipRecordReceived(Result<SequencedRecord, CliError>),
+
+    /// PiP read stream ended
+    PipReadEnded,
+
     /// Basin created successfully
     BasinCreated(Result<BasinInfo, CliError>),
 
@@ -140,24 +146,8 @@ pub enum BenchPhase {
     Catchup,
 }
 
-/// Final benchmark statistics
 #[derive(Debug, Clone)]
 pub struct BenchFinalStats {
-    pub write_mibps: f64,
-    pub write_recps: f64,
-    pub write_bytes: u64,
-    pub write_records: u64,
-    pub write_elapsed: Duration,
-    pub read_mibps: f64,
-    pub read_recps: f64,
-    pub read_bytes: u64,
-    pub read_records: u64,
-    pub read_elapsed: Duration,
-    pub catchup_mibps: f64,
-    pub catchup_recps: f64,
-    pub catchup_bytes: u64,
-    pub catchup_records: u64,
-    pub catchup_elapsed: Duration,
     pub ack_latency: Option<LatencyStats>,
     pub e2e_latency: Option<LatencyStats>,
 }

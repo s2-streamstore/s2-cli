@@ -101,6 +101,35 @@ pub struct ReadViewState {
     pub show_detail: bool,
     pub hide_list: bool,
     pub output_file: Option<String>,
+    // Throughput tracking for live sparklines
+    pub throughput_history: Vec<f64>,      // MiB/s samples
+    pub records_per_sec_history: Vec<f64>, // records/s samples
+    pub current_mibps: f64,
+    pub current_recps: f64,
+    pub bytes_this_second: u64,
+    pub records_this_second: u64,
+    pub last_tick: Option<std::time::Instant>,
+    // Timeline scrubber
+    pub show_timeline: bool,
+}
+
+/// Maximum records to keep in PiP buffer (smaller than main view)
+const MAX_PIP_RECORDS: usize = 50;
+
+/// Picture-in-Picture state for watching a stream while navigating elsewhere
+#[derive(Debug, Clone)]
+pub struct PipState {
+    pub basin_name: BasinName,
+    pub stream_name: StreamName,
+    pub records: VecDeque<s2_sdk::types::SequencedRecord>,
+    pub paused: bool,
+    pub minimized: bool,
+    // Throughput tracking
+    pub current_mibps: f64,
+    pub current_recps: f64,
+    pub bytes_this_second: u64,
+    pub records_this_second: u64,
+    pub last_tick: Option<std::time::Instant>,
 }
 
 /// State for the append view
@@ -108,18 +137,15 @@ pub struct ReadViewState {
 pub struct AppendViewState {
     pub basin_name: BasinName,
     pub stream_name: StreamName,
-    // Record fields
     pub body: String,
     pub headers: Vec<(String, String)>,  // List of (key, value) pairs
     pub match_seq_num: String,           // Empty = none
-    pub fencing_token: String,           // Empty = none
-    // UI state
-    pub selected: usize,                 // 0=body, 1=headers, 2=match_seq, 3=fencing, 4=send
+    pub fencing_token: String,
+    pub selected: usize,
     pub editing: bool,
     pub header_key_input: String,        // For adding new header
     pub header_value_input: String,
-    pub editing_header_key: bool,        // true = editing key, false = editing value
-    // Results
+    pub editing_header_key: bool,
     pub history: Vec<AppendResult>,
     pub appending: bool,
 }
@@ -224,7 +250,7 @@ pub enum MetricCategory {
     ReadOps,
     AppendThroughput,
     ReadThroughput,
-    // Account-level metrics
+    BasinOps,
     ActiveBasins,
     AccountOps,
 }
@@ -236,8 +262,8 @@ impl MetricCategory {
             Self::AppendOps => Self::ReadOps,
             Self::ReadOps => Self::AppendThroughput,
             Self::AppendThroughput => Self::ReadThroughput,
-            Self::ReadThroughput => Self::Storage,
-            // Account metrics cycle
+            Self::ReadThroughput => Self::BasinOps,
+            Self::BasinOps => Self::Storage,
             Self::ActiveBasins => Self::AccountOps,
             Self::AccountOps => Self::ActiveBasins,
         }
@@ -245,12 +271,12 @@ impl MetricCategory {
 
     pub fn prev(&self) -> Self {
         match self {
-            Self::Storage => Self::ReadThroughput,
+            Self::Storage => Self::BasinOps,
             Self::AppendOps => Self::Storage,
             Self::ReadOps => Self::AppendOps,
             Self::AppendThroughput => Self::ReadOps,
             Self::ReadThroughput => Self::AppendThroughput,
-            // Account metrics cycle
+            Self::BasinOps => Self::ReadThroughput,
             Self::ActiveBasins => Self::AccountOps,
             Self::AccountOps => Self::ActiveBasins,
         }
@@ -263,6 +289,7 @@ impl MetricCategory {
             Self::ReadOps => "Read Ops",
             Self::AppendThroughput => "Append Throughput",
             Self::ReadThroughput => "Read Throughput",
+            Self::BasinOps => "Basin Ops",
             Self::ActiveBasins => "Active Basins",
             Self::AccountOps => "Account Ops",
         }
@@ -383,10 +410,8 @@ pub struct MetricsViewState {
     pub time_range: TimeRangeOption,
     pub loading: bool,
     pub scroll: usize,
-    // Time picker popup state
     pub time_picker_open: bool,
     pub time_picker_selected: usize,
-    // Calendar picker state
     pub calendar_open: bool,
     pub calendar_year: i32,
     pub calendar_month: u32,
@@ -433,7 +458,6 @@ impl BenchConfigField {
 #[derive(Debug, Clone)]
 pub struct BenchViewState {
     pub basin_name: BasinName,
-    // Configuration (shown before running)
     pub config_phase: bool,
     pub config_field: BenchConfigField,
     pub record_size: u32,           // bytes (default 8KB)
@@ -442,36 +466,29 @@ pub struct BenchViewState {
     pub catchup_delay_secs: u64,    // seconds (default 20)
     pub editing: bool,
     pub edit_buffer: String,
-    // Runtime state
     pub stream_name: Option<String>,
     pub phase: BenchPhase,
     pub running: bool,
     pub paused: bool,
     pub stopping: bool,
-    // Progress
     pub elapsed_secs: f64,
     pub progress_pct: f64,
-    // Write stats
     pub write_mibps: f64,
     pub write_recps: f64,
     pub write_bytes: u64,
     pub write_records: u64,
-    pub write_history: Vec<f64>,    // throughput history for sparkline
-    // Read stats
+    pub write_history: Vec<f64>,
     pub read_mibps: f64,
     pub read_recps: f64,
     pub read_bytes: u64,
     pub read_records: u64,
     pub read_history: Vec<f64>,
-    // Catchup stats
     pub catchup_mibps: f64,
     pub catchup_recps: f64,
     pub catchup_bytes: u64,
     pub catchup_records: u64,
-    // Latency stats (final)
     pub ack_latency: Option<crate::types::LatencyStats>,
     pub e2e_latency: Option<crate::types::LatencyStats>,
-    // Error
     pub error: Option<String>,
 }
 
@@ -538,21 +555,16 @@ pub enum InputMode {
     /// Creating a new basin
     CreateBasin {
         name: String,
-        // Basin scope (cloud provider/region)
         scope: BasinScopeOption,
-        // Basin-level settings
         create_stream_on_append: bool,
         create_stream_on_read: bool,
-        // Default stream config
         storage_class: Option<StorageClass>,
         retention_policy: RetentionPolicyOption,
         retention_age_input: String,
         timestamping_mode: Option<TimestampingMode>,
         timestamping_uncapped: bool,
-        // Delete-on-empty config
         delete_on_empty_enabled: bool,
         delete_on_empty_min_age: String,
-        // UI state
         selected: usize,
         editing: bool,
     },
@@ -560,16 +572,13 @@ pub enum InputMode {
     CreateStream {
         basin: BasinName,
         name: String,
-        // Stream config
         storage_class: Option<StorageClass>,
         retention_policy: RetentionPolicyOption,
         retention_age_input: String,
         timestamping_mode: Option<TimestampingMode>,
         timestamping_uncapped: bool,
-        // Delete-on-empty config
         delete_on_empty_enabled: bool,
         delete_on_empty_min_age: String,
-        // UI state
         selected: usize,
         editing: bool,
     },
@@ -580,16 +589,13 @@ pub enum InputMode {
     /// Reconfiguring a basin
     ReconfigureBasin {
         basin: BasinName,
-        // Basin-level settings
         create_stream_on_append: Option<bool>,
         create_stream_on_read: Option<bool>,
-        // Default stream config
         storage_class: Option<StorageClass>,
         retention_policy: RetentionPolicyOption,
         retention_age_secs: u64,
         timestamping_mode: Option<TimestampingMode>,
         timestamping_uncapped: Option<bool>,
-        // UI state
         selected: usize,
         editing_age: bool,
         age_input: String,
@@ -603,10 +609,8 @@ pub enum InputMode {
         retention_age_secs: u64,
         timestamping_mode: Option<TimestampingMode>,
         timestamping_uncapped: Option<bool>,
-        // Delete-on-empty config
         delete_on_empty_enabled: bool,
         delete_on_empty_min_age: String,
-        // UI state
         selected: usize,
         editing_age: bool,
         age_input: String,
@@ -615,22 +619,18 @@ pub enum InputMode {
     CustomRead {
         basin: BasinName,
         stream: StreamName,
-        // Start position
         start_from: ReadStartFrom,
         seq_num_value: String,
         timestamp_value: String,
         ago_value: String,
         ago_unit: AgoUnit,
         tail_offset_value: String,
-        // Limits
         count_limit: String,
         byte_limit: String,
         until_timestamp: String,
-        // Options
         clamp: bool,
         format: ReadFormat,
-        output_file: String,  // Empty = display only, path = write to file
-        // UI state
+        output_file: String,
         selected: usize,
         editing: bool,
     },
@@ -654,27 +654,22 @@ pub enum InputMode {
     },
     /// Issue a new access token
     IssueAccessToken {
-        // Basic info
         id: String,
         expiry: ExpiryOption,
-        expiry_custom: String,  // For custom duration input
-        // Resource scopes
+        expiry_custom: String,
         basins_scope: ScopeOption,
         basins_value: String,
         streams_scope: ScopeOption,
         streams_value: String,
         tokens_scope: ScopeOption,
         tokens_value: String,
-        // Operation permissions (Read/Write for each level)
         account_read: bool,
         account_write: bool,
         basin_read: bool,
         basin_write: bool,
         stream_read: bool,
         stream_write: bool,
-        // Options
         auto_prefix_streams: bool,
-        // UI state
         selected: usize,
         editing: bool,
     },
@@ -890,8 +885,6 @@ impl ReadFormat {
         }
     }
 }
-
-
 /// Config for basin reconfiguration
 #[derive(Debug, Clone)]
 pub struct BasinReconfigureConfig {
@@ -930,6 +923,7 @@ pub struct App {
     pub message: Option<StatusMessage>,
     pub show_help: bool,
     pub input_mode: InputMode,
+    pub pip: Option<PipState>,
     should_quit: bool,
 }
 
@@ -945,7 +939,7 @@ fn build_basin_config(
     delete_on_empty_enabled: bool,
     delete_on_empty_min_age: String,
 ) -> BasinConfig {
-    // Parse retention policy
+
     let retention = match retention_policy {
         RetentionPolicyOption::Infinite => None,
         RetentionPolicyOption::Age => {
@@ -954,8 +948,6 @@ fn build_basin_config(
                 .map(RetentionPolicy::Age)
         }
     };
-
-    // Build timestamping config if specified
     let timestamping = if timestamping_mode.is_some() || timestamping_uncapped {
         Some(TimestampingConfig {
             timestamping_mode,
@@ -964,8 +956,6 @@ fn build_basin_config(
     } else {
         None
     };
-
-    // Build delete-on-empty config if enabled
     let delete_on_empty = if delete_on_empty_enabled {
         humantime::parse_duration(&delete_on_empty_min_age)
             .ok()
@@ -995,7 +985,7 @@ fn build_stream_config(
     delete_on_empty_enabled: bool,
     delete_on_empty_min_age: String,
 ) -> StreamConfig {
-    // Parse retention policy
+
     let retention = match retention_policy {
         RetentionPolicyOption::Infinite => None,
         RetentionPolicyOption::Age => {
@@ -1004,8 +994,6 @@ fn build_stream_config(
                 .map(RetentionPolicy::Age)
         }
     };
-
-    // Build timestamping config if specified
     let timestamping = if timestamping_mode.is_some() || timestamping_uncapped {
         Some(TimestampingConfig {
             timestamping_mode,
@@ -1014,8 +1002,6 @@ fn build_stream_config(
     } else {
         None
     };
-
-    // Build delete-on-empty config if enabled
     let delete_on_empty = if delete_on_empty_enabled {
         humantime::parse_duration(&delete_on_empty_min_age)
             .ok()
@@ -1046,6 +1032,7 @@ impl App {
             message: None,
             show_help: false,
             input_mode: InputMode::Normal,
+            pip: None,
             should_quit: false,
         }
     }
@@ -1061,17 +1048,13 @@ impl App {
 
     /// Load settings from config file
     fn load_settings_state() -> SettingsState {
-        // Load from file first
-        let file_config = config::load_config_file().unwrap_or_default();
-        // Also load from environment (which load_cli_config does)
-        let env_config = config::load_cli_config().unwrap_or_default();
 
-        // Prefer file config for display, but show env token if file is empty
+        let file_config = config::load_config_file().unwrap_or_default();
+
+        let env_config = config::load_cli_config().unwrap_or_default();
         let access_token = file_config.access_token.clone()
             .or_else(|| env_config.access_token.clone())
             .unwrap_or_default();
-
-        // Track if token is from env (read-only in that case)
         let token_from_env = file_config.access_token.is_none() && env_config.access_token.is_some();
 
         SettingsState {
@@ -1098,32 +1081,24 @@ impl App {
     /// Save settings to config file
     fn save_settings_static(state: &SettingsState) -> Result<(), CliError> {
         let mut cli_config = config::load_config_file().unwrap_or_default();
-
-        // Update access token
         if state.access_token.is_empty() {
             cli_config.unset(ConfigKey::AccessToken);
         } else {
             cli_config.set(ConfigKey::AccessToken, state.access_token.clone())
                 .map_err(|e| CliError::Config(e))?;
         }
-
-        // Update account endpoint
         if state.account_endpoint.is_empty() {
             cli_config.unset(ConfigKey::AccountEndpoint);
         } else {
             cli_config.set(ConfigKey::AccountEndpoint, state.account_endpoint.clone())
                 .map_err(|e| CliError::Config(e))?;
         }
-
-        // Update basin endpoint
         if state.basin_endpoint.is_empty() {
             cli_config.unset(ConfigKey::BasinEndpoint);
         } else {
             cli_config.set(ConfigKey::BasinEndpoint, state.basin_endpoint.clone())
                 .map_err(|e| CliError::Config(e))?;
         }
-
-        // Update compression
         match state.compression {
             CompressionOption::None => cli_config.unset(ConfigKey::Compression),
             CompressionOption::Gzip => {
@@ -1143,28 +1118,20 @@ impl App {
 
     pub async fn run<B: Backend>(mut self, terminal: &mut Terminal<B>) -> Result<(), CliError> {
         let (tx, mut rx) = mpsc::unbounded_channel();
-
-        // Show splash screen briefly
         let splash_start = std::time::Instant::now();
         let splash_duration = Duration::from_millis(1200);
-
-        // Only start loading basins if we have an S2 client (access token configured)
         if self.s2.is_some() {
             self.load_basins(tx.clone());
         }
-
-        // Track loaded basins for transition from splash
         let mut pending_basins: Option<Result<Vec<BasinInfo>, CliError>> = None;
 
         loop {
-            // Render
+
             terminal
                 .draw(|f| ui::draw(f, &self))
                 .map_err(|e| CliError::RecordWrite(format!("Failed to draw: {e}")))?;
-
-            // Check if splash screen should end
             if matches!(self.screen, Screen::Splash) && splash_start.elapsed() >= splash_duration {
-                // Transition to basins
+
                 let mut basins_state = BasinsState {
                     loading: pending_basins.is_none(),
                     ..Default::default()
@@ -1195,7 +1162,7 @@ impl App {
                 if let CrosstermEvent::Key(key) = event::read()
                     .map_err(|e| CliError::RecordWrite(format!("Failed to read event: {e}")))?
                 {
-                    // Skip to basins on any key during splash
+
                     if matches!(self.screen, Screen::Splash) {
                         let mut basins_state = BasinsState {
                             loading: pending_basins.is_none(),
@@ -1222,8 +1189,6 @@ impl App {
                     self.handle_key(key, tx.clone());
                 }
             }
-
-            // Check quit early to avoid unnecessary async processing
             if self.should_quit {
                 break;
             }
@@ -1231,7 +1196,7 @@ impl App {
             // Handle async events from background tasks with a short timeout
             tokio::select! {
                 Some(event) = rx.recv() => {
-                    // If on splash screen, cache the basins result
+
                     if matches!(self.screen, Screen::Splash) {
                         if let Event::BasinsLoaded(result) = event {
                             pending_basins = Some(result);
@@ -1240,8 +1205,6 @@ impl App {
                     }
                     self.handle_event(event);
                 }
-
-                // Small sleep to prevent busy-looping when no events
                 _ = tokio::time::sleep(Duration::from_millis(16)) => {}
             }
 
@@ -1336,16 +1299,57 @@ impl App {
                     match result {
                         Ok(record) => {
                             if !state.paused {
+                                // Deduplicate by seq_num - skip if we already have this or a later record
+                                let dominated = state.records.back()
+                                    .map(|last| record.seq_num <= last.seq_num)
+                                    .unwrap_or(false);
+                                if dominated {
+                                    return;
+                                }
+
+                                // Track throughput
+                                let record_bytes = record.body.len() as u64;
+                                state.bytes_this_second += record_bytes;
+                                state.records_this_second += 1;
+
+                                // Check if a second has passed
+                                if let Some(last_tick) = state.last_tick {
+                                    let elapsed = last_tick.elapsed();
+                                    if elapsed >= std::time::Duration::from_secs(1) {
+                                        let secs = elapsed.as_secs_f64();
+                                        let mibps = (state.bytes_this_second as f64) / (1024.0 * 1024.0) / secs;
+                                        let recps = (state.records_this_second as f64) / secs;
+
+                                        state.current_mibps = mibps;
+                                        state.current_recps = recps;
+                                        state.throughput_history.push(mibps);
+                                        state.records_per_sec_history.push(recps);
+
+                                        // Keep only last 60 samples
+                                        const MAX_HISTORY: usize = 60;
+                                        if state.throughput_history.len() > MAX_HISTORY {
+                                            state.throughput_history.remove(0);
+                                        }
+                                        if state.records_per_sec_history.len() > MAX_HISTORY {
+                                            state.records_per_sec_history.remove(0);
+                                        }
+
+                                        state.bytes_this_second = 0;
+                                        state.records_this_second = 0;
+                                        state.last_tick = Some(std::time::Instant::now());
+                                    }
+                                }
+
                                 state.records.push_back(record);
-                                // Keep buffer bounded
+
                                 while state.records.len() > MAX_RECORDS_BUFFER {
                                     state.records.pop_front();
-                                    // Adjust selected if we removed records from front
+
                                     if state.selected > 0 {
                                         state.selected = state.selected.saturating_sub(1);
                                     }
                                 }
-                                // Auto-follow: keep selected at latest when tailing
+
                                 if state.is_tailing {
                                     state.selected = state.records.len().saturating_sub(1);
                                 }
@@ -1373,6 +1377,63 @@ impl App {
                 }
             }
 
+            Event::PipRecordReceived(result) => {
+                if let Some(ref mut pip) = self.pip
+                    && !pip.paused
+                {
+                    match result {
+                        Ok(record) => {
+                            // Deduplicate by seq_num
+                            let dominated = pip.records.back()
+                                .map(|last| record.seq_num <= last.seq_num)
+                                .unwrap_or(false);
+                            if dominated {
+                                return;
+                            }
+
+                            // Track throughput
+                            let record_bytes = record.body.len() as u64;
+                            pip.bytes_this_second += record_bytes;
+                            pip.records_this_second += 1;
+
+                            // Check if a second has passed
+                            if let Some(last_tick) = pip.last_tick {
+                                let elapsed = last_tick.elapsed();
+                                if elapsed >= std::time::Duration::from_secs(1) {
+                                    let secs = elapsed.as_secs_f64();
+                                    pip.current_mibps = (pip.bytes_this_second as f64) / (1024.0 * 1024.0) / secs;
+                                    pip.current_recps = (pip.records_this_second as f64) / secs;
+                                    pip.bytes_this_second = 0;
+                                    pip.records_this_second = 0;
+                                    pip.last_tick = Some(std::time::Instant::now());
+                                }
+                            }
+
+                            pip.records.push_back(record);
+
+                            // Keep PiP buffer small
+                            while pip.records.len() > MAX_PIP_RECORDS {
+                                pip.records.pop_front();
+                            }
+                        }
+                        Err(_) => {
+                            // Silently ignore errors in PiP to not disrupt main workflow
+                        }
+                    }
+                }
+            }
+
+            Event::PipReadEnded => {
+                // PiP stream ended - could happen if stream is deleted
+                if self.pip.is_some() {
+                    self.pip = None;
+                    self.message = Some(StatusMessage {
+                        text: "PiP stream ended".to_string(),
+                        level: MessageLevel::Info,
+                    });
+                }
+            }
+
             Event::BasinCreated(result) => {
                 self.input_mode = InputMode::Normal;
                 match result {
@@ -1381,7 +1442,7 @@ impl App {
                             text: format!("Created basin '{}'", basin.name),
                             level: MessageLevel::Success,
                         });
-                        // Refresh basins list
+
                         if let Screen::Basins(state) = &mut self.screen {
                             state.loading = true;
                         }
@@ -1403,7 +1464,7 @@ impl App {
                             text: format!("Deleted basin '{}'", name),
                             level: MessageLevel::Success,
                         });
-                        // Refresh basins list
+
                         if let Screen::Basins(state) = &mut self.screen {
                             state.loading = true;
                         }
@@ -1425,7 +1486,7 @@ impl App {
                             text: format!("Created stream '{}'", stream.name),
                             level: MessageLevel::Success,
                         });
-                        // Refresh streams list
+
                         if let Screen::Streams(state) = &mut self.screen {
                             state.loading = true;
                         }
@@ -1447,7 +1508,7 @@ impl App {
                             text: format!("Deleted stream '{}'", name),
                             level: MessageLevel::Success,
                         });
-                        // Refresh streams list
+
                         if let Screen::Streams(state) = &mut self.screen {
                             state.loading = true;
                         }
@@ -1523,7 +1584,7 @@ impl App {
                             }
                             *timestamping_mode = info.timestamping_mode;
                             *timestamping_uncapped = Some(info.timestamping_uncapped);
-                            // Delete on empty
+
                             if let Some(min_age_secs) = info.delete_on_empty_min_age_secs {
                                 *delete_on_empty_enabled = true;
                                 *delete_on_empty_min_age = format!("{}s", min_age_secs);
@@ -1656,13 +1717,13 @@ impl App {
                 self.input_mode = InputMode::Normal;
                 match result {
                     Ok(token) => {
-                        // Show the token in a special dialog (one-time display)
+
                         self.input_mode = InputMode::ShowIssuedToken { token: token.clone() };
                         self.message = Some(StatusMessage {
                             text: "Access token issued - copy it now, it won't be shown again!".to_string(),
                             level: MessageLevel::Success,
                         });
-                        // Refresh tokens list
+
                         if let Screen::AccessTokens(state) = &mut self.screen {
                             state.loading = true;
                         }
@@ -1684,7 +1745,7 @@ impl App {
                             text: format!("Revoked access token '{}'", id),
                             level: MessageLevel::Success,
                         });
-                        // Refresh tokens list
+
                         if let Screen::AccessTokens(state) = &mut self.screen {
                             state.loading = true;
                         }
@@ -1782,8 +1843,8 @@ impl App {
                     state.write_bytes = sample.bytes;
                     state.write_records = sample.records;
                     state.elapsed_secs = sample.elapsed.as_secs_f64();
-                    state.progress_pct = (state.elapsed_secs / state.duration_secs as f64) * 100.0;
-                    // Keep last 60 samples for sparkline
+                    state.progress_pct = ((state.elapsed_secs / state.duration_secs as f64) * 100.0).min(100.0);
+
                     state.write_history.push(sample.mib_per_sec);
                     if state.write_history.len() > 60 {
                         state.write_history.remove(0);
@@ -1797,7 +1858,8 @@ impl App {
                     state.read_recps = sample.records_per_sec;
                     state.read_bytes = sample.bytes;
                     state.read_records = sample.records;
-                    // Keep last 60 samples for sparkline
+                    state.elapsed_secs = sample.elapsed.as_secs_f64();
+
                     state.read_history.push(sample.mib_per_sec);
                     if state.read_history.len() > 60 {
                         state.read_history.remove(0);
@@ -1811,6 +1873,7 @@ impl App {
                     state.catchup_recps = sample.records_per_sec;
                     state.catchup_bytes = sample.bytes;
                     state.catchup_records = sample.records;
+                    state.elapsed_secs = sample.elapsed.as_secs_f64();
                 }
             }
 
@@ -1847,16 +1910,12 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent, tx: mpsc::UnboundedSender<Event>) {
-        // Clear message on any keypress
-        self.message = None;
 
-        // Handle input mode first
+        self.message = None;
         if !matches!(self.input_mode, InputMode::Normal) {
             self.handle_input_key(key, tx);
             return;
         }
-
-        // Global keys
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc if self.show_help => {
                 self.show_help = false;
@@ -1866,12 +1925,29 @@ impl App {
                 self.show_help = !self.show_help;
                 return;
             }
+            KeyCode::Char('P') => {
+                // Toggle PiP visibility or close it
+                if let Some(ref mut pip) = self.pip {
+                    if pip.minimized {
+                        // Restore minimized PiP
+                        pip.minimized = false;
+                    } else {
+                        // Close PiP entirely
+                        self.pip = None;
+                        self.message = Some(StatusMessage {
+                            text: "PiP closed".to_string(),
+                            level: MessageLevel::Info,
+                        });
+                    }
+                }
+                return;
+            }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.should_quit = true;
                 return;
             }
             KeyCode::Char('q') if !matches!(self.screen, Screen::Basins(_)) => {
-                // q goes back except on basins screen where it quits
+
             }
             KeyCode::Char('q') => {
                 self.should_quit = true;
@@ -1883,8 +1959,6 @@ impl App {
         if self.show_help {
             return;
         }
-
-        // Tab key to switch between tabs (only on top-level screens)
         if key.code == KeyCode::Tab {
             match &self.screen {
                 Screen::Basins(_) | Screen::AccessTokens(_) | Screen::Settings(_) => {
@@ -1894,8 +1968,6 @@ impl App {
                 _ => {}
             }
         }
-
-        // Screen-specific keys - handle in place to avoid borrow issues
         match &self.screen {
             Screen::Splash => {} // Keys handled in run loop
             Screen::Setup(_) => self.handle_setup_key(key, tx),
@@ -1938,7 +2010,7 @@ impl App {
             } = &self.input_mode
             {
                 if *selected == 16 && !*editing && !id.is_empty() {
-                    // Clone all values we need
+
                     let id = id.clone();
                     let expiry = *expiry;
                     let expiry_custom = expiry_custom.clone();
@@ -1955,8 +2027,6 @@ impl App {
                     let stream_read = *stream_read;
                     let stream_write = *stream_write;
                     let auto_prefix_streams = *auto_prefix_streams;
-
-                    // Now we can safely call the method
                     self.issue_access_token_v2(
                         id,
                         expiry,
@@ -1999,23 +2069,10 @@ impl App {
                 selected,
                 editing,
             } => {
-                // Form fields:
-                // 0: Name (text)
-                // 1: Scope (cycle: AWS us-east-1)
-                // 2: Storage Class (cycle: None/Standard/Express)
-                // 3: Retention Policy (cycle: Infinite/Age)
-                // 4: Retention Age (text, only if Age)
-                // 5: Timestamping Mode (cycle: None/ClientPrefer/ClientRequire/Arrival)
-                // 6: Timestamping Uncapped (toggle)
-                // 7: Delete-on-empty (toggle)
-                // 8: Delete-on-empty Min Age (text, only if enabled)
-                // 9: Create Stream On Append (toggle)
-                // 10: Create Stream On Read (toggle)
-                // 11: Create button
                 const FIELD_COUNT: usize = 12;
 
                 if *editing {
-                    // Text editing mode
+
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter => {
                             *editing = false;
@@ -2031,17 +2088,17 @@ impl App {
                         }
                         KeyCode::Char(c) => {
                             if *selected == 0 {
-                                // Basin names: lowercase letters, numbers, hyphens
+
                                 if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' {
                                     name.push(c);
                                 }
                             } else if *selected == 4 {
-                                // Retention age: alphanumeric for duration parsing
+
                                 if c.is_ascii_alphanumeric() {
                                     retention_age_input.push(c);
                                 }
                             } else if *selected == 8 {
-                                // Delete-on-empty min age: alphanumeric for duration parsing
+
                                 if c.is_ascii_alphanumeric() {
                                     delete_on_empty_min_age.push(c);
                                 }
@@ -2057,11 +2114,11 @@ impl App {
                         KeyCode::Up | KeyCode::Char('k') => {
                             if *selected > 0 {
                                 *selected -= 1;
-                                // Skip delete-on-empty min age if not enabled
+
                                 if *selected == 8 && !*delete_on_empty_enabled {
                                     *selected = 7;
                                 }
-                                // Skip retention age if not using Age policy
+
                                 if *selected == 4 && *retention_policy != RetentionPolicyOption::Age {
                                     *selected = 3;
                                 }
@@ -2070,11 +2127,11 @@ impl App {
                         KeyCode::Down | KeyCode::Char('j') => {
                             if *selected < FIELD_COUNT - 1 {
                                 *selected += 1;
-                                // Skip retention age if not using Age policy
+
                                 if *selected == 4 && *retention_policy != RetentionPolicyOption::Age {
                                     *selected = 5;
                                 }
-                                // Skip delete-on-empty min age if not enabled
+
                                 if *selected == 8 && !*delete_on_empty_enabled {
                                     *selected = 9;
                                 }
@@ -2094,9 +2151,9 @@ impl App {
                                     }
                                 }
                                 11 => {
-                                    // Create button - validate and submit
+
                                     if name.len() >= 8 {
-                                        // Extract all values to avoid borrow conflict
+
                                         let basin_name = name.clone();
                                         let basin_scope = *scope;
                                         let csoa = *create_stream_on_append;
@@ -2117,7 +2174,7 @@ impl App {
                             }
                         }
                         KeyCode::Char(' ') => {
-                            // Toggle for boolean fields
+
                             match *selected {
                                 6 => *timestamping_uncapped = !*timestamping_uncapped,
                                 9 => *create_stream_on_append = !*create_stream_on_append,
@@ -2126,10 +2183,10 @@ impl App {
                             }
                         }
                         KeyCode::Left | KeyCode::Char('h') => {
-                            // Cycle left for enum fields
+
                             match *selected {
                                 1 => {
-                                    // Scope: currently only AWS us-east-1, so no cycling
+
                                 }
                                 2 => {
                                     *storage_class = match storage_class {
@@ -2153,17 +2210,17 @@ impl App {
                                     };
                                 }
                                 7 => {
-                                    // Delete on empty: Never <-> After threshold
+
                                     *delete_on_empty_enabled = !*delete_on_empty_enabled;
                                 }
                                 _ => {}
                             }
                         }
                         KeyCode::Right | KeyCode::Char('l') => {
-                            // Cycle right for enum fields
+
                             match *selected {
                                 1 => {
-                                    // Scope: currently only AWS us-east-1, so no cycling
+
                                 }
                                 2 => {
                                     *storage_class = match storage_class {
@@ -2187,7 +2244,7 @@ impl App {
                                     };
                                 }
                                 7 => {
-                                    // Delete on empty: Never <-> After threshold
+
                                     *delete_on_empty_enabled = !*delete_on_empty_enabled;
                                 }
                                 _ => {}
@@ -2211,20 +2268,10 @@ impl App {
                 selected,
                 editing,
             } => {
-                // Form fields:
-                // 0: Name (text)
-                // 1: Storage Class (cycle: None/Standard/Express)
-                // 2: Retention Policy (cycle: Infinite/Age)
-                // 3: Retention Age (text, only if Age)
-                // 4: Timestamping Mode (cycle: None/ClientPrefer/ClientRequire/Arrival)
-                // 5: Timestamping Uncapped (toggle)
-                // 6: Delete-on-empty (cycle: Never/After threshold)
-                // 7: Delete-on-empty Min Age (text, only if enabled)
-                // 8: Create button
                 const FIELD_COUNT: usize = 9;
 
                 if *editing {
-                    // Text editing mode
+
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter => {
                             *editing = false;
@@ -2240,15 +2287,15 @@ impl App {
                         }
                         KeyCode::Char(c) => {
                             if *selected == 0 {
-                                // Stream names: allow most characters
+
                                 name.push(c);
                             } else if *selected == 3 {
-                                // Retention age: alphanumeric for duration parsing
+
                                 if c.is_ascii_alphanumeric() {
                                     retention_age_input.push(c);
                                 }
                             } else if *selected == 7 {
-                                // Delete-on-empty min age: alphanumeric for duration parsing
+
                                 if c.is_ascii_alphanumeric() {
                                     delete_on_empty_min_age.push(c);
                                 }
@@ -2264,11 +2311,11 @@ impl App {
                         KeyCode::Up | KeyCode::Char('k') => {
                             if *selected > 0 {
                                 *selected -= 1;
-                                // Skip delete-on-empty min age if not enabled
+
                                 if *selected == 7 && !*delete_on_empty_enabled {
                                     *selected = 6;
                                 }
-                                // Skip retention age if not using Age policy
+
                                 if *selected == 3 && *retention_policy != RetentionPolicyOption::Age {
                                     *selected = 2;
                                 }
@@ -2277,11 +2324,11 @@ impl App {
                         KeyCode::Down | KeyCode::Char('j') => {
                             if *selected < FIELD_COUNT - 1 {
                                 *selected += 1;
-                                // Skip retention age if not using Age policy
+
                                 if *selected == 3 && *retention_policy != RetentionPolicyOption::Age {
                                     *selected = 4;
                                 }
-                                // Skip delete-on-empty min age if not enabled
+
                                 if *selected == 7 && !*delete_on_empty_enabled {
                                     *selected = 8;
                                 }
@@ -2301,7 +2348,7 @@ impl App {
                                     }
                                 }
                                 8 => {
-                                    // Create button - validate and submit
+
                                     if !name.is_empty() {
                                         let basin_name = basin.clone();
                                         let stream_name = name.clone();
@@ -2321,13 +2368,13 @@ impl App {
                             }
                         }
                         KeyCode::Char(' ') => {
-                            // Toggle for boolean fields
+
                             if *selected == 5 {
                                 *timestamping_uncapped = !*timestamping_uncapped;
                             }
                         }
                         KeyCode::Left | KeyCode::Char('h') => {
-                            // Cycle left for enum fields
+
                             match *selected {
                                 1 => {
                                     *storage_class = match storage_class {
@@ -2351,14 +2398,14 @@ impl App {
                                     };
                                 }
                                 6 => {
-                                    // Delete on empty: Never <-> After threshold
+
                                     *delete_on_empty_enabled = !*delete_on_empty_enabled;
                                 }
                                 _ => {}
                             }
                         }
                         KeyCode::Right | KeyCode::Char('l') => {
-                            // Cycle right for enum fields
+
                             match *selected {
                                 1 => {
                                     *storage_class = match storage_class {
@@ -2382,7 +2429,7 @@ impl App {
                                     };
                                 }
                                 6 => {
-                                    // Delete on empty: Never <-> After threshold
+
                                     *delete_on_empty_enabled = !*delete_on_empty_enabled;
                                 }
                                 _ => {}
@@ -2433,21 +2480,12 @@ impl App {
                 editing_age,
                 age_input,
             } => {
-                // Field indices:
-                // 0: Storage class
-                // 1: Retention policy
-                // 2: Retention age (if Age-based)
-                // 3: Timestamping mode
-                // 4: Timestamping uncapped
-                // 5: Create on append
-                // 6: Create on read
-                const BASIN_MAX_ROW: usize = 6;
 
-                // If editing age, handle number input
+                const BASIN_MAX_ROW: usize = 6;
                 if *editing_age {
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter => {
-                            // Parse and apply the age
+
                             if let Ok(secs) = age_input.parse::<u64>() {
                                 *retention_age_secs = secs;
                             }
@@ -2471,7 +2509,7 @@ impl App {
                     KeyCode::Up | KeyCode::Char('k') => {
                         if *selected > 0 {
                             *selected -= 1;
-                            // Skip retention age if not using Age policy
+
                             if *selected == 2 && *retention_policy != RetentionPolicyOption::Age {
                                 *selected = 1;
                             }
@@ -2480,14 +2518,14 @@ impl App {
                     KeyCode::Down | KeyCode::Char('j') => {
                         if *selected < BASIN_MAX_ROW {
                             *selected += 1;
-                            // Skip retention age if not using Age policy
+
                             if *selected == 2 && *retention_policy != RetentionPolicyOption::Age {
                                 *selected = 3;
                             }
                         }
                     }
                     KeyCode::Char(' ') => {
-                        // Toggle for boolean fields
+
                         match *selected {
                             4 => *timestamping_uncapped = Some(!timestamping_uncapped.unwrap_or(false)),
                             5 => *create_stream_on_append = Some(!create_stream_on_append.unwrap_or(false)),
@@ -2496,14 +2534,14 @@ impl App {
                         }
                     }
                     KeyCode::Enter => {
-                        // Edit text fields
+
                         if *selected == 2 && *retention_policy == RetentionPolicyOption::Age {
                             *editing_age = true;
                             *age_input = retention_age_secs.to_string();
                         }
                     }
                     KeyCode::Left | KeyCode::Char('h') => {
-                        // Cycle left for enum fields
+
                         match *selected {
                             0 => {
                                 *storage_class = match storage_class {
@@ -2530,7 +2568,7 @@ impl App {
                         }
                     }
                     KeyCode::Right | KeyCode::Char('l') => {
-                        // Cycle right for enum fields
+
                         match *selected {
                             0 => {
                                 *storage_class = match storage_class {
@@ -2587,18 +2625,18 @@ impl App {
                 editing_age,
                 age_input,
             } => {
-                // If editing age or delete-on-empty min age, handle text input
+
                 if *editing_age {
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter => {
-                            // Check which field we're editing
+
                             if *selected == 2 {
-                                // Retention age
+
                                 if let Ok(secs) = age_input.parse::<u64>() {
                                     *retention_age_secs = secs;
                                 }
                             } else if *selected == 6 {
-                                // Delete-on-empty min age - no parsing needed, store as string
+
                             }
                             *editing_age = false;
                         }
@@ -2620,15 +2658,6 @@ impl App {
                     }
                     return;
                 }
-
-                // Stream has 7 rows:
-                // 0: Storage class
-                // 1: Retention policy
-                // 2: Retention age (if Age-based)
-                // 3: Timestamping mode
-                // 4: Timestamping uncapped
-                // 5: Delete on empty
-                // 6: Delete on empty threshold (if enabled)
                 const STREAM_MAX_ROW: usize = 6;
 
                 match key.code {
@@ -2638,11 +2667,11 @@ impl App {
                     KeyCode::Up | KeyCode::Char('k') => {
                         if *selected > 0 {
                             *selected -= 1;
-                            // Skip delete-on-empty threshold if not enabled
+
                             if *selected == 6 && !*delete_on_empty_enabled {
                                 *selected = 5;
                             }
-                            // Skip retention age if not using Age policy
+
                             if *selected == 2 && *retention_policy != RetentionPolicyOption::Age {
                                 *selected = 1;
                             }
@@ -2651,25 +2680,25 @@ impl App {
                     KeyCode::Down | KeyCode::Char('j') => {
                         if *selected < STREAM_MAX_ROW {
                             *selected += 1;
-                            // Skip retention age if not using Age policy
+
                             if *selected == 2 && *retention_policy != RetentionPolicyOption::Age {
                                 *selected = 3;
                             }
-                            // Skip delete-on-empty threshold if not enabled
+
                             if *selected == 6 && !*delete_on_empty_enabled {
-                                // Already at max, stay at 5
+
                                 *selected = 5;
                             }
                         }
                     }
                     KeyCode::Char(' ') => {
-                        // Toggle for boolean fields
+
                         if *selected == 4 {
                             *timestamping_uncapped = Some(!timestamping_uncapped.unwrap_or(false));
                         }
                     }
                     KeyCode::Enter => {
-                        // Edit text fields
+
                         if *selected == 2 && *retention_policy == RetentionPolicyOption::Age {
                             *editing_age = true;
                             *age_input = retention_age_secs.to_string();
@@ -2678,7 +2707,7 @@ impl App {
                         }
                     }
                     KeyCode::Left | KeyCode::Char('h') => {
-                        // Cycle left for enum fields
+
                         match *selected {
                             0 => {
                                 *storage_class = match storage_class {
@@ -2702,14 +2731,14 @@ impl App {
                                 };
                             }
                             5 => {
-                                // Delete on empty: Never <-> After threshold
+
                                 *delete_on_empty_enabled = !*delete_on_empty_enabled;
                             }
                             _ => {}
                         }
                     }
                     KeyCode::Right | KeyCode::Char('l') => {
-                        // Cycle right for enum fields
+
                         match *selected {
                             0 => {
                                 *storage_class = match storage_class {
@@ -2733,7 +2762,7 @@ impl App {
                                 };
                             }
                             5 => {
-                                // Delete on empty: Never <-> After threshold
+
                                 *delete_on_empty_enabled = !*delete_on_empty_enabled;
                             }
                             _ => {}
@@ -2775,14 +2804,14 @@ impl App {
                 selected,
                 editing,
             } => {
-                // If editing a value, handle text input
+
                 if *editing {
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter => {
                             *editing = false;
                         }
                         KeyCode::Tab if *selected == 2 => {
-                            // Cycle time unit while editing ago value
+
                             *ago_unit = ago_unit.next();
                         }
                         KeyCode::Backspace => {
@@ -2820,17 +2849,6 @@ impl App {
                 }
 
                 // Navigation layout:
-                // 0: Sequence number (radio + input)
-                // 1: Timestamp (radio + input)
-                // 2: Time ago (radio + input, tab=unit)
-                // 3: Tail offset (radio + input)
-                // 4: Max records
-                // 5: Max bytes
-                // 6: Until timestamp
-                // 7: Clamp (checkbox)
-                // 8: Format (selector)
-                // 9: Output file
-                // 10: Start button
                 const MAX_ROW: usize = 10;
 
                 match key.code {
@@ -2905,7 +2923,7 @@ impl App {
                                 let fmt = *format;
                                 let of = output_file.clone();
                                 self.input_mode = InputMode::Normal;
-                                // Show message if writing to file
+
                                 if !of.is_empty() {
                                     self.message = Some(StatusMessage {
                                         text: format!("Writing to {}", of),
@@ -3635,6 +3653,16 @@ impl App {
                 let stream_name = state.stream_name.clone();
                 self.open_stream_metrics(basin_name, stream_name, tx);
             }
+            KeyCode::Char('p') => {
+                // Pin stream to PiP (picture-in-picture) - start tailing in background
+                let basin_name = state.basin_name.clone();
+                let stream_name = state.stream_name.clone();
+                self.start_pip(basin_name, stream_name, tx);
+                self.message = Some(StatusMessage {
+                    text: "Stream pinned to PiP".to_string(),
+                    level: MessageLevel::Success,
+                });
+            }
             _ => {}
         }
     }
@@ -3703,9 +3731,41 @@ impl App {
                 state.hide_list = !state.hide_list;
             }
             KeyCode::Enter | KeyCode::Char('h') => {
-                // Show headers popup
+
                 if !state.records.is_empty() {
                     state.show_detail = true;
+                }
+            }
+            KeyCode::Char('T') => {
+                // Toggle timeline scrubber
+                state.show_timeline = !state.show_timeline;
+            }
+            KeyCode::Char('[') => {
+                // Jump backward by 10% of records
+                let jump = (state.records.len() / 10).max(1);
+                state.selected = state.selected.saturating_sub(jump);
+            }
+            KeyCode::Char(']') => {
+                // Jump forward by 10% of records
+                let jump = (state.records.len() / 10).max(1);
+                let max_idx = state.records.len().saturating_sub(1);
+                state.selected = (state.selected + jump).min(max_idx);
+            }
+            KeyCode::Char('p') => {
+                // Pin current stream to PiP (picture-in-picture)
+                if state.is_tailing {
+                    let basin_name = state.basin_name.clone();
+                    let stream_name = state.stream_name.clone();
+                    self.start_pip(basin_name, stream_name, tx);
+                    self.message = Some(StatusMessage {
+                        text: "Stream pinned to PiP".to_string(),
+                        level: MessageLevel::Info,
+                    });
+                } else {
+                    self.message = Some(StatusMessage {
+                        text: "PiP only available when tailing".to_string(),
+                        level: MessageLevel::Info,
+                    });
                 }
             }
             _ => {}
@@ -3818,7 +3878,7 @@ impl App {
         let s2 = self.s2.clone().expect("S2 client not initialized");
         let tx_refresh = tx.clone();
         tokio::spawn(async move {
-            // Parse basin name
+
             let basin_name: BasinName = match name.parse() {
                 Ok(n) => n,
                 Err(e) => {
@@ -3826,8 +3886,6 @@ impl App {
                     return;
                 }
             };
-
-            // Build CreateBasinInput with scope
             let sdk_scope = match scope {
                 BasinScopeOption::AwsUsEast1 => s2_sdk::types::BasinScope::AwsUsEast1,
             };
@@ -3898,7 +3956,7 @@ impl App {
         let tx_refresh = tx.clone();
         let basin_clone = basin.clone();
         tokio::spawn(async move {
-            // Parse stream name
+
             let stream_name: StreamName = match name.parse() {
                 Ok(n) => n,
                 Err(e) => {
@@ -4001,6 +4059,14 @@ impl App {
             show_detail: false,
             hide_list: false,
             output_file: None,
+            throughput_history: Vec::new(),
+            records_per_sec_history: Vec::new(),
+            current_mibps: 0.0,
+            current_recps: 0.0,
+            bytes_this_second: 0,
+            records_this_second: 0,
+            last_tick: Some(std::time::Instant::now()),
+            show_timeline: false,
         });
 
         let s2 = self.s2.clone().expect("S2 client not initialized");
@@ -4047,6 +4113,79 @@ impl App {
                         }
                     }
                     let _ = tx.send(Event::ReadEnded);
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::Error(e));
+                }
+            }
+        });
+    }
+
+    /// Start a picture-in-picture tail for a stream
+    fn start_pip(
+        &mut self,
+        basin_name: BasinName,
+        stream_name: StreamName,
+        tx: mpsc::UnboundedSender<Event>,
+    ) {
+        // Initialize PiP state
+        self.pip = Some(PipState {
+            basin_name: basin_name.clone(),
+            stream_name: stream_name.clone(),
+            records: VecDeque::new(),
+            paused: false,
+            minimized: false,
+            current_mibps: 0.0,
+            current_recps: 0.0,
+            bytes_this_second: 0,
+            records_this_second: 0,
+            last_tick: Some(std::time::Instant::now()),
+        });
+
+        let s2 = self.s2.clone().expect("S2 client not initialized");
+        let uri = S2BasinAndStreamUri {
+            basin: basin_name,
+            stream: stream_name,
+        };
+
+        tokio::spawn(async move {
+            // Simple tail for PiP: start at current tail, wait for new records
+            let args = ReadArgs {
+                uri,
+                seq_num: None,
+                timestamp: None,
+                ago: None,
+                tail_offset: None,
+                count: None,
+                bytes: None,
+                clamp: true,
+                until: None,
+                format: RecordFormat::default(),
+                output: RecordsOut::Stdout,
+            };
+
+            match ops::read(&s2, &args).await {
+                Ok(mut batch_stream) => {
+                    use futures::StreamExt;
+                    while let Some(batch_result) = batch_stream.next().await {
+                        match batch_result {
+                            Ok(batch) => {
+                                for record in batch.records {
+                                    if tx.send(Event::PipRecordReceived(Ok(record))).is_err() {
+                                        return;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Event::PipRecordReceived(Err(crate::error::CliError::op(
+                                    crate::error::OpKind::Read,
+                                    e,
+                                ))));
+                                return;
+                            }
+                        }
+                    }
+                    let _ = tx.send(Event::PipReadEnded);
                 }
                 Err(e) => {
                     let _ = tx.send(Event::Error(e));
@@ -4108,6 +4247,14 @@ impl App {
             show_detail: false,
             hide_list: false,
             output_file: if has_output { Some(output_file.clone()) } else { None },
+            throughput_history: Vec::new(),
+            records_per_sec_history: Vec::new(),
+            current_mibps: 0.0,
+            current_recps: 0.0,
+            bytes_this_second: 0,
+            records_this_second: 0,
+            last_tick: Some(std::time::Instant::now()),
+            show_timeline: false,
         });
 
         let s2 = self.s2.clone().expect("S2 client not initialized");
@@ -4117,7 +4264,7 @@ impl App {
         };
 
         tokio::spawn(async move {
-            // Parse values
+
             let seq_num = if start_from == ReadStartFrom::SeqNum {
                 seq_num_value.parse().ok()
             } else {
@@ -4345,7 +4492,7 @@ impl App {
         let s2 = self.s2.clone().expect("S2 client not initialized");
         let tx_refresh = tx.clone();
         tokio::spawn(async move {
-            // Build the default stream config
+
             let retention_policy = match config.retention_policy {
                 RetentionPolicyOption::Infinite => Some(crate::types::RetentionPolicy::Infinite),
                 RetentionPolicyOption::Age => Some(crate::types::RetentionPolicy::Age(Duration::from_secs(config.retention_age_secs))),
@@ -4516,7 +4663,7 @@ impl App {
                                 state.editing_header_key = false;
                             }
                         } else {
-                            // Add the header if key is not empty
+
                             if !state.header_key_input.is_empty() {
                                 state.headers.push((
                                     state.header_key_input.clone(),
@@ -4562,7 +4709,7 @@ impl App {
                             }
                         }
                         2 => {
-                            // Only allow digits for match_seq_num
+
                             if c.is_ascii_digit() {
                                 state.match_seq_num.push(c);
                             }
@@ -4599,7 +4746,7 @@ impl App {
                 state.selected = state.selected.saturating_sub(1);
             }
             KeyCode::Char('d') if state.selected == 1 => {
-                // Delete last header
+
                 state.headers.pop();
             }
             KeyCode::Enter => {
@@ -4617,7 +4764,7 @@ impl App {
                             Some(state.fencing_token.clone())
                         };
                         state.body.clear();
-                        // Keep headers for convenience (user might want to send similar records)
+
                         state.appending = true;
                         self.append_record(basin_name, stream_name, body, headers, match_seq_num, fencing_token, tx);
                     }
@@ -4666,8 +4813,6 @@ impl App {
                     return;
                 }
             };
-
-            // Add headers if any
             if !headers.is_empty() {
                 let parsed_headers: Vec<Header> = headers
                     .into_iter()
@@ -4695,13 +4840,9 @@ impl App {
             };
 
             let mut input = AppendInput::new(records);
-
-            // Add match_seq_num if specified
             if let Some(seq) = match_seq_num {
                 input = input.with_match_seq_num(seq);
             }
-
-            // Add fencing token if specified
             if let Some(token_str) = fencing_token {
                 match token_str.parse::<FencingToken>() {
                     Ok(token) => {
@@ -4770,8 +4911,6 @@ impl App {
             use s2_sdk::types::{AppendInput, AppendRecordBatch, CommandRecord, FencingToken};
 
             let stream_client = s2.basin(basin).stream(stream);
-
-            // Parse the new fencing token
             let new_fencing_token = match new_token.parse::<FencingToken>() {
                 Ok(token) => token,
                 Err(e) => {
@@ -4781,8 +4920,6 @@ impl App {
                     return;
                 }
             };
-
-            // Create fence command record
             let command = CommandRecord::fence(new_fencing_token);
             let record: s2_sdk::types::AppendRecord = command.into();
             let records = match AppendRecordBatch::try_from_iter([record]) {
@@ -4796,8 +4933,6 @@ impl App {
             };
 
             let mut input = AppendInput::new(records);
-
-            // Add current fencing token if specified
             if let Some(token_str) = current_token {
                 if !token_str.is_empty() {
                     match token_str.parse::<FencingToken>() {
@@ -4843,8 +4978,6 @@ impl App {
             use s2_sdk::types::{AppendInput, AppendRecordBatch, CommandRecord, FencingToken};
 
             let stream_client = s2.basin(basin).stream(stream);
-
-            // Create trim command record
             let command = CommandRecord::trim(trim_point);
             let record: s2_sdk::types::AppendRecord = command.into();
             let records = match AppendRecordBatch::try_from_iter([record]) {
@@ -4858,8 +4991,6 @@ impl App {
             };
 
             let mut input = AppendInput::new(records);
-
-            // Add fencing token if specified
             if let Some(token_str) = fencing_token {
                 if !token_str.is_empty() {
                     match token_str.parse::<FencingToken>() {
@@ -4982,7 +5113,7 @@ impl App {
                 state.filter_active = true;
             }
             KeyCode::Char('c') => {
-                // Create/Issue new token
+
                 self.input_mode = InputMode::IssueAccessToken {
                     id: String::new(),
                     expiry: ExpiryOption::ThirtyDays,
@@ -5005,7 +5136,7 @@ impl App {
                 };
             }
             KeyCode::Char('d') => {
-                // Delete/Revoke selected token
+
                 if let Some(token) = filtered_tokens.get(state.selected) {
                     self.input_mode = InputMode::ConfirmRevokeToken {
                         token_id: token.id.to_string(),
@@ -5013,7 +5144,7 @@ impl App {
                 }
             }
             KeyCode::Char('r') => {
-                // Refresh
+
                 state.loading = true;
                 self.load_access_tokens(tx);
             }
@@ -5145,7 +5276,7 @@ impl App {
                 }
             }
             KeyCode::Char('e') | KeyCode::Enter if state.selected < 3 => {
-                // Edit text fields
+
                 state.editing = true;
             }
             KeyCode::Char('h') | KeyCode::Left if state.selected == 3 => {
@@ -5248,7 +5379,7 @@ impl App {
         let tx_refresh = tx.clone();
 
         tokio::spawn(async move {
-            // Parse token ID
+
             let token_id: AccessTokenId = match id.parse() {
                 Ok(id) => id,
                 Err(e) => {
@@ -5258,8 +5389,6 @@ impl App {
                     return;
                 }
             };
-
-            // Build operations list based on read/write checkboxes
             let mut operations: Vec<Operation> = Vec::new();
 
             // Account level operations
@@ -5307,8 +5436,6 @@ impl App {
                     operations.push(Operation::RevokeAccessToken);
                 }
             }
-
-            // Build expiration
             let expires_in_str = match expiry {
                 ExpiryOption::Never => None,
                 ExpiryOption::Custom => {
@@ -5316,8 +5443,6 @@ impl App {
                 }
                 _ => expiry.to_duration_str().map(|s| s.to_string()),
             };
-
-            // Build scope matchers
             let basins_matcher = match basins_scope {
                 ScopeOption::All => None,
                 ScopeOption::None => Some("".to_string()), // Empty string = no basins
@@ -5338,8 +5463,6 @@ impl App {
                 ScopeOption::Prefix => Some(tokens_value.clone()),
                 ScopeOption::Exact => Some(format!("={}", tokens_value)),
             };
-
-            // Build args
             let args = IssueAccessTokenArgs {
                 id: token_id,
                 expires_in: expires_in_str.and_then(|s| s.parse().ok()),
@@ -5392,7 +5515,7 @@ impl App {
         let tx_refresh = tx.clone();
 
         tokio::spawn(async move {
-            // Parse token ID
+
             let token_id: AccessTokenId = match id.parse() {
                 Ok(id) => id,
                 Err(e) => {
@@ -5556,7 +5679,10 @@ impl App {
                 MetricCategory::ReadThroughput => BasinMetricSet::ReadThroughput(
                     s2_sdk::types::TimeRangeAndInterval::new(start, end)
                 ),
-                _ => return, // Account metrics not valid for basin
+                MetricCategory::BasinOps => BasinMetricSet::BasinOps(
+                    s2_sdk::types::TimeRangeAndInterval::new(start, end)
+                ),
+                _ => return,
             };
 
             let input = s2_sdk::types::GetBasinMetricsInput::new(basin_name, set);
@@ -5741,7 +5867,7 @@ impl App {
                 }
             }
             KeyCode::Char('r') => {
-                // Refresh
+
                 if let Screen::MetricsView(state) = &mut self.screen {
                     state.loading = true;
                     state.metrics.clear();
@@ -6270,22 +6396,28 @@ impl App {
         };
 
         tokio::spawn(async move {
-            use s2_sdk::types::{CreateStreamInput, DeleteStreamInput, StreamName};
+            use s2_sdk::types::{CreateStreamInput, DeleteStreamInput, StreamName, StreamConfig as SdkStreamConfig, RetentionPolicy, TimestampingConfig, TimestampingMode, DeleteOnEmptyConfig};
             use std::num::NonZeroU64;
             use std::time::Duration;
-
-            // Create a temporary stream for the benchmark
             let stream_name: StreamName = format!("_bench_{}", uuid::Uuid::new_v4())
                 .parse()
                 .expect("valid stream name");
             let stream_name_str = stream_name.to_string();
 
-            // Get basin client
-            let basin = s2.basin(basin_name.clone());
+            let stream_config = SdkStreamConfig::new()
+                .with_retention_policy(RetentionPolicy::Age(3600))
+                .with_delete_on_empty(
+                    DeleteOnEmptyConfig::new().with_min_age(Duration::from_secs(60)),
+                )
+                .with_timestamping(
+                    TimestampingConfig::new()
+                        .with_mode(TimestampingMode::ClientRequire)
+                        .with_uncapped(true),
+                );
 
-            // Create the stream
+            let basin = s2.basin(basin_name.clone());
             if let Err(e) = basin
-                .create_stream(CreateStreamInput::new(stream_name.clone()))
+                .create_stream(CreateStreamInput::new(stream_name.clone()).with_config(stream_config))
                 .await
             {
                 let _ = tx.send(Event::BenchStreamCreated(Err(CliError::op(
@@ -6346,18 +6478,6 @@ async fn run_bench_with_events(
     // For now, let's use a simplified version that calls into bench.rs
     // and extracts the stats
 
-    // Actually, let's just run the benchmark and send periodic updates
-    // The bench module already has the core logic, we just need to wrap it
-
-    let mut write_bytes: u64 = 0;
-    let mut write_records: u64 = 0;
-    let mut write_elapsed = Duration::ZERO;
-    let mut read_bytes: u64 = 0;
-    let mut read_records: u64 = 0;
-    let mut read_elapsed = Duration::ZERO;
-    let mut catchup_bytes: u64 = 0;
-    let mut catchup_records: u64 = 0;
-    let mut catchup_elapsed = Duration::ZERO;
     let mut all_ack_latencies: Vec<Duration> = Vec::new();
     let mut all_e2e_latencies: Vec<Duration> = Vec::new();
 
@@ -6425,9 +6545,6 @@ async fn run_bench_with_events(
                 match event {
                     Some(BenchEvent::Write(Ok(sample))) => {
                         all_ack_latencies.extend(sample.ack_latencies.iter().copied());
-                        write_bytes = sample.bytes;
-                        write_records = sample.records;
-                        write_elapsed = sample.elapsed;
                         let mibps = sample.bytes as f64 / (1024.0 * 1024.0) / sample.elapsed.as_secs_f64().max(0.001);
                         let recps = sample.records as f64 / sample.elapsed.as_secs_f64().max(0.001);
                         let _ = tx.send(Event::BenchWriteSample(BenchSample {
@@ -6449,9 +6566,6 @@ async fn run_bench_with_events(
                     }
                     Some(BenchEvent::Read(Ok(sample))) => {
                         all_e2e_latencies.extend(sample.e2e_latencies.iter().copied());
-                        read_bytes = sample.bytes;
-                        read_records = sample.records;
-                        read_elapsed = sample.elapsed;
                         let mibps = sample.bytes as f64 / (1024.0 * 1024.0) / sample.elapsed.as_secs_f64().max(0.001);
                         let recps = sample.records as f64 / sample.elapsed.as_secs_f64().max(0.001);
                         let _ = tx.send(Event::BenchReadSample(BenchSample {
@@ -6493,9 +6607,6 @@ async fn run_bench_with_events(
     while let Some(result) = catchup_stream.next().await {
         match result {
             Ok(sample) => {
-                catchup_bytes = sample.bytes;
-                catchup_records = sample.records;
-                catchup_elapsed = sample.elapsed;
                 let mibps = sample.bytes as f64 / (1024.0 * 1024.0) / sample.elapsed.as_secs_f64().max(0.001);
                 let recps = sample.records as f64 / sample.elapsed.as_secs_f64().max(0.001);
                 let _ = tx.send(Event::BenchCatchupSample(BenchSample {
@@ -6513,29 +6624,7 @@ async fn run_bench_with_events(
     }
     let _ = tx.send(Event::BenchPhaseComplete(BenchPhase::Catchup));
 
-    let write_mibps = write_bytes as f64 / (1024.0 * 1024.0) / write_elapsed.as_secs_f64().max(0.001);
-    let write_recps = write_records as f64 / write_elapsed.as_secs_f64().max(0.001);
-    let read_mibps = read_bytes as f64 / (1024.0 * 1024.0) / read_elapsed.as_secs_f64().max(0.001);
-    let read_recps = read_records as f64 / read_elapsed.as_secs_f64().max(0.001);
-    let catchup_mibps = catchup_bytes as f64 / (1024.0 * 1024.0) / catchup_elapsed.as_secs_f64().max(0.001);
-    let catchup_recps = catchup_records as f64 / catchup_elapsed.as_secs_f64().max(0.001);
-
     Ok(BenchFinalStats {
-        write_mibps,
-        write_recps,
-        write_bytes,
-        write_records,
-        write_elapsed,
-        read_mibps,
-        read_recps,
-        read_bytes,
-        read_records,
-        read_elapsed,
-        catchup_mibps,
-        catchup_recps,
-        catchup_bytes,
-        catchup_records,
-        catchup_elapsed,
         ack_latency: if all_ack_latencies.is_empty() {
             None
         } else {

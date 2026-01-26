@@ -8,9 +8,9 @@ use ratatui::{
 
 use crate::types::{StorageClass, TimestampingMode};
 
-use super::app::{AccessTokensState, App, AgoUnit, AppendViewState, BasinsState, BenchViewState, CompressionOption, ExpiryOption, InputMode, MessageLevel, MetricCategory, MetricsType, MetricsViewState, ReadStartFrom, ReadViewState, RetentionPolicyOption, ScopeOption, Screen, SettingsState, SetupState, StreamDetailState, StreamsState, Tab};
+use super::app::{AccessTokensState, App, AgoUnit, AppendViewState, BasinsState, BenchViewState, CompressionOption, ExpiryOption, InputMode, MessageLevel, MetricCategory, MetricsType, MetricsViewState, PipState, ReadStartFrom, ReadViewState, RetentionPolicyOption, ScopeOption, Screen, SettingsState, SetupState, StreamDetailState, StreamsState, Tab};
 
-// S2 Console dark theme
+
 const GREEN: Color = Color::Rgb(34, 197, 94);            // Active green
 const YELLOW: Color = Color::Rgb(250, 204, 21);          // Warning yellow
 const RED: Color = Color::Rgb(239, 68, 68);              // Error red
@@ -23,7 +23,7 @@ const BG_DARK: Color = Color::Rgb(17, 17, 17);           // Main background
 const BG_PANEL: Color = Color::Rgb(24, 24, 27);          // Panel background
 const BORDER: Color = Color::Rgb(63, 63, 70);            // Border gray
 
-// Semantic aliases
+
 const ACCENT: Color = WHITE;
 const SUCCESS: Color = GREEN;
 const WARNING: Color = YELLOW;
@@ -32,26 +32,205 @@ const TEXT_PRIMARY: Color = WHITE;
 const TEXT_SECONDARY: Color = GRAY_100;
 const TEXT_MUTED: Color = GRAY_500;
 
+// Additional gray shades for consistent styling
+const GRAY_600: Color = Color::Rgb(80, 80, 80);           // Medium gray for hints/placeholders
+const GRAY_650: Color = Color::Rgb(60, 60, 60);           // For toggle off state
+const GRAY_750: Color = Color::Rgb(50, 50, 50);           // For inactive pills
+
+// Consistent cursor character
+const CURSOR: &str = "▎";
+
+// Consistent selection indicator
+const SELECTED_INDICATOR: &str = " ▸ ";
+const UNSELECTED_INDICATOR: &str = "   ";
+
+/// Safely truncate a string to max_len characters, adding suffix if truncated.
+/// Returns the original string if it fits, otherwise truncates and adds suffix.
+fn truncate_str(s: &str, max_len: usize, suffix: &str) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        let truncate_at = max_len.saturating_sub(suffix.len());
+        // Find a valid char boundary
+        let mut end = truncate_at.min(s.len());
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}{}", &s[..end], suffix)
+    }
+}
+
+// S2 Logo (shared between splash and setup screens)
+const S2_LOGO: &[&str] = &[
+    "   █████████████████████████    ",
+    "  ██████████████████████████████ ",
+    " ███████████████████████████████ ",
+    "█████████████████████████████████",
+    "█████████████████████████████████  ",
+    "███████████████                  ",
+    "███████████████                  ",
+    "██████████████   ████████████████",
+    "██████████████   ████████████████",
+    "██████████████   ████████████████",
+    "███████████████           ███████",
+    "██████████████████          █████",
+    "█████████████████████████    ████",
+    "█████████████████████████   █████",
+    "██████                     ██████",
+    "█████                    ████████",
+    " ███    ██████████████████████ ",
+    "  ██    ██████████████████████ ",
+    "         ████████████████████    ",
+];
+
+/// Render the S2 logo as styled lines
+fn render_logo() -> Vec<Line<'static>> {
+    S2_LOGO.iter()
+        .map(|&line| Line::from(Span::styled(line, Style::default().fg(WHITE))))
+        .collect()
+}
+
+// ============================================================================
+// SHARED UI COMPONENTS
+// ============================================================================
+
+/// Render a toggle switch with consistent styling
+fn render_toggle(on: bool, is_selected: bool) -> Vec<Span<'static>> {
+    if on {
+        vec![
+            Span::styled("", Style::default().fg(if is_selected { GREEN } else { GRAY_650 })),
+            Span::styled(" ON ", Style::default().fg(BG_DARK).bg(GREEN).bold()),
+            Span::styled("", Style::default().fg(GREEN)),
+        ]
+    } else {
+        vec![
+            Span::styled("", Style::default().fg(if is_selected { TEXT_MUTED } else { GRAY_650 })),
+            Span::styled(" OFF ", Style::default().fg(TEXT_MUTED).bg(GRAY_650)),
+            Span::styled("", Style::default().fg(GRAY_650)),
+        ]
+    }
+}
+
+/// Render a pill-style option selector
+fn render_pill(label: &str, is_row_selected: bool, is_active: bool) -> Span<'static> {
+    let label = label.to_string();
+    if is_active {
+        Span::styled(
+            format!(" {} ", label),
+            Style::default().fg(BG_DARK).bg(GREEN).bold()
+        )
+    } else if is_row_selected {
+        Span::styled(
+            format!(" {} ", label),
+            Style::default().fg(TEXT_PRIMARY).bg(GRAY_750)
+        )
+    } else {
+        Span::styled(format!(" {} ", label), Style::default().fg(TEXT_MUTED))
+    }
+}
+
+/// Render a form field row with selection indicator and label
+fn render_field_row(field_idx: usize, label: &str, current_selected: usize) -> (Span<'static>, Span<'static>) {
+    let is_selected = field_idx == current_selected;
+    let indicator = if is_selected {
+        Span::styled(SELECTED_INDICATOR, Style::default().fg(GREEN).bold())
+    } else {
+        Span::raw(UNSELECTED_INDICATOR)
+    };
+    let label_span = Span::styled(
+        format!("{:<15}", label),
+        Style::default().fg(if is_selected { TEXT_PRIMARY } else { TEXT_MUTED })
+    );
+    (indicator, label_span)
+}
+
+/// Render a form field row with bold label when selected
+fn render_field_row_bold(field_idx: usize, label: &str, current_selected: usize) -> (Span<'static>, Span<'static>) {
+    let is_selected = field_idx == current_selected;
+    let indicator = if is_selected {
+        Span::styled(SELECTED_INDICATOR, Style::default().fg(GREEN).bold())
+    } else {
+        Span::raw(UNSELECTED_INDICATOR)
+    };
+    let label_style = if is_selected {
+        Style::default().fg(TEXT_PRIMARY).bold()
+    } else {
+        Style::default().fg(TEXT_MUTED)
+    };
+    (indicator, Span::styled(label.to_string(), label_style))
+}
+
+/// Render a primary action button
+fn render_button(label: &str, is_selected: bool, is_enabled: bool, color: Color) -> Line<'static> {
+    let (btn_fg, btn_bg) = if is_selected && is_enabled {
+        (BG_DARK, color)
+    } else if is_enabled {
+        (color, BG_PANEL)
+    } else {
+        (GRAY_600, BG_PANEL)
+    };
+
+    let indicator = if is_selected {
+        Span::styled(SELECTED_INDICATOR, Style::default().fg(GREEN).bold())
+    } else {
+        Span::raw(UNSELECTED_INDICATOR)
+    };
+
+    Line::from(vec![
+        indicator,
+        Span::styled(format!(" ▶ {} ", label), Style::default().fg(btn_fg).bg(btn_bg).bold()),
+    ])
+}
+
+/// Render a section header with divider line
+fn render_section_header(title: &str, width: usize) -> Line<'static> {
+    let title_with_spaces = format!("   {} ", title);
+    let divider_len = width.saturating_sub(title_with_spaces.len());
+    Line::from(vec![
+        Span::styled(title_with_spaces, Style::default().fg(CYAN).bold()),
+        Span::styled("─".repeat(divider_len), Style::default().fg(GRAY_750)),
+    ])
+}
+
+/// Render text input with cursor
+fn render_text_input(value: &str, is_editing: bool, placeholder: &str, color: Color) -> Vec<Span<'static>> {
+    if value.is_empty() && !is_editing {
+        vec![Span::styled(placeholder.to_string(), Style::default().fg(GRAY_600).italic())]
+    } else {
+        let mut spans = vec![Span::styled(value.to_string(), Style::default().fg(color))];
+        if is_editing {
+            spans.push(Span::styled(CURSOR, Style::default().fg(GREEN)));
+        }
+        spans
+    }
+}
+
+/// Render a checkbox
+#[allow(dead_code)]
+fn render_checkbox(checked: bool) -> &'static str {
+    if checked { "[x]" } else { "[ ]" }
+}
+
+/// Render a radio button
+#[allow(dead_code)]
+fn render_radio(active: bool) -> &'static str {
+    if active { "●" } else { "○" }
+}
+
 pub fn draw(f: &mut Frame, app: &App) {
-    // Clear with dark CRT background
+
     let area = f.area();
     f.render_widget(Block::default().style(Style::default().bg(BG_DARK)), area);
-
-    // Splash screen uses full area
     if matches!(app.screen, Screen::Splash) {
         draw_splash(f, area);
         return;
     }
-
-    // Setup screen uses full area (no tabs or status bar)
     if matches!(app.screen, Screen::Setup(_)) {
         if let Screen::Setup(state) = &app.screen {
             draw_setup(f, area, state);
         }
         return;
     }
-
-    // Check if we should show tabs (only on top-level screens)
     let show_tabs = matches!(app.screen, Screen::Basins(_) | Screen::AccessTokens(_) | Screen::Settings(_));
 
     let chunks = if show_tabs {
@@ -60,7 +239,7 @@ pub fn draw(f: &mut Frame, app: &App) {
             .margin(1)
             .constraints([
                 Constraint::Length(1), // Tab bar
-                Constraint::Min(3),    // Main content
+                Constraint::Min(3),
                 Constraint::Length(1), // Status bar
             ])
             .split(area)
@@ -70,18 +249,14 @@ pub fn draw(f: &mut Frame, app: &App) {
             .margin(1)
             .constraints([
                 Constraint::Length(0), // No tab bar
-                Constraint::Min(3),    // Main content
+                Constraint::Min(3),
                 Constraint::Length(1), // Status bar
             ])
             .split(area)
     };
-
-    // Draw tab bar if on top-level screen
     if show_tabs {
         draw_tab_bar(f, chunks[0], app.tab);
     }
-
-    // Draw main content based on screen
     match &app.screen {
         Screen::Splash => unreachable!(),
         Screen::Setup(_) => unreachable!(), // Handled above
@@ -95,8 +270,6 @@ pub fn draw(f: &mut Frame, app: &App) {
         Screen::Settings(state) => draw_settings(f, chunks[1], state),
         Screen::BenchView(state) => draw_bench_view(f, chunks[1], state),
     }
-
-    // Draw time picker popup if open
     if let Screen::MetricsView(state) = &app.screen {
         if state.time_picker_open {
             draw_time_picker(f, state);
@@ -105,63 +278,35 @@ pub fn draw(f: &mut Frame, app: &App) {
             draw_calendar_picker(f, state);
         }
     }
-
-    // Draw status bar
     draw_status_bar(f, chunks[2], app);
-
-    // Draw help overlay if visible
     if app.show_help {
         draw_help_overlay(f, &app.screen);
     }
-
-    // Draw input dialog if in input mode
     if !matches!(app.input_mode, InputMode::Normal) {
         draw_input_dialog(f, &app.input_mode);
+    }
+    // Draw PiP overlay last so it's on top
+    if let Some(ref pip) = app.pip {
+        if !pip.minimized {
+            draw_pip(f, pip);
+        } else {
+            draw_pip_minimized(f, pip);
+        }
     }
 }
 
 fn draw_splash(f: &mut Frame, area: Rect) {
-    // Draw aurora background effect
     draw_aurora_background(f, area);
 
-    // S2 logo
-    let logo = vec![
-        "   █████████████████████████    ",
-        "  ██████████████████████████████ ",
-        " ███████████████████████████████ ",
-        "█████████████████████████████████",
-        "█████████████████████████████████  ",
-        "███████████████                  ",
-        "███████████████                  ",
-        "██████████████   ████████████████",
-        "██████████████   ████████████████",
-        "██████████████   ████████████████",
-        "███████████████           ███████",
-        "██████████████████          █████",
-        "█████████████████████████    ████",
-        "█████████████████████████   █████",
-        "██████                     ██████",
-        "█████                    ████████",
-        " ███    ██████████████████████ ",
-        "  ██    ██████████████████████ ",
-        "         ████████████████████    ",
-    ];
-
-    // Create lines with logo (centered)
-    let mut lines: Vec<Line> = logo
-        .iter()
-        .map(|&line| Line::from(Span::styled(line, Style::default().fg(Color::White))))
-        .collect();
-
-    // Add tagline below logo
+    let mut lines = render_logo();
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "Streams as a cloud",
-        Style::default().fg(Color::White).bold(),
+        Style::default().fg(WHITE).bold(),
     )));
     lines.push(Line::from(Span::styled(
         "storage primitive",
-        Style::default().fg(Color::White).bold(),
+        Style::default().fg(WHITE).bold(),
     )));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -170,8 +315,6 @@ fn draw_splash(f: &mut Frame, area: Rect) {
     )));
 
     let content_height = lines.len() as u16;
-
-    // Center vertically
     let y = area.y + area.height.saturating_sub(content_height) / 2;
 
     let centered_area = Rect::new(area.x, y, area.width, content_height);
@@ -181,39 +324,9 @@ fn draw_splash(f: &mut Frame, area: Rect) {
 
 /// Draw the setup screen (first-time token entry)
 fn draw_setup(f: &mut Frame, area: Rect, state: &SetupState) {
-    // Draw aurora background
     draw_aurora_background(f, area);
 
-    // S2 logo (same as splash)
-    let logo = vec![
-        "   █████████████████████████    ",
-        "  ██████████████████████████████ ",
-        " ███████████████████████████████ ",
-        "█████████████████████████████████",
-        "█████████████████████████████████  ",
-        "███████████████                  ",
-        "███████████████                  ",
-        "██████████████   ████████████████",
-        "██████████████   ████████████████",
-        "██████████████   ████████████████",
-        "███████████████           ███████",
-        "██████████████████          █████",
-        "█████████████████████████    ████",
-        "█████████████████████████   █████",
-        "██████                     ██████",
-        "█████                    ████████",
-        " ███    ██████████████████████ ",
-        "  ██    ██████████████████████ ",
-        "         ████████████████████    ",
-    ];
-
-    // Build content
-    let mut lines: Vec<Line> = logo
-        .iter()
-        .map(|&line| Line::from(Span::styled(line, Style::default().fg(Color::White))))
-        .collect();
-
-    // Tagline
+    let mut lines = render_logo();
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "Streams as a cloud storage primitive",
@@ -223,12 +336,8 @@ fn draw_setup(f: &mut Frame, area: Rect, state: &SetupState) {
         "The serverless API for unlimited, durable, real-time streams.",
         Style::default().fg(TEXT_MUTED),
     )));
-
-    // Spacer
     lines.push(Line::from(""));
     lines.push(Line::from(""));
-
-    // Token input - minimal style
     let token_display = if state.access_token.is_empty() {
         vec![
             Span::styled("Token ", Style::default().fg(TEXT_MUTED)),
@@ -236,11 +345,7 @@ fn draw_setup(f: &mut Frame, area: Rect, state: &SetupState) {
             Span::styled("_", Style::default().fg(CYAN)),
         ]
     } else {
-        let display = if state.access_token.len() > 40 {
-            format!("{}...", &state.access_token[..40])
-        } else {
-            state.access_token.clone()
-        };
+        let display = truncate_str(&state.access_token, 40, "...");
         vec![
             Span::styled("Token ", Style::default().fg(TEXT_MUTED)),
             Span::styled("› ", Style::default().fg(GREEN)),
@@ -249,8 +354,6 @@ fn draw_setup(f: &mut Frame, area: Rect, state: &SetupState) {
         ]
     };
     lines.push(Line::from(token_display));
-
-    // Status/error line
     lines.push(Line::from(""));
     if let Some(error) = &state.error {
         lines.push(Line::from(Span::styled(
@@ -268,8 +371,6 @@ fn draw_setup(f: &mut Frame, area: Rect, state: &SetupState) {
             Span::styled("s2.dev/dashboard/access-tokens", Style::default().fg(CYAN)),
         ]));
     }
-
-    // Footer hint
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "Enter to continue · Esc to quit",
@@ -287,8 +388,6 @@ fn draw_setup(f: &mut Frame, area: Rect, state: &SetupState) {
 /// Draw the settings screen
 fn draw_settings(f: &mut Frame, area: Rect, state: &SettingsState) {
     use ratatui::widgets::BorderType;
-
-    // Layout: Title bar + content
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -296,8 +395,6 @@ fn draw_settings(f: &mut Frame, area: Rect, state: &SettingsState) {
             Constraint::Min(1),    // Content
         ])
         .split(area);
-
-    // === TITLE BAR ===
     let title_block = Block::default()
         .borders(Borders::BOTTOM)
         .border_style(Style::default().fg(BORDER))
@@ -308,11 +405,7 @@ fn draw_settings(f: &mut Frame, area: Rect, state: &SettingsState) {
     ]))
     .block(title_block);
     f.render_widget(title_content, chunks[0]);
-
-    // === CONTENT ===
     let content_area = chunks[1];
-
-    // Create centered settings panel
     let panel_width = 70.min(content_area.width.saturating_sub(4));
     let panel_x = content_area.x + (content_area.width.saturating_sub(panel_width)) / 2;
     let panel_area = Rect::new(panel_x, content_area.y + 1, panel_width, content_area.height.saturating_sub(2));
@@ -325,8 +418,6 @@ fn draw_settings(f: &mut Frame, area: Rect, state: &SettingsState) {
         .padding(Padding::new(2, 2, 1, 1));
     let inner = settings_block.inner(panel_area);
     f.render_widget(settings_block, panel_area);
-
-    // Settings fields
     let field_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -340,11 +431,9 @@ fn draw_settings(f: &mut Frame, area: Rect, state: &SettingsState) {
         ])
         .split(inner);
 
-    // Access Token field
-    // Always show actual value when editing, otherwise respect mask flag
     let is_editing_token = state.editing && state.selected == 0;
     let token_display = if is_editing_token {
-        // When editing, always show actual value
+
         state.access_token.clone()
     } else if state.access_token_masked && !state.access_token.is_empty() {
         format!("{}...", "*".repeat(20.min(state.access_token.len())))
@@ -363,8 +452,6 @@ fn draw_settings(f: &mut Frame, area: Rect, state: &SettingsState) {
         is_editing_token,
         Some("Space to toggle visibility"),
     );
-
-    // Account Endpoint field
     draw_settings_field(
         f,
         field_chunks[1],
@@ -378,8 +465,6 @@ fn draw_settings(f: &mut Frame, area: Rect, state: &SettingsState) {
         state.editing && state.selected == 1,
         None,
     );
-
-    // Basin Endpoint field
     draw_settings_field(
         f,
         field_chunks[2],
@@ -393,8 +478,6 @@ fn draw_settings(f: &mut Frame, area: Rect, state: &SettingsState) {
         state.editing && state.selected == 2,
         None,
     );
-
-    // Compression field (pill selector)
     let compression_label = Line::from(vec![
         Span::styled("Compression", Style::default().fg(TEXT_SECONDARY)),
     ]);
@@ -428,8 +511,6 @@ fn draw_settings(f: &mut Frame, area: Rect, state: &SettingsState) {
             .style(Style::default().bg(BG_DARK)),
         compression_row,
     );
-
-    // Save button
     let save_style = if state.selected == 4 {
         Style::default().fg(BG_DARK).bg(GREEN).bold()
     } else if state.has_changes {
@@ -445,13 +526,13 @@ fn draw_settings(f: &mut Frame, area: Rect, state: &SettingsState) {
     let save_button = Paragraph::new(Line::from(Span::styled(save_text, save_style)))
         .alignment(Alignment::Center);
     f.render_widget(save_button, field_chunks[5]);
-
-    // Message/footer
     if let Some(msg) = &state.message {
-        let msg_style = if msg.contains("success") || msg.contains("saved") {
-            Style::default().fg(SUCCESS)
-        } else {
+        let msg_lower = msg.to_lowercase();
+        let is_error = msg_lower.contains("error") || msg_lower.contains("fail") || msg_lower.contains("invalid");
+        let msg_style = if is_error {
             Style::default().fg(ERROR)
+        } else {
+            Style::default().fg(SUCCESS)
         };
         let msg_para = Paragraph::new(Line::from(Span::styled(msg.as_str(), msg_style)))
             .alignment(Alignment::Center);
@@ -510,53 +591,62 @@ fn draw_settings_field(
         .style(Style::default().bg(BG_DARK));
     let value_para = Paragraph::new(Span::styled(value_display, value_style))
         .block(value_block);
-    // Height must be 3: top border (1) + content (1) + bottom border (1)
+
     f.render_widget(value_para, Rect::new(area.x, area.y + 1, area.width, 3));
 }
 
 /// Draw a subtle aurora/gradient background effect
+/// Optimized to compute one color per row (at center) rather than per-cell
 fn draw_aurora_background(f: &mut Frame, area: Rect) {
-    let width = area.width as f64;
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
     let height = area.height as f64;
 
     for row in 0..area.height {
-        let mut spans: Vec<Span> = Vec::new();
-        for col in 0..area.width {
-            // Normalize coordinates
-            let x = col as f64 / width;
-            let y = row as f64 / height;
+        let y = row as f64 / height;
 
-            // Create aurora effect - subtle glow from bottom-right and center
-            // Distance from bottom-right corner
-            let dist_br = ((x - 0.8).powi(2) + (y - 0.9).powi(2)).sqrt();
-            // Distance from center-bottom
-            let dist_cb = ((x - 0.5).powi(2) + (y - 0.85).powi(2)).sqrt();
+        // Build the row string efficiently - all same character
+        let row_str: String = " ".repeat(area.width as usize);
 
-            // Aurora intensity (stronger near bottom)
-            let intensity_br = (1.0 - dist_br * 1.5).max(0.0) * 0.4;
-            let intensity_cb = (1.0 - dist_cb * 1.8).max(0.0) * 0.3;
-            let intensity = (intensity_br + intensity_cb).min(1.0);
+        // Use the row's center color for performance
+        // This reduces allocations from O(width) to O(1) per row
+        let color = aurora_color_at(0.5, y);
 
-            // Base dark color with subtle blue/teal tint
-            let base_r = 8;
-            let base_g = 12;
-            let base_b = 18;
-
-            // Aurora colors (teal/cyan)
-            let aurora_r = 0;
-            let aurora_g = 40;
-            let aurora_b = 60;
-
-            let r = base_r + ((aurora_r - base_r as i32) as f64 * intensity) as u8;
-            let g = base_g + ((aurora_g - base_g as i32) as f64 * intensity) as u8;
-            let b = base_b + ((aurora_b - base_b as i32) as f64 * intensity) as u8;
-
-            spans.push(Span::styled(" ", Style::default().bg(Color::Rgb(r, g, b))));
-        }
-        let line = Line::from(spans);
+        let line = Line::from(Span::styled(row_str, Style::default().bg(color)));
         let row_area = Rect::new(area.x, area.y + row, area.width, 1);
         f.render_widget(Paragraph::new(line), row_area);
     }
+}
+
+/// Compute aurora color at normalized coordinates (0.0-1.0)
+fn aurora_color_at(x: f64, y: f64) -> Color {
+    // Distance from bottom-right corner
+    let dist_br = ((x - 0.8).powi(2) + (y - 0.9).powi(2)).sqrt();
+    // Distance from center-bottom
+    let dist_cb = ((x - 0.5).powi(2) + (y - 0.85).powi(2)).sqrt();
+
+    // Aurora intensity (stronger near bottom)
+    let intensity_br = (1.0 - dist_br * 1.5).max(0.0) * 0.4;
+    let intensity_cb = (1.0 - dist_cb * 1.8).max(0.0) * 0.3;
+    let intensity = (intensity_br + intensity_cb).min(1.0);
+
+    // Base dark color with subtle blue/teal tint
+    let base_r: i32 = 8;
+    let base_g: i32 = 12;
+    let base_b: i32 = 18;
+
+    // Aurora colors (teal/cyan)
+    let aurora_r: i32 = 0;
+    let aurora_g: i32 = 40;
+    let aurora_b: i32 = 60;
+
+    let r = (base_r as f64 + (aurora_r - base_r) as f64 * intensity) as u8;
+    let g = (base_g as f64 + (aurora_g - base_g) as f64 * intensity) as u8;
+    let b = (base_b as f64 + (aurora_b - base_b) as f64 * intensity) as u8;
+
+    Color::Rgb(r, g, b)
 }
 
 fn draw_tab_bar(f: &mut Frame, area: Rect, current_tab: Tab) {
@@ -592,7 +682,7 @@ fn draw_tab_bar(f: &mut Frame, area: Rect, current_tab: Tab) {
 }
 
 fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
-    // Layout: Title bar, Search bar, Header, Table rows
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -602,8 +692,6 @@ fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
             Constraint::Min(1),    // Table rows
         ])
         .split(area);
-
-    // === Title Bar ===
     let count_text = if state.loading {
         " loading...".to_string()
     } else {
@@ -628,8 +716,6 @@ fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
             .borders(Borders::BOTTOM)
             .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
     f.render_widget(title_block, chunks[0]);
-
-    // === Search Bar ===
     let search_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if state.filter_active { GREEN } else { BORDER }))
@@ -657,8 +743,6 @@ fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
         .style(Style::default().bg(BG_PANEL));
     f.render_widget(search_para, chunks[1]);
 
-    // === Header ===
-    // Column widths: prefix(2) + token_id(30) + expires_at(28) + scope(rest)
     let header = Line::from(vec![
         Span::styled("  ", Style::default()),  // Space for selection prefix
         Span::styled(
@@ -674,8 +758,6 @@ fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
     let header_para = Paragraph::new(header);
     f.render_widget(header_para, chunks[2]);
 
-    // === Token List ===
-    // Filter tokens
     let filtered_tokens: Vec<_> = state
         .tokens
         .iter()
@@ -712,8 +794,6 @@ fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
             .map(|(i, token)| {
                 let actual_index = start + i;
                 let is_selected = actual_index == state.selected;
-
-                // Format scope summary
                 let scope_summary = format_scope_summary(token);
 
                 let style = if is_selected {
@@ -723,22 +803,10 @@ fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
                 };
 
                 let prefix = if is_selected { "▶ " } else { "  " };
-
-                // Truncate token ID if too long (max 28 chars to leave room for padding)
                 let token_id_str = token.id.to_string();
-                let token_id_display = if token_id_str.len() > 28 {
-                    format!("{}…", &token_id_str[..27])
-                } else {
-                    token_id_str
-                };
-
-                // Format expires_at more compactly
+                let token_id_display = truncate_str(&token_id_str, 28, "…");
                 let expires_str = token.expires_at.to_string();
-                let expires_display = if expires_str.len() > 26 {
-                    format!("{}…", &expires_str[..25])
-                } else {
-                    expires_str
-                };
+                let expires_display = truncate_str(&expires_str, 26, "…");
 
                 Line::from(vec![
                     Span::styled(prefix, style),
@@ -864,19 +932,15 @@ fn is_token_op(op: &s2_sdk::types::Operation) -> bool {
 
 fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
     use s2_sdk::types::Metric;
-
-    // Layout: Title+tabs, Stats header, Main graph area, Timeline
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),  // Title with tabs
             Constraint::Length(3),  // Stats header row
-            Constraint::Min(12),    // Main graph (area chart)
+            Constraint::Min(12),
             Constraint::Length(6),  // Timeline (scrollable)
         ])
         .split(area);
-
-    // === Title with integrated category tabs ===
     let title = match &state.metrics_type {
         MetricsType::Account => "Account".to_string(),
         MetricsType::Basin { basin_name } => basin_name.to_string(),
@@ -884,7 +948,7 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
     };
 
     if matches!(state.metrics_type, MetricsType::Account) {
-        // Account metrics have different categories
+
         let categories = [
             MetricCategory::ActiveBasins,
             MetricCategory::AccountOps,
@@ -907,8 +971,6 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
             };
             title_spans.push(Span::styled(format!(" {} ", cat.as_str()), style));
         }
-
-        // Add time range to title
         title_spans.push(Span::styled("  ", Style::default()));
         title_spans.push(Span::styled(format!("[{}]", state.time_range.as_str()), Style::default().fg(CYAN)));
 
@@ -929,6 +991,7 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
             MetricCategory::ReadOps,
             MetricCategory::AppendThroughput,
             MetricCategory::ReadThroughput,
+            MetricCategory::BasinOps,
         ];
 
         let mut title_spans: Vec<Span> = vec![
@@ -948,8 +1011,6 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
             };
             title_spans.push(Span::styled(format!(" {} ", cat.as_str()), style));
         }
-
-        // Add time range to title
         title_spans.push(Span::styled("  ", Style::default()));
         title_spans.push(Span::styled(format!("[{}]", state.time_range.as_str()), Style::default().fg(CYAN)));
 
@@ -974,14 +1035,14 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
             Span::styled(" [ ", Style::default().fg(BORDER)),
             Span::styled(&title, Style::default().fg(GREEN).bold()),
             Span::styled(" ]  ", Style::default().fg(BORDER)),
-            Span::styled(format!("Storage [{}]", state.time_range.as_str()), Style::default().fg(TEXT_PRIMARY)),
+            Span::styled(" Storage ", Style::default().fg(BG_DARK).bg(GREEN).bold()),
+            Span::styled("  ", Style::default()),
+            Span::styled(format!("[{}]", state.time_range.as_str()), Style::default().fg(CYAN)),
         ]))
         .block(title_block)
         .alignment(Alignment::Center);
         f.render_widget(title_para, chunks[0]);
     }
-
-    // === Loading / Empty states ===
     if state.loading {
         let loading_block = Block::default()
             .borders(Borders::ALL)
@@ -1021,8 +1082,6 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
         f.render_widget(empty, remaining[0]);
         return;
     }
-
-    // Check for Label metrics first (like Active Basins)
     let mut label_values: Vec<String> = Vec::new();
     let mut label_name = String::new();
 
@@ -1032,25 +1091,19 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
             label_values.extend(m.values.iter().cloned());
         }
     }
-
-    // If we have label metrics, render them differently
     if !label_values.is_empty() {
         render_label_metric(f, chunks, &label_name, &label_values, state);
         return;
     }
-
-    // Check if we have multiple Accumulation metrics (like Account Ops)
     let accumulation_metrics: Vec<_> = state.metrics.iter()
         .filter_map(|m| if let Metric::Accumulation(a) = m { Some(a) } else { None })
         .collect();
 
     if accumulation_metrics.len() > 1 {
-        // Multiple metrics - render as operations breakdown
+
         render_multi_metric(f, chunks, &accumulation_metrics, state);
         return;
     }
-
-    // Collect all time-series values for rendering (single metric)
     let mut all_values: Vec<(u32, f64)> = Vec::new();
     let mut metric_name = String::new();
     let mut metric_unit = s2_sdk::types::MetricUnit::Bytes;
@@ -1079,11 +1132,7 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
     if all_values.is_empty() {
         return;
     }
-
-    // Sort by timestamp
     all_values.sort_by_key(|(ts, _)| *ts);
-
-    // Calculate stats
     let values_only: Vec<f64> = all_values.iter().map(|(_, v)| *v).collect();
     let min_val = values_only.iter().cloned().fold(f64::MAX, f64::min);
     let max_val = values_only.iter().cloned().fold(f64::MIN, f64::max);
@@ -1094,8 +1143,6 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
     };
     let latest_val = values_only.last().cloned().unwrap_or(0.0);
     let first_val = values_only.first().cloned().unwrap_or(0.0);
-
-    // Calculate change for trend indicator
     let change = if first_val > 0.0 {
         ((latest_val - first_val) / first_val) * 100.0
     } else if latest_val > 0.0 {
@@ -1103,12 +1150,8 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
     } else {
         0.0
     };
-
-    // Time range
     let first_ts = all_values.first().map(|(ts, _)| *ts).unwrap_or(0);
     let last_ts = all_values.last().map(|(ts, _)| *ts).unwrap_or(0);
-
-    // === Stats header row ===
     let stats_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(BORDER))
@@ -1116,14 +1159,12 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
 
     let stats_inner = stats_block.inner(chunks[1]);
     f.render_widget(stats_block, chunks[1]);
-
-    // Trend indicator
     let (trend_arrow, trend_color) = if change > 1.0 {
-        ("^", Color::Rgb(34, 197, 94))
+        ("↑", GREEN)
     } else if change < -1.0 {
-        ("v", Color::Rgb(239, 68, 68))
+        ("↓", ERROR)
     } else {
-        ("=", TEXT_MUTED)
+        ("→", TEXT_MUTED)
     };
     let trend_text = if change.abs() > 0.1 {
         format!("{:+.1}%", change)
@@ -1147,8 +1188,6 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
     ]);
     let stats_para = Paragraph::new(stats_line).alignment(Alignment::Center);
     f.render_widget(stats_para, stats_inner);
-
-    // === Main Area Chart ===
     let chart_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(GREEN))
@@ -1161,11 +1200,7 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
 
     let chart_inner = chart_block.inner(chunks[2]);
     f.render_widget(chart_block, chunks[2]);
-
-    // Render the area chart
     render_area_chart(f, chart_inner, &all_values, min_val, max_val, metric_unit, first_ts, last_ts);
-
-    // === Timeline (scrollable detail) ===
     let timeline_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(BORDER))
@@ -1178,8 +1213,6 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
 
     let timeline_inner = timeline_block.inner(chunks[3]);
     f.render_widget(timeline_block, chunks[3]);
-
-    // Compact timeline bars
     let bar_width = timeline_inner.width.saturating_sub(26) as usize;
     let visible_rows = timeline_inner.height as usize;
 
@@ -1194,8 +1227,6 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
                 0
             };
             let intensity = if max_val > 0.0 { *value / max_val } else { 0.0 };
-
-            // Gradient color based on intensity
             let bar_color = intensity_to_color(intensity);
 
             let bar: String = (0..bar_len).map(|i| {
@@ -1240,8 +1271,6 @@ fn render_multi_metric(
     state: &MetricsViewState,
 ) {
     use std::collections::BTreeMap;
-
-    // Color palette for different operation types (purple/blue gradient like web console)
     let colors = [
         Color::Rgb(139, 92, 246),   // Purple (primary)
         Color::Rgb(124, 58, 237),   // Violet
@@ -1254,8 +1283,6 @@ fn render_multi_metric(
         Color::Rgb(250, 204, 21),   // Yellow (for highlights)
         Color::Rgb(251, 146, 60),   // Orange
     ];
-
-    // Calculate totals for each metric and sort by total
     let mut metric_totals: Vec<(String, f64, usize)> = metrics
         .iter()
         .enumerate()
@@ -1265,8 +1292,6 @@ fn render_multi_metric(
         })
         .collect();
     metric_totals.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-    // Aggregate all values by timestamp for the area chart (sum of all operation types)
     let mut time_buckets: BTreeMap<u32, f64> = BTreeMap::new();
     for metric in metrics.iter() {
         for (ts, val) in &metric.values {
@@ -1289,8 +1314,6 @@ fn render_multi_metric(
     let first_val = values_only.first().cloned().unwrap_or(0.0);
     let first_ts = all_values.first().map(|(ts, _)| *ts).unwrap_or(0);
     let last_ts = all_values.last().map(|(ts, _)| *ts).unwrap_or(0);
-
-    // Calculate change for trend indicator
     let change = if first_val > 0.0 {
         ((latest_val - first_val) / first_val) * 100.0
     } else if latest_val > 0.0 {
@@ -1298,8 +1321,6 @@ fn render_multi_metric(
     } else {
         0.0
     };
-
-    // === Stats header row (nerdy style) ===
     let stats_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(BORDER))
@@ -1309,9 +1330,9 @@ fn render_multi_metric(
     f.render_widget(stats_block, chunks[1]);
 
     let (trend_arrow, trend_color) = if change > 1.0 {
-        ("↑", Color::Rgb(34, 197, 94))
+        ("↑", GREEN)
     } else if change < -1.0 {
-        ("↓", Color::Rgb(239, 68, 68))
+        ("↓", ERROR)
     } else {
         ("→", TEXT_MUTED)
     };
@@ -1337,8 +1358,6 @@ fn render_multi_metric(
     ]);
     let stats_para = Paragraph::new(stats_line).alignment(Alignment::Center);
     f.render_widget(stats_para, stats_inner);
-
-    // === Main Area Chart (total operations over time) ===
     let chart_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(GREEN))
@@ -1355,8 +1374,6 @@ fn render_multi_metric(
     if !all_values.is_empty() {
         render_area_chart(f, chart_inner, &all_values, min_val, max_val, s2_sdk::types::MetricUnit::Operations, first_ts, last_ts);
     }
-
-    // === Timeline/Legend area - show breakdown by operation type ===
     let timeline_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(BORDER))
@@ -1369,8 +1386,6 @@ fn render_multi_metric(
 
     let timeline_inner = timeline_block.inner(chunks[3]);
     f.render_widget(timeline_block, chunks[3]);
-
-    // Render breakdown as horizontal bars
     let visible_rows = timeline_inner.height as usize;
     let bar_width = timeline_inner.width.saturating_sub(28) as usize;
     let max_total = metric_totals.iter().map(|(_, t, _)| *t).fold(0.0, f64::max);
@@ -1425,7 +1440,7 @@ fn render_label_metric(
     values: &[String],
     state: &MetricsViewState,
 ) {
-    // Stats header showing count
+
     let stats_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(BORDER))
@@ -1441,8 +1456,6 @@ fn render_label_metric(
     ]);
     let stats_para = Paragraph::new(stats_line).alignment(Alignment::Center);
     f.render_widget(stats_para, stats_inner);
-
-    // Main list area
     let list_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(GREEN))
@@ -1461,7 +1474,7 @@ fn render_label_metric(
             .alignment(Alignment::Center);
         f.render_widget(empty, list_inner);
     } else {
-        // Render the list of values
+
         let visible_rows = list_inner.height as usize;
         let total_items = values.len();
 
@@ -1480,8 +1493,6 @@ fn render_label_metric(
 
         let list_para = Paragraph::new(items);
         f.render_widget(list_para, list_inner);
-
-        // Scroll indicator in timeline area
         let scroll_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(BORDER))
@@ -1520,13 +1531,9 @@ fn render_area_chart(
     if height < 2 || width < 10 {
         return;
     }
-
-    // Calculate value range with some padding
     let chart_min = if min_val > 0.0 { 0.0 } else { min_val };
     let chart_max = max_val * 1.1; // 10% headroom
     let chart_range = chart_max - chart_min;
-
-    // Resample values to fit width
     let values_only: Vec<f64> = values.iter().map(|(_, v)| *v).collect();
     let step = values_only.len() as f64 / width as f64;
 
@@ -1626,16 +1633,12 @@ fn render_sparkline_gradient(values: &[(u32, f64)], width: usize) -> String {
     if values.is_empty() {
         return "-".repeat(width);
     }
-
-    // Sparkline characters from lowest to highest
     let spark_chars = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
     let values_only: Vec<f64> = values.iter().map(|(_, v)| *v).collect();
     let min_val = values_only.iter().cloned().fold(f64::MAX, f64::min);
     let max_val = values_only.iter().cloned().fold(f64::MIN, f64::max);
     let range = max_val - min_val;
-
-    // Resample values to fit width
     let step = values_only.len() as f64 / width as f64;
     let mut sparkline = String::new();
 
@@ -1659,7 +1662,7 @@ fn render_sparkline_gradient(values: &[(u32, f64)], width: usize) -> String {
 fn format_metric_timestamp_short(ts: u32) -> String {
     use std::time::{Duration, UNIX_EPOCH};
     let time = UNIX_EPOCH + Duration::from_secs(ts as u64);
-    // Just show time portion
+
     humantime::format_rfc3339_seconds(time)
         .to_string()
         .chars()
@@ -1714,23 +1717,23 @@ fn draw_time_picker(f: &mut Frame, state: &MetricsViewState) {
 
     let area = f.area();
 
-    // PRESETS.len() + 1 for "Custom" option
+
     let item_count = TimeRangeOption::PRESETS.len() + 1;
 
-    // Calculate popup dimensions
+
     let popup_width = 30u16;
     let popup_height = (item_count as u16) + 4; // Items + borders + title
 
-    // Center the popup
+
     let popup_x = (area.width.saturating_sub(popup_width)) / 2;
     let popup_y = (area.height.saturating_sub(popup_height)) / 2;
 
     let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
 
-    // Clear the area behind the popup
+
     f.render_widget(Clear, popup_area);
 
-    // Build the list items
+
     let mut items: Vec<ListItem> = TimeRangeOption::PRESETS
         .iter()
         .enumerate()
@@ -1751,7 +1754,7 @@ fn draw_time_picker(f: &mut Frame, state: &MetricsViewState) {
         })
         .collect();
 
-    // Add "Custom" option at index 7
+
     let custom_index = TimeRangeOption::PRESETS.len();
     let is_custom_selected = state.time_picker_selected == custom_index;
     let is_custom_current = matches!(state.time_range, TimeRangeOption::Custom { .. });
@@ -1787,21 +1790,21 @@ fn draw_time_picker(f: &mut Frame, state: &MetricsViewState) {
 
 /// Draw calendar date picker
 fn draw_calendar_picker(f: &mut Frame, state: &MetricsViewState) {
-    use chrono::{Datelike, NaiveDate};
+    use chrono::{Datelike, Local, NaiveDate};
 
     let area = f.area();
 
-    // Calendar dimensions: 7 columns * 4 chars + padding = 32, height for header + 6 weeks + status
+
     let popup_width = 36u16;
     let popup_height = 14u16;
 
-    // Center the popup
+
     let popup_x = (area.width.saturating_sub(popup_width)) / 2;
     let popup_y = (area.height.saturating_sub(popup_height)) / 2;
 
     let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
 
-    // Clear the area behind the popup
+
     f.render_widget(Clear, popup_area);
 
     // Month names
@@ -1809,11 +1812,12 @@ fn draw_calendar_picker(f: &mut Frame, state: &MetricsViewState) {
         "January", "February", "March", "April", "May", "June",
         "July", "August", "September", "October", "November", "December"
     ];
-    let month_name = month_names.get(state.calendar_month as usize - 1).unwrap_or(&"???");
+    let month_name = month_names.get(state.calendar_month.saturating_sub(1) as usize).unwrap_or(&"???");
 
-    // Calculate first day of month and days in month
+    // Calculate first day of month and days in month (with safe fallbacks)
+    let today = Local::now().date_naive();
     let first_of_month = NaiveDate::from_ymd_opt(state.calendar_year, state.calendar_month, 1)
-        .unwrap_or(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap());
+        .unwrap_or(today.with_day(1).unwrap_or(today));
     let first_weekday = first_of_month.weekday().num_days_from_sunday() as usize;
     let days_in_month = {
         let next_month = if state.calendar_month == 12 {
@@ -1821,7 +1825,10 @@ fn draw_calendar_picker(f: &mut Frame, state: &MetricsViewState) {
         } else {
             NaiveDate::from_ymd_opt(state.calendar_year, state.calendar_month + 1, 1)
         };
-        next_month.unwrap().pred_opt().map(|d| d.day()).unwrap_or(28)
+        next_month
+            .and_then(|d| d.pred_opt())
+            .map(|d| d.day())
+            .unwrap_or(28) // Safe fallback - February minimum
     };
 
     // Build calendar lines
@@ -1933,7 +1940,7 @@ fn draw_calendar_picker(f: &mut Frame, state: &MetricsViewState) {
 }
 
 fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
-    // Layout: Title bar, Search bar, Header, Table rows
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -1943,8 +1950,6 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
             Constraint::Min(1),    // Table rows
         ])
         .split(area);
-
-    // === Title Bar ===
     let count_text = if state.loading {
         " loading...".to_string()
     } else {
@@ -1969,8 +1974,6 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
             .borders(Borders::BOTTOM)
             .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
     f.render_widget(title_block, chunks[0]);
-
-    // === Search Bar ===
     let search_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if state.filter_active { GREEN } else { BORDER }))
@@ -2010,8 +2013,6 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
         Span::styled("Scope", Style::default().fg(TEXT_MUTED)),
     ]);
     f.render_widget(Paragraph::new(header), Rect::new(header_area.x, header_area.y, header_area.width, 1));
-
-    // Header separator
     let sep = "─".repeat(total_width);
     f.render_widget(
         Paragraph::new(Span::styled(sep, Style::default().fg(BORDER))),
@@ -2076,11 +2077,8 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
 
         // Name column
         let name = basin.name.to_string();
-        let display_name = if name.len() > name_col - 2 {
-            format!("{}…", &name[..name_col - 3])
-        } else {
-            name
-        };
+        let max_name_len = name_col.saturating_sub(2);
+        let display_name = truncate_str(&name, max_name_len, "…");
 
         // State badge
         let (state_text, state_bg) = match basin.state {
@@ -2125,7 +2123,7 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
 }
 
 fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
-    // Layout: Title bar, Search bar, Header, Table rows
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -2135,8 +2133,6 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
             Constraint::Min(1),    // Table rows
         ])
         .split(area);
-
-    // === Title Bar ===
     let count_text = if state.loading {
         " loading...".to_string()
     } else {
@@ -2164,8 +2160,6 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
             .borders(Borders::BOTTOM)
             .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
     f.render_widget(title_block, chunks[0]);
-
-    // === Search Bar ===
     let search_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if state.filter_active { GREEN } else { BORDER }))
@@ -2202,8 +2196,6 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
         Span::styled("Created", Style::default().fg(TEXT_MUTED)),
     ]);
     f.render_widget(Paragraph::new(header), Rect::new(header_area.x, header_area.y, header_area.width, 1));
-
-    // Header separator
     let sep = "─".repeat(total_width);
     f.render_widget(
         Paragraph::new(Span::styled(sep, Style::default().fg(BORDER))),
@@ -2268,11 +2260,8 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
 
         // Name column
         let name = stream.name.to_string();
-        let display_name = if name.len() > name_col - 2 {
-            format!("{}…", &name[..name_col - 3])
-        } else {
-            name
-        };
+        let max_name_len = name_col.saturating_sub(2);
+        let display_name = truncate_str(&name, max_name_len, "…");
 
         // Created timestamp - S2DateTime implements Display
         let created = stream.created_at.to_string();
@@ -2302,7 +2291,7 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Header with URI (consistent height)
+            Constraint::Length(3),
             Constraint::Length(5),  // Stats cards
             Constraint::Min(12),    // Actions
         ])
@@ -2330,9 +2319,9 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
     let stats_area = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(2),  // Left padding
+            Constraint::Length(2),
             Constraint::Min(20),    // Stats content
-            Constraint::Length(2),  // Right padding
+            Constraint::Length(2),
         ])
         .split(chunks[1])[1];
 
@@ -2430,8 +2419,6 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
         ("--".to_string(), Color::Rgb(100, 100, 100))
     };
     render_stat_card_v2(f, stats_chunks[2], "◈", "Storage", &storage_val, storage_color);
-
-    // Retention
     let (retention_val, retention_color) = if let Some(config) = &state.config {
         let val = config.retention_policy
             .as_ref()
@@ -2557,12 +2544,19 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
         ("READING", ACCENT)
     };
 
-    // Split into header and content
+    // Show sparklines when tailing with throughput data
+    let show_sparklines = state.is_tailing && !state.throughput_history.is_empty();
+    let sparkline_height = if show_sparklines { 4 } else { 0 };
+    let timeline_height = if state.show_timeline { 3 } else { 0 };
+
+    // Split into header, optional sparklines, content, and optional timeline
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Header (consistent height)
+            Constraint::Length(3),
+            Constraint::Length(sparkline_height),
             Constraint::Min(1),     // Content
+            Constraint::Length(timeline_height),
         ])
         .split(area);
 
@@ -2581,6 +2575,19 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
         Span::styled(&record_count, Style::default().fg(Color::Rgb(100, 100, 100))),
     ];
 
+    // Add throughput indicator when tailing
+    if state.is_tailing && state.current_mibps > 0.0 {
+        header_spans.push(Span::styled("  ", Style::default()));
+        header_spans.push(Span::styled(
+            format!("{:.1} MiB/s", state.current_mibps),
+            Style::default().fg(CYAN).bold(),
+        ));
+        header_spans.push(Span::styled(
+            format!("  {:.0} rec/s", state.current_recps),
+            Style::default().fg(TEXT_MUTED),
+        ));
+    }
+
     // Add output file indicator if writing to file
     if let Some(ref output) = state.output_file {
         header_spans.push(Span::styled("  → ", Style::default().fg(Color::Rgb(100, 100, 100))));
@@ -2597,10 +2604,12 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
             .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
     f.render_widget(header, main_chunks[0]);
 
-    // === CONTENT ===
-    let content_area = main_chunks[1];
+    // === SPARKLINES (when tailing) ===
+    if show_sparklines {
+        draw_tail_sparklines(f, main_chunks[1], &state.throughput_history, &state.records_per_sec_history);
+    }
 
-    // Main container
+    let content_area = main_chunks[2];
     let outer_block = Block::default()
         .borders(Borders::NONE);
 
@@ -2631,7 +2640,7 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
         let panes = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(28),  // Record list - compact
+                Constraint::Length(28),
                 Constraint::Min(20),     // Body preview - takes remaining space
             ])
             .split(inner_area);
@@ -2711,10 +2720,8 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
         let cinema_mode = state.hide_list && state.is_tailing && !state.paused;
 
         let (content_start_y, content_height) = if cinema_mode {
-            // Full height for body in cinema mode
             (body_area.y, body_height)
         } else {
-            // Header line with metadata
             let header_line = Line::from(vec![
                 Span::styled(format!(" #{}", record.seq_num), Style::default().fg(GREEN).bold()),
                 Span::styled(format!("  {}ms", record.timestamp), Style::default().fg(TEXT_MUTED)),
@@ -2727,7 +2734,6 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
             ]);
             f.render_widget(Paragraph::new(header_line), Rect::new(body_area.x, body_area.y, body_area.width, 1));
 
-            // Separator
             let sep = "─".repeat(body_width);
             f.render_widget(
                 Paragraph::new(Span::styled(format!(" {}", sep), Style::default().fg(BORDER))),
@@ -2743,11 +2749,9 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
                 Rect::new(body_area.x, content_start_y, body_area.width, 1),
             );
         } else {
-            // Display body text line by line (no wrapping for ASCII art)
             let mut display_lines: Vec<Line> = Vec::new();
 
             for line in body.lines().take(content_height) {
-                // For cinema mode, preserve spacing for ASCII art; otherwise wrap
                 if cinema_mode {
                     display_lines.push(Line::from(Span::styled(line.to_string(), Style::default().fg(TEXT_PRIMARY))));
                 } else {
@@ -2758,16 +2762,11 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
                         for chunk in chars.chunks(body_width.max(1)) {
                             let text: String = chunk.iter().collect();
                             display_lines.push(Line::from(Span::styled(text, Style::default().fg(TEXT_PRIMARY))));
-                            if display_lines.len() >= content_height {
-                                break;
-                            }
+                            if display_lines.len() >= content_height { break; }
                         }
                     }
                 }
-
-                if display_lines.len() >= content_height {
-                    break;
-                }
+                if display_lines.len() >= content_height { break; }
             }
 
             let body_para = Paragraph::new(display_lines)
@@ -2776,12 +2775,101 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
         }
     }
 
+    // Draw timeline scrubber if enabled
+    if state.show_timeline && !state.records.is_empty() {
+        draw_timeline_scrubber(f, main_chunks[3], state);
+    }
+
     // Draw headers popup if showing
     if state.show_detail {
         if let Some(record) = state.records.get(selected) {
             draw_headers_popup(f, record);
         }
     }
+}
+
+fn draw_timeline_scrubber(f: &mut Frame, area: Rect, state: &ReadViewState) {
+    let total = state.records.len();
+    if total == 0 { return; }
+
+    let selected = state.selected.min(total.saturating_sub(1));
+    let width = area.width.saturating_sub(4) as usize;
+
+    // Calculate record density histogram
+    let bucket_count = width.max(1);
+    let mut buckets = vec![0u64; bucket_count];
+
+    for (i, _record) in state.records.iter().enumerate() {
+        let bucket = (i * bucket_count) / total.max(1);
+        let bucket = bucket.min(bucket_count - 1);
+        buckets[bucket] += 1;
+    }
+
+    // Normalize buckets for display
+    let max_bucket = buckets.iter().copied().max().unwrap_or(1).max(1);
+
+    // Build histogram line
+    let bar_chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let mut histogram_spans = Vec::new();
+
+    let current_bucket = (selected * bucket_count) / total.max(1);
+    let current_bucket = current_bucket.min(bucket_count - 1);
+
+    for (i, &count) in buckets.iter().enumerate() {
+        let level = ((count as f64 / max_bucket as f64) * 7.0).round() as usize;
+        let level = level.min(7);
+        let ch = bar_chars[level];
+
+        let color = if i == current_bucket {
+            GREEN
+        } else if count > 0 {
+            CYAN
+        } else {
+            BORDER
+        };
+
+        histogram_spans.push(Span::styled(ch.to_string(), Style::default().fg(color)));
+    }
+
+    // Position indicator
+    let position_pct = (selected as f64 / (total - 1).max(1) as f64) * 100.0;
+
+    // Time info from records
+    let (first_ts, last_ts) = if let (Some(first), Some(last)) = (state.records.front(), state.records.back()) {
+        (first.timestamp, last.timestamp)
+    } else {
+        (0, 0)
+    };
+
+    let time_span = if last_ts > first_ts {
+        let span_ms = last_ts - first_ts;
+        if span_ms >= 3600000 {
+            format!("{:.1}h span", span_ms as f64 / 3600000.0)
+        } else if span_ms >= 60000 {
+            format!("{:.1}m span", span_ms as f64 / 60000.0)
+        } else {
+            format!("{:.1}s span", span_ms as f64 / 1000.0)
+        }
+    } else {
+        "".to_string()
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![
+            Span::styled(" Timeline ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(format!("#{}", state.records.get(selected).map(|r| r.seq_num).unwrap_or(0)), Style::default().fg(GREEN).bold()),
+            Span::styled(format!(" ({:.0}%) ", position_pct), Style::default().fg(TEXT_MUTED)),
+            Span::styled(time_span, Style::default().fg(CYAN)),
+        ]))
+        .title_bottom(Line::from(Span::styled(" [ ] seek  T toggle ", Style::default().fg(TEXT_MUTED))));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    // Draw histogram
+    f.render_widget(Paragraph::new(Line::from(histogram_spans)).alignment(Alignment::Center), inner);
 }
 
 fn draw_headers_popup(f: &mut Frame, record: &s2_sdk::types::SequencedRecord) {
@@ -2837,7 +2925,7 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
     let outer_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Header (consistent height)
+            Constraint::Length(3),
             Constraint::Min(1),     // Content
         ])
         .split(area);
@@ -2861,8 +2949,6 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
             .borders(Borders::BOTTOM)
             .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
     f.render_widget(header, outer_chunks[0]);
-
-    // === CONTENT ===
     // Split into form (left) and history (right)
     let main_chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -2888,7 +2974,6 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Row 0: Body
     let body_selected = state.selected == 0;
     let body_editing = body_selected && state.editing;
     lines.push(Line::from(vec![
@@ -2908,7 +2993,6 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
     ]));
     lines.push(Line::from(""));
 
-    // Row 1: Headers
     let headers_selected = state.selected == 1;
     let headers_editing = headers_selected && state.editing;
     lines.push(Line::from(vec![
@@ -2922,7 +3006,6 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
         },
     ]));
 
-    // Show existing headers
     for (key, value) in &state.headers {
         lines.push(Line::from(vec![
             Span::styled("    ", Style::default()),
@@ -2932,7 +3015,6 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
         ]));
     }
 
-    // Show header input if editing
     if headers_editing {
         lines.push(Line::from(vec![
             Span::styled("  + ", Style::default().fg(GREEN)),
@@ -2955,7 +3037,6 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
     }
     lines.push(Line::from(""));
 
-    // Row 2: Match seq num
     let match_selected = state.selected == 2;
     let match_editing = match_selected && state.editing;
     lines.push(Line::from(vec![
@@ -2973,7 +3054,6 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
     ]));
     lines.push(Line::from(""));
 
-    // Row 3: Fencing token
     let fence_selected = state.selected == 3;
     let fence_editing = fence_selected && state.editing;
     lines.push(Line::from(vec![
@@ -2991,7 +3071,6 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
     ]));
     lines.push(Line::from(""));
 
-    // Row 4: Send button
     let send_selected = state.selected == 4;
     let can_send = !state.body.is_empty() && !state.appending;
     let (btn_fg, btn_bg) = if state.appending {
@@ -3071,9 +3150,22 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(&m.text, Style::default().fg(color))
         });
 
-    // Calculate available width for hints after message
+    // PiP indicator
+    let pip_indicator: Option<Vec<Span>> = app.pip.as_ref().map(|pip| {
+        vec![
+            Span::styled(" PiP:", Style::default().fg(TEXT_MUTED)),
+            Span::styled(
+                format!("{}", pip.stream_name),
+                Style::default().fg(CYAN),
+            ),
+            Span::styled(" ", Style::default()),
+        ]
+    });
+
+    // Calculate available width for hints after message and PiP indicator
     let msg_len = app.message.as_ref().map(|m| m.text.len() + 2).unwrap_or(0);
-    let available = width.saturating_sub(msg_len);
+    let pip_len = app.pip.as_ref().map(|p| p.stream_name.to_string().len() + 7).unwrap_or(0);
+    let available = width.saturating_sub(msg_len + pip_len);
 
     // Truncate hints if needed
     let display_hints: String = if hints.len() > available && available > 3 {
@@ -3082,16 +3174,20 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
         hints
     };
 
-    let line = if let Some(msg) = message_span {
-        Line::from(vec![
-            msg,
-            Span::styled("  ", Style::default()),
-            Span::styled(display_hints, Style::default().fg(TEXT_MUTED)),
-        ])
-    } else {
-        Line::from(Span::styled(display_hints, Style::default().fg(TEXT_MUTED)))
-    };
+    let mut spans = Vec::new();
 
+    if let Some(msg) = message_span {
+        spans.push(msg);
+        spans.push(Span::styled("  ", Style::default()));
+    }
+
+    if let Some(pip_spans) = pip_indicator {
+        spans.extend(pip_spans);
+    }
+
+    spans.push(Span::styled(display_hints, Style::default().fg(TEXT_MUTED)));
+
+    let line = Line::from(spans);
     let status = Paragraph::new(line);
     f.render_widget(status, area);
 }
@@ -3133,11 +3229,11 @@ fn get_responsive_hints(screen: &Screen, width: usize) -> String {
         }
         Screen::StreamDetail(_) => {
             if wide {
-                "t tail | r read | a append | f fence | m trim | M metrics | e cfg | esc".to_string()
+                "t tail | r read | a append | f fence | m trim | p pip | M metrics | e cfg | esc".to_string()
             } else if medium {
-                "t tail | r read | a append | f m M e | esc".to_string()
+                "t tail | r read | a append | p pip | f m M e | esc".to_string()
             } else {
-                "t r a f m M esc".to_string()
+                "t r a p f m M esc".to_string()
             }
         }
         Screen::ReadView(s) => {
@@ -3145,19 +3241,19 @@ fn get_responsive_hints(screen: &Screen, width: usize) -> String {
                 "esc/⏎ close".to_string()
             } else if s.is_tailing {
                 if wide {
-                    "jk nav | h headers | ⇥ list | space pause | gG top/bot | esc".to_string()
+                    "jk nav | [] seek | h headers | T timeline | ⇥ list | space pause | esc".to_string()
                 } else if medium {
-                    "jk nav | h hdrs | ⇥ | space | gG | esc".to_string()
+                    "jk [] nav | h | T time | ⇥ | space | esc".to_string()
                 } else {
-                    "jk h ⇥ space gG esc".to_string()
+                    "jk [] h T ⇥ space esc".to_string()
                 }
             } else {
                 if wide {
-                    "jk nav | h headers | ⇥ list | gG top/bot | esc".to_string()
+                    "jk nav | [] seek | h headers | T timeline | ⇥ list | esc".to_string()
                 } else if medium {
-                    "jk nav | h hdrs | ⇥ | gG | esc".to_string()
+                    "jk [] nav | h | T time | ⇥ | esc".to_string()
                 } else {
-                    "jk h ⇥ gG esc".to_string()
+                    "jk [] h T ⇥ esc".to_string()
                 }
             }
         }
@@ -3396,6 +3492,10 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
                 Span::styled("Stream metrics", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(vec![
+                Span::styled("    p ", Style::default().fg(CYAN).bold()),
+                Span::styled("Pin to PiP", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
                 Span::styled("  esc ", Style::default().fg(GREEN).bold()),
                 Span::styled("Back", Style::default().fg(TEXT_SECONDARY)),
             ]),
@@ -3414,6 +3514,10 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
             Line::from(vec![
                 Span::styled("space ", Style::default().fg(GREEN).bold()),
                 Span::styled("Pause / Resume", Style::default().fg(TEXT_SECONDARY)),
+            ]),
+            Line::from(vec![
+                Span::styled("    p ", Style::default().fg(CYAN).bold()),
+                Span::styled("Pin to PiP", Style::default().fg(TEXT_SECONDARY)),
             ]),
             Line::from(vec![
                 Span::styled("  esc ", Style::default().fg(GREEN).bold()),
@@ -3615,54 +3719,7 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
         } => {
             use crate::tui::app::BasinScopeOption;
 
-            let cursor = "▎";
             let name_valid = name.len() >= 8 && name.len() <= 48;
-
-            // Modern toggle switch rendering
-            let toggle = |on: bool, selected: bool| -> Vec<Span<'static>> {
-                if on {
-                    vec![
-                        Span::styled("", Style::default().fg(if selected { GREEN } else { Color::Rgb(60, 60, 60) })),
-                        Span::styled(" ON ", Style::default().fg(BG_DARK).bg(GREEN).bold()),
-                        Span::styled("", Style::default().fg(GREEN)),
-                    ]
-                } else {
-                    vec![
-                        Span::styled("", Style::default().fg(if selected { TEXT_MUTED } else { Color::Rgb(60, 60, 60) })),
-                        Span::styled(" OFF ", Style::default().fg(TEXT_MUTED).bg(Color::Rgb(60, 60, 60))),
-                        Span::styled("", Style::default().fg(Color::Rgb(60, 60, 60))),
-                    ]
-                }
-            };
-
-            // Pill-style selector for enum options
-            let pill = |label: &str, is_selected: bool, is_active: bool| -> Span<'static> {
-                let label = label.to_string();
-                if is_active {
-                    Span::styled(format!(" {} ", label), Style::default().fg(BG_DARK).bg(GREEN).bold())
-                } else if is_selected {
-                    Span::styled(format!(" {} ", label), Style::default().fg(TEXT_PRIMARY).bg(Color::Rgb(50, 50, 50)))
-                } else {
-                    Span::styled(format!(" {} ", label), Style::default().fg(TEXT_MUTED))
-                }
-            };
-
-
-            // Field row with label and value
-            let field_row = |idx: usize, label: &str, sel: usize| -> (Span<'static>, Span<'static>) {
-                let is_sel = sel == idx;
-                let indicator = if is_sel {
-                    Span::styled(" > ", Style::default().fg(GREEN).bold())
-                } else {
-                    Span::styled("   ", Style::default())
-                };
-                let label_style = if is_sel {
-                    Style::default().fg(TEXT_PRIMARY).bold()
-                } else {
-                    Style::default().fg(TEXT_MUTED)
-                };
-                (indicator, Span::styled(label.to_string(), label_style))
-            };
 
             // Scope options
             let scope_opts = [
@@ -3683,8 +3740,6 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 ("ClientRequire", matches!(timestamping_mode, Some(TimestampingMode::ClientRequire))),
                 ("Arrival", matches!(timestamping_mode, Some(TimestampingMode::Arrival))),
             ];
-
-            // Retention options
             let ret_opts = [
                 ("Infinite", *retention_policy == RetentionPolicyOption::Infinite),
                 ("Age-based", *retention_policy == RetentionPolicyOption::Age),
@@ -3692,31 +3747,17 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
 
             let mut lines = vec![];
 
-            // ═══════════════════════════════════════════════════════════════
-            // BASIN NAME SECTION
-            // ═══════════════════════════════════════════════════════════════
+            // Basin name section
             lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled("   Basin name ", Style::default().fg(CYAN).bold()),
-                Span::styled("─".repeat(35), Style::default().fg(Color::Rgb(50, 50, 50))),
-            ]));
+            lines.push(render_section_header("Basin name", 48));
             lines.push(Line::from(""));
 
-            // Basin Name
-            let (ind, lbl) = field_row(0, "Name", *selected);
-            let name_display = if name.is_empty() {
-                Span::styled("enter name...", Style::default().fg(Color::Rgb(80, 80, 80)).italic())
-            } else {
-                let color = if name_valid { GREEN } else { YELLOW };
-                Span::styled(name.clone(), Style::default().fg(color))
-            };
-            let cursor_span = if *selected == 0 && *editing {
-                Span::styled(cursor, Style::default().fg(GREEN))
-            } else {
-                Span::raw("")
-            };
-
-            lines.push(Line::from(vec![ind, lbl, Span::raw("  "), name_display, cursor_span]));
+            // Basin Name field
+            let (ind, lbl) = render_field_row_bold(0, "Name", *selected);
+            let name_color = if name.is_empty() { GRAY_600 } else if name_valid { GREEN } else { YELLOW };
+            let mut name_spans = vec![ind, lbl, Span::raw("  ")];
+            name_spans.extend(render_text_input(name, *selected == 0 && *editing, "enter name...", name_color));
+            lines.push(Line::from(name_spans));
 
             // Validation hint
             let hint_text = if name.is_empty() {
@@ -3728,7 +3769,7 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             } else {
                 format!("{}/48 chars", name.len())
             };
-            let hint_color = if name_valid { Color::Rgb(80, 80, 80) } else if name.is_empty() { Color::Rgb(80, 80, 80) } else { YELLOW };
+            let hint_color = if name_valid || name.is_empty() { GRAY_600 } else { YELLOW };
             lines.push(Line::from(vec![
                 Span::raw("              "),
                 Span::styled(hint_text, Style::default().fg(hint_color).italic()),
@@ -3736,69 +3777,59 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
 
             // Basin Scope (Cloud Provider/Region)
             lines.push(Line::from(""));
-            let (ind, lbl) = field_row(1, "Region", *selected);
+            let (ind, lbl) = render_field_row_bold(1, "Region", *selected);
             let mut scope_spans = vec![ind, lbl, Span::raw("  ")];
             for (label, active) in &scope_opts {
-                scope_spans.push(pill(label, *selected == 1, *active));
+                scope_spans.push(render_pill(label, *selected == 1, *active));
                 scope_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(scope_spans));
 
-            // ═══════════════════════════════════════════════════════════════
-            // DEFAULT STREAM CONFIGURATION SECTION
-            // ═══════════════════════════════════════════════════════════════
+            // Default stream configuration section
             lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled("   Default stream configuration ", Style::default().fg(CYAN).bold()),
-                Span::styled("─".repeat(17), Style::default().fg(Color::Rgb(50, 50, 50))),
-            ]));
+            lines.push(render_section_header("Default stream configuration", 48));
             lines.push(Line::from(""));
 
             // Storage Class
-            let (ind, lbl) = field_row(2, "Storage", *selected);
+            let (ind, lbl) = render_field_row_bold(2, "Storage", *selected);
             let mut storage_spans = vec![ind, lbl, Span::raw("  ")];
             for (label, active) in &storage_opts {
-                storage_spans.push(pill(label, *selected == 2, *active));
+                storage_spans.push(render_pill(label, *selected == 2, *active));
                 storage_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(storage_spans));
 
-            // Retention
             lines.push(Line::from(""));
-            let (ind, lbl) = field_row(3, "Retention", *selected);
+            let (ind, lbl) = render_field_row_bold(3, "Retention", *selected);
             let mut ret_spans = vec![ind, lbl, Span::raw("  ")];
             for (label, active) in &ret_opts {
-                ret_spans.push(pill(label, *selected == 3, *active));
+                ret_spans.push(render_pill(label, *selected == 3, *active));
                 ret_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(ret_spans));
 
-            // Retention Age (conditional)
             if *retention_policy == RetentionPolicyOption::Age {
-                let (ind, lbl) = field_row(4, "  Duration", *selected);
-                let age_cursor = if *selected == 4 && *editing { cursor } else { "" };
-                lines.push(Line::from(vec![
-                    ind, lbl, Span::raw("  "),
-                    Span::styled(retention_age_input.clone(), Style::default().fg(YELLOW)),
-                    Span::styled(age_cursor, Style::default().fg(GREEN)),
-                    Span::styled("  e.g. 7d, 30d, 1y", Style::default().fg(Color::Rgb(80, 80, 80)).italic()),
-                ]));
+                let (ind, lbl) = render_field_row_bold(4, "  Duration", *selected);
+                let mut duration_spans = vec![ind, lbl, Span::raw("  ")];
+                duration_spans.extend(render_text_input(retention_age_input, *selected == 4 && *editing, "", YELLOW));
+                duration_spans.push(Span::styled("  e.g. 7d, 30d, 1y", Style::default().fg(GRAY_600).italic()));
+                lines.push(Line::from(duration_spans));
             }
 
             // Timestamping Mode
             lines.push(Line::from(""));
-            let (ind, lbl) = field_row(5, "Timestamps", *selected);
+            let (ind, lbl) = render_field_row_bold(5, "Timestamps", *selected);
             let mut ts_spans = vec![ind, lbl, Span::raw("  ")];
             for (label, active) in &ts_opts {
-                ts_spans.push(pill(label, *selected == 5, *active));
+                ts_spans.push(render_pill(label, *selected == 5, *active));
                 ts_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(ts_spans));
 
             // Uncapped Timestamps
-            let (ind, lbl) = field_row(6, "  Uncapped", *selected);
+            let (ind, lbl) = render_field_row_bold(6, "  Uncapped", *selected);
             let mut uncapped_spans = vec![ind, lbl, Span::raw("  ")];
-            uncapped_spans.extend(toggle(*timestamping_uncapped, *selected == 6));
+            uncapped_spans.extend(render_toggle(*timestamping_uncapped, *selected == 6));
             lines.push(Line::from(uncapped_spans));
 
             // Delete on Empty
@@ -3807,89 +3838,63 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 ("After threshold", *delete_on_empty_enabled),
             ];
             lines.push(Line::from(""));
-            let (ind, lbl) = field_row(7, "Delete on empty", *selected);
+            let (ind, lbl) = render_field_row_bold(7, "Delete on empty", *selected);
             let mut del_spans = vec![ind, lbl, Span::raw("  ")];
             for (label, active) in &delete_opts {
-                del_spans.push(pill(label, *selected == 7, *active));
+                del_spans.push(render_pill(label, *selected == 7, *active));
                 del_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(del_spans));
 
             // Delete on Empty Threshold (conditional)
             if *delete_on_empty_enabled {
-                let (ind, lbl) = field_row(8, "  Threshold", *selected);
-                let age_cursor = if *selected == 8 && *editing { cursor } else { "" };
-                lines.push(Line::from(vec![
-                    ind, lbl, Span::raw("  "),
-                    Span::styled(delete_on_empty_min_age.clone(), Style::default().fg(YELLOW)),
-                    Span::styled(age_cursor, Style::default().fg(GREEN)),
-                    Span::styled("  e.g. 1h, 7d", Style::default().fg(Color::Rgb(80, 80, 80)).italic()),
-                ]));
+                let (ind, lbl) = render_field_row_bold(8, "  Threshold", *selected);
+                let mut threshold_spans = vec![ind, lbl, Span::raw("  ")];
+                threshold_spans.extend(render_text_input(delete_on_empty_min_age, *selected == 8 && *editing, "", YELLOW));
+                threshold_spans.push(Span::styled("  e.g. 1h, 7d", Style::default().fg(GRAY_600).italic()));
+                lines.push(Line::from(threshold_spans));
             }
 
-            // ═══════════════════════════════════════════════════════════════
-            // CREATE STREAMS AUTOMATICALLY SECTION
-            // ═══════════════════════════════════════════════════════════════
+            // Create streams automatically section
             lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled("   Create streams automatically ", Style::default().fg(CYAN).bold()),
-                Span::styled("─".repeat(17), Style::default().fg(Color::Rgb(50, 50, 50))),
-            ]));
+            lines.push(render_section_header("Create streams automatically", 48));
             lines.push(Line::from(""));
 
             // On Append
-            let (ind, lbl) = field_row(9, "On append", *selected);
+            let (ind, lbl) = render_field_row_bold(9, "On append", *selected);
             let mut append_spans = vec![ind, lbl, Span::raw("  ")];
-            append_spans.extend(toggle(*create_stream_on_append, *selected == 9));
+            append_spans.extend(render_toggle(*create_stream_on_append, *selected == 9));
             lines.push(Line::from(append_spans));
 
             // On Read
             lines.push(Line::from(""));
-            let (ind, lbl) = field_row(10, "On read", *selected);
+            let (ind, lbl) = render_field_row_bold(10, "On read", *selected);
             let mut read_spans = vec![ind, lbl, Span::raw("  ")];
-            read_spans.extend(toggle(*create_stream_on_read, *selected == 10));
+            read_spans.extend(render_toggle(*create_stream_on_read, *selected == 10));
             lines.push(Line::from(read_spans));
 
-            // ═══════════════════════════════════════════════════════════════
-            // CREATE BUTTON
-            // ═══════════════════════════════════════════════════════════════
+            // Create button section
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("─".repeat(52), Style::default().fg(Color::Rgb(50, 50, 50))),
+                Span::styled("─".repeat(52), Style::default().fg(GRAY_750)),
             ]));
             lines.push(Line::from(""));
 
             let can_create = name_valid;
-            let btn_style = if *selected == 11 && can_create {
-                Style::default().fg(BG_DARK).bg(GREEN).bold()
-            } else if can_create {
-                Style::default().fg(GREEN).bold()
-            } else {
-                Style::default().fg(Color::Rgb(80, 80, 80))
-            };
-
-            let btn_indicator = if *selected == 11 {
-                Span::styled(" > ", Style::default().fg(GREEN).bold())
-            } else {
-                Span::raw("   ")
-            };
-
-            lines.push(Line::from(vec![
-                btn_indicator,
-                Span::styled("  CREATE BASIN  ", btn_style),
-                if !can_create {
-                    Span::styled("  (enter valid name)", Style::default().fg(Color::Rgb(80, 80, 80)).italic())
-                } else {
-                    Span::raw("")
-                },
-            ]));
+            lines.push(render_button("CREATE BASIN", *selected == 11, can_create, GREEN));
+            if !can_create {
+                lines.push(Line::from(vec![
+                    Span::raw("      "),
+                    Span::styled("(enter valid name)", Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
 
             lines.push(Line::from(""));
 
             (
                 " Create Basin ",
                 lines,
-                "j/k navigate | h/l cycle | Space toggle | Enter edit | Esc cancel",
+                "j/k navigate · h/l cycle · Space toggle · Enter edit · Esc cancel",
             )
         }
 
@@ -3906,59 +3911,6 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             selected,
             editing,
         } => {
-            let cursor = "▎";
-
-            // Modern toggle switch rendering
-            let toggle = |on: bool, is_selected: bool| -> Vec<Span<'static>> {
-                if on {
-                    vec![
-                        Span::styled("", Style::default().fg(if is_selected { GREEN } else { Color::Rgb(60, 60, 60) })),
-                        Span::styled(" ON ", Style::default().fg(BG_DARK).bg(GREEN).bold()),
-                        Span::styled("▁▂▃", Style::default().fg(GREEN)),
-                    ]
-                } else {
-                    vec![
-                        Span::styled("▃▂▁", Style::default().fg(Color::Rgb(80, 80, 80))),
-                        Span::styled(" OFF ", Style::default().fg(TEXT_MUTED).bg(Color::Rgb(50, 50, 50))),
-                        Span::styled("", Style::default().fg(if is_selected { GREEN } else { Color::Rgb(60, 60, 60) })),
-                    ]
-                }
-            };
-
-            // Pill-style option renderer
-            let pill = |label: &str, is_row_selected: bool, is_active: bool| -> Span<'static> {
-                if is_active {
-                    Span::styled(
-                        format!(" {} ", label),
-                        Style::default()
-                            .fg(BG_DARK)
-                            .bg(if is_row_selected { GREEN } else { Color::Rgb(120, 120, 120) })
-                            .bold()
-                    )
-                } else {
-                    Span::styled(
-                        format!(" {} ", label),
-                        Style::default()
-                            .fg(if is_row_selected { TEXT_PRIMARY } else { Color::Rgb(80, 80, 80) })
-                    )
-                }
-            };
-
-            // Field row helper with selection indicator
-            let field_row = |field_idx: usize, label: &str, current_selected: usize| -> (Span<'static>, Span<'static>) {
-                let is_selected = field_idx == current_selected;
-                let indicator = if is_selected {
-                    Span::styled(" > ", Style::default().fg(GREEN).bold())
-                } else {
-                    Span::raw("   ")
-                };
-                let label_span = Span::styled(
-                    format!("{:<15}", label),
-                    Style::default().fg(if is_selected { TEXT_PRIMARY } else { TEXT_MUTED })
-                );
-                (indicator, label_span)
-            };
-
             // Storage options
             let storage_opts = [
                 ("Default", storage_class.is_none()),
@@ -3973,8 +3925,6 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 ("ClientRequire", matches!(timestamping_mode, Some(TimestampingMode::ClientRequire))),
                 ("Arrival", matches!(timestamping_mode, Some(TimestampingMode::Arrival))),
             ];
-
-            // Retention options
             let ret_opts = [
                 ("Infinite", *retention_policy == RetentionPolicyOption::Infinite),
                 ("Age-based", *retention_policy == RetentionPolicyOption::Age),
@@ -3982,94 +3932,71 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
 
             let mut lines = vec![];
 
-            // ═══════════════════════════════════════════════════════════════
-            // STREAM NAME SECTION
-            // ═══════════════════════════════════════════════════════════════
+            // Stream name section
             lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled("   Stream name ", Style::default().fg(CYAN).bold()),
-                Span::styled("─".repeat(34), Style::default().fg(Color::Rgb(50, 50, 50))),
-            ]));
+            lines.push(render_section_header("Stream name", 48));
             lines.push(Line::from(""));
 
             // Show which basin this stream will be created in
             lines.push(Line::from(vec![
                 Span::raw("   "),
-                Span::styled("in basin: ", Style::default().fg(Color::Rgb(80, 80, 80))),
+                Span::styled("in basin: ", Style::default().fg(GRAY_600)),
                 Span::styled(basin.to_string(), Style::default().fg(TEXT_SECONDARY)),
             ]));
             lines.push(Line::from(""));
 
-            // Stream Name
-            let (ind, lbl) = field_row(0, "Name", *selected);
-            let name_display = if name.is_empty() {
-                Span::styled("enter name...", Style::default().fg(Color::Rgb(80, 80, 80)).italic())
-            } else {
-                Span::styled(name.clone(), Style::default().fg(GREEN))
-            };
-            let cursor_span = if *selected == 0 && *editing {
-                Span::styled(cursor, Style::default().fg(GREEN))
-            } else {
-                Span::raw("")
-            };
+            // Stream Name field
+            let (ind, lbl) = render_field_row(0, "Name", *selected);
+            let name_color = if name.is_empty() { GRAY_600 } else { GREEN };
+            let mut name_spans = vec![ind, lbl, Span::raw("  ")];
+            name_spans.extend(render_text_input(name, *selected == 0 && *editing, "enter name...", name_color));
+            lines.push(Line::from(name_spans));
 
-            lines.push(Line::from(vec![ind, lbl, Span::raw("  "), name_display, cursor_span]));
-
-            // ═══════════════════════════════════════════════════════════════
-            // STREAM CONFIGURATION SECTION
-            // ═══════════════════════════════════════════════════════════════
+            // Stream configuration section
             lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled("   Stream configuration ", Style::default().fg(CYAN).bold()),
-                Span::styled("─".repeat(25), Style::default().fg(Color::Rgb(50, 50, 50))),
-            ]));
+            lines.push(render_section_header("Stream configuration", 48));
             lines.push(Line::from(""));
 
             // Storage Class
-            let (ind, lbl) = field_row(1, "Storage", *selected);
+            let (ind, lbl) = render_field_row(1, "Storage", *selected);
             let mut storage_spans = vec![ind, lbl, Span::raw("  ")];
             for (label, active) in &storage_opts {
-                storage_spans.push(pill(label, *selected == 1, *active));
+                storage_spans.push(render_pill(label, *selected == 1, *active));
                 storage_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(storage_spans));
 
-            // Retention
             lines.push(Line::from(""));
-            let (ind, lbl) = field_row(2, "Retention", *selected);
+            let (ind, lbl) = render_field_row(2, "Retention", *selected);
             let mut ret_spans = vec![ind, lbl, Span::raw("  ")];
             for (label, active) in &ret_opts {
-                ret_spans.push(pill(label, *selected == 2, *active));
+                ret_spans.push(render_pill(label, *selected == 2, *active));
                 ret_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(ret_spans));
 
-            // Retention Age (conditional)
             if *retention_policy == RetentionPolicyOption::Age {
-                let (ind, lbl) = field_row(3, "  Duration", *selected);
-                let age_cursor = if *selected == 3 && *editing { cursor } else { "" };
-                lines.push(Line::from(vec![
-                    ind, lbl, Span::raw("  "),
-                    Span::styled(retention_age_input.clone(), Style::default().fg(YELLOW)),
-                    Span::styled(age_cursor, Style::default().fg(GREEN)),
-                    Span::styled("  e.g. 7d, 30d, 1y", Style::default().fg(Color::Rgb(80, 80, 80)).italic()),
-                ]));
+                let (ind, lbl) = render_field_row(3, "  Duration", *selected);
+                let mut duration_spans = vec![ind, lbl, Span::raw("  ")];
+                duration_spans.extend(render_text_input(retention_age_input, *selected == 3 && *editing, "", YELLOW));
+                duration_spans.push(Span::styled("  e.g. 7d, 30d, 1y", Style::default().fg(GRAY_600).italic()));
+                lines.push(Line::from(duration_spans));
             }
 
             // Timestamping Mode
             lines.push(Line::from(""));
-            let (ind, lbl) = field_row(4, "Timestamps", *selected);
+            let (ind, lbl) = render_field_row(4, "Timestamps", *selected);
             let mut ts_spans = vec![ind, lbl, Span::raw("  ")];
             for (label, active) in &ts_opts {
-                ts_spans.push(pill(label, *selected == 4, *active));
+                ts_spans.push(render_pill(label, *selected == 4, *active));
                 ts_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(ts_spans));
 
             // Uncapped Timestamps
-            let (ind, lbl) = field_row(5, "  Uncapped", *selected);
+            let (ind, lbl) = render_field_row(5, "  Uncapped", *selected);
             let mut uncapped_spans = vec![ind, lbl, Span::raw("  ")];
-            uncapped_spans.extend(toggle(*timestamping_uncapped, *selected == 5));
+            uncapped_spans.extend(render_toggle(*timestamping_uncapped, *selected == 5));
             lines.push(Line::from(uncapped_spans));
 
             // Delete on Empty
@@ -4078,66 +4005,45 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 ("After threshold", *delete_on_empty_enabled),
             ];
             lines.push(Line::from(""));
-            let (ind, lbl) = field_row(6, "Delete on empty", *selected);
+            let (ind, lbl) = render_field_row(6, "Delete on empty", *selected);
             let mut del_spans = vec![ind, lbl, Span::raw("  ")];
             for (label, active) in &delete_opts {
-                del_spans.push(pill(label, *selected == 6, *active));
+                del_spans.push(render_pill(label, *selected == 6, *active));
                 del_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(del_spans));
 
             // Delete on Empty Threshold (conditional)
             if *delete_on_empty_enabled {
-                let (ind, lbl) = field_row(7, "  Threshold", *selected);
-                let age_cursor = if *selected == 7 && *editing { cursor } else { "" };
-                lines.push(Line::from(vec![
-                    ind, lbl, Span::raw("  "),
-                    Span::styled(delete_on_empty_min_age.clone(), Style::default().fg(YELLOW)),
-                    Span::styled(age_cursor, Style::default().fg(GREEN)),
-                    Span::styled("  e.g. 1h, 7d", Style::default().fg(Color::Rgb(80, 80, 80)).italic()),
-                ]));
+                let (ind, lbl) = render_field_row(7, "  Threshold", *selected);
+                let mut threshold_spans = vec![ind, lbl, Span::raw("  ")];
+                threshold_spans.extend(render_text_input(delete_on_empty_min_age, *selected == 7 && *editing, "", YELLOW));
+                threshold_spans.push(Span::styled("  e.g. 1h, 7d", Style::default().fg(GRAY_600).italic()));
+                lines.push(Line::from(threshold_spans));
             }
 
-            // ═══════════════════════════════════════════════════════════════
-            // CREATE BUTTON
-            // ═══════════════════════════════════════════════════════════════
+            // Create button section
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("─".repeat(52), Style::default().fg(Color::Rgb(50, 50, 50))),
+                Span::styled("─".repeat(52), Style::default().fg(GRAY_750)),
             ]));
             lines.push(Line::from(""));
 
             let can_create = !name.is_empty();
-            let btn_style = if *selected == 8 && can_create {
-                Style::default().fg(BG_DARK).bg(GREEN).bold()
-            } else if can_create {
-                Style::default().fg(GREEN).bold()
-            } else {
-                Style::default().fg(Color::Rgb(80, 80, 80))
-            };
-
-            let btn_indicator = if *selected == 8 {
-                Span::styled(" > ", Style::default().fg(GREEN).bold())
-            } else {
-                Span::raw("   ")
-            };
-
-            lines.push(Line::from(vec![
-                btn_indicator,
-                Span::styled("  CREATE STREAM  ", btn_style),
-                if !can_create {
-                    Span::styled("  (enter stream name)", Style::default().fg(Color::Rgb(80, 80, 80)).italic())
-                } else {
-                    Span::raw("")
-                },
-            ]));
+            lines.push(render_button("CREATE STREAM", *selected == 8, can_create, GREEN));
+            if !can_create {
+                lines.push(Line::from(vec![
+                    Span::raw("      "),
+                    Span::styled("(enter stream name)", Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
 
             lines.push(Line::from(""));
 
             (
                 " Create Stream ",
                 lines,
-                "j/k navigate | h/l cycle | Space toggle | Enter edit | Esc cancel",
+                "j/k navigate · h/l cycle · Space toggle · Enter edit · Esc cancel",
             )
         }
 
@@ -4196,53 +4102,6 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             editing_age,
             age_input,
         } => {
-            let cursor = "▎";
-
-            // Modern toggle switch rendering
-            let toggle = |on: bool, is_selected: bool| -> Vec<Span<'static>> {
-                if on {
-                    vec![
-                        Span::styled("", Style::default().fg(if is_selected { GREEN } else { Color::Rgb(60, 60, 60) })),
-                        Span::styled(" ON ", Style::default().fg(BG_DARK).bg(GREEN).bold()),
-                        Span::styled("", Style::default().fg(GREEN)),
-                    ]
-                } else {
-                    vec![
-                        Span::styled("", Style::default().fg(if is_selected { TEXT_MUTED } else { Color::Rgb(60, 60, 60) })),
-                        Span::styled(" OFF ", Style::default().fg(TEXT_MUTED).bg(Color::Rgb(60, 60, 60))),
-                        Span::styled("", Style::default().fg(Color::Rgb(60, 60, 60))),
-                    ]
-                }
-            };
-
-            // Pill-style selector
-            let pill = |label: &str, is_selected: bool, is_active: bool| -> Span<'static> {
-                let label = label.to_string();
-                if is_active {
-                    Span::styled(format!(" {} ", label), Style::default().fg(BG_DARK).bg(GREEN).bold())
-                } else if is_selected {
-                    Span::styled(format!(" {} ", label), Style::default().fg(TEXT_PRIMARY).bg(Color::Rgb(50, 50, 50)))
-                } else {
-                    Span::styled(format!(" {} ", label), Style::default().fg(TEXT_MUTED))
-                }
-            };
-
-            // Field row helper
-            let field_row = |idx: usize, label: &str, sel: usize| -> (Span<'static>, Span<'static>) {
-                let is_sel = sel == idx;
-                let indicator = if is_sel {
-                    Span::styled(" > ", Style::default().fg(GREEN).bold())
-                } else {
-                    Span::styled("   ", Style::default())
-                };
-                let label_style = if is_sel {
-                    Style::default().fg(TEXT_PRIMARY).bold()
-                } else {
-                    Style::default().fg(TEXT_MUTED)
-                };
-                (indicator, Span::styled(label.to_string(), label_style))
-            };
-
             // Options
             let storage_opts = [
                 ("Default", storage_class.is_none()),
@@ -4271,79 +4130,68 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
 
             // Default stream configuration section
             lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled("   Default stream configuration ", Style::default().fg(CYAN).bold()),
-                Span::styled("─".repeat(17), Style::default().fg(Color::Rgb(50, 50, 50))),
-            ]));
+            lines.push(render_section_header("Default stream configuration", 48));
             lines.push(Line::from(""));
 
             // Storage Class
-            let (ind, lbl) = field_row(0, "Storage", *selected);
+            let (ind, lbl) = render_field_row_bold(0, "Storage", *selected);
             let mut storage_spans = vec![ind, lbl, Span::raw("  ")];
             for (label, active) in &storage_opts {
-                storage_spans.push(pill(label, *selected == 0, *active));
+                storage_spans.push(render_pill(label, *selected == 0, *active));
                 storage_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(storage_spans));
 
-            // Retention
             lines.push(Line::from(""));
-            let (ind, lbl) = field_row(1, "Retention", *selected);
+            let (ind, lbl) = render_field_row_bold(1, "Retention", *selected);
             let mut ret_spans = vec![ind, lbl, Span::raw("  ")];
             for (label, active) in &ret_opts {
-                ret_spans.push(pill(label, *selected == 1, *active));
+                ret_spans.push(render_pill(label, *selected == 1, *active));
                 ret_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(ret_spans));
 
-            // Retention Age (conditional)
             if *retention_policy == RetentionPolicyOption::Age {
-                let (ind, lbl) = field_row(2, "  Duration", *selected);
-                let age_cursor = if *selected == 2 && *editing_age { cursor } else { "" };
+                let (ind, lbl) = render_field_row_bold(2, "  Duration", *selected);
                 let age_display = if *editing_age { age_input.clone() } else { format!("{}s", retention_age_secs) };
-                lines.push(Line::from(vec![
-                    ind, lbl, Span::raw("  "),
-                    Span::styled(age_display, Style::default().fg(YELLOW)),
-                    Span::styled(age_cursor, Style::default().fg(GREEN)),
-                    Span::styled("  e.g. 604800 (7 days)", Style::default().fg(Color::Rgb(80, 80, 80)).italic()),
-                ]));
+                let mut duration_spans = vec![ind, lbl, Span::raw("  ")];
+                duration_spans.extend(render_text_input(&age_display, *selected == 2 && *editing_age, "", YELLOW));
+                duration_spans.push(Span::styled("  e.g. 604800 (7 days)", Style::default().fg(GRAY_600).italic()));
+                lines.push(Line::from(duration_spans));
             }
 
             // Timestamping Mode
             lines.push(Line::from(""));
-            let (ind, lbl) = field_row(3, "Timestamps", *selected);
+            let (ind, lbl) = render_field_row_bold(3, "Timestamps", *selected);
             let mut ts_spans = vec![ind, lbl, Span::raw("  ")];
             for (label, active) in &ts_opts {
-                ts_spans.push(pill(label, *selected == 3, *active));
+                ts_spans.push(render_pill(label, *selected == 3, *active));
                 ts_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(ts_spans));
 
             // Uncapped Timestamps
-            let (ind, lbl) = field_row(4, "  Uncapped", *selected);
+            let (ind, lbl) = render_field_row_bold(4, "  Uncapped", *selected);
             let mut uncapped_spans = vec![ind, lbl, Span::raw("  ")];
-            uncapped_spans.extend(toggle(timestamping_uncapped.unwrap_or(false), *selected == 4));
+            uncapped_spans.extend(render_toggle(timestamping_uncapped.unwrap_or(false), *selected == 4));
             lines.push(Line::from(uncapped_spans));
 
             // Create streams automatically section
             lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled("   Create streams automatically ", Style::default().fg(CYAN).bold()),
-                Span::styled("─".repeat(17), Style::default().fg(Color::Rgb(50, 50, 50))),
-            ]));
+            lines.push(render_section_header("Create streams automatically", 48));
             lines.push(Line::from(""));
 
             // On Append
-            let (ind, lbl) = field_row(5, "On append", *selected);
+            let (ind, lbl) = render_field_row_bold(5, "On append", *selected);
             let mut append_spans = vec![ind, lbl, Span::raw("  ")];
-            append_spans.extend(toggle(create_stream_on_append.unwrap_or(false), *selected == 5));
+            append_spans.extend(render_toggle(create_stream_on_append.unwrap_or(false), *selected == 5));
             lines.push(Line::from(append_spans));
 
             // On Read
             lines.push(Line::from(""));
-            let (ind, lbl) = field_row(6, "On read", *selected);
+            let (ind, lbl) = render_field_row_bold(6, "On read", *selected);
             let mut read_spans = vec![ind, lbl, Span::raw("  ")];
-            read_spans.extend(toggle(create_stream_on_read.unwrap_or(false), *selected == 6));
+            read_spans.extend(render_toggle(create_stream_on_read.unwrap_or(false), *selected == 6));
             lines.push(Line::from(read_spans));
 
             lines.push(Line::from(""));
@@ -4351,7 +4199,7 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             (
                 " Reconfigure Basin ",
                 lines,
-                "j/k navigate | h/l cycle | Space toggle | Enter edit | s save | Esc cancel",
+                "j/k navigate · h/l cycle · Space toggle · Enter edit · s save · Esc cancel",
             )
         }
 
@@ -4369,60 +4217,6 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             editing_age,
             age_input,
         } => {
-            let cursor = "▎";
-
-            // Modern toggle switch rendering
-            let toggle = |on: bool, is_selected: bool| -> Vec<Span<'static>> {
-                if on {
-                    vec![
-                        Span::styled("", Style::default().fg(if is_selected { GREEN } else { Color::Rgb(60, 60, 60) })),
-                        Span::styled(" ON ", Style::default().fg(BG_DARK).bg(GREEN).bold()),
-                        Span::styled("▁▂▃", Style::default().fg(GREEN)),
-                    ]
-                } else {
-                    vec![
-                        Span::styled("▃▂▁", Style::default().fg(Color::Rgb(80, 80, 80))),
-                        Span::styled(" OFF ", Style::default().fg(TEXT_MUTED).bg(Color::Rgb(50, 50, 50))),
-                        Span::styled("", Style::default().fg(if is_selected { GREEN } else { Color::Rgb(60, 60, 60) })),
-                    ]
-                }
-            };
-
-            // Pill-style selector
-            let pill = |label: &str, is_row_selected: bool, is_active: bool| -> Span<'static> {
-                if is_active {
-                    Span::styled(
-                        format!(" {} ", label),
-                        Style::default()
-                            .fg(BG_DARK)
-                            .bg(if is_row_selected { GREEN } else { Color::Rgb(120, 120, 120) })
-                            .bold()
-                    )
-                } else {
-                    Span::styled(
-                        format!(" {} ", label),
-                        Style::default()
-                            .fg(if is_row_selected { TEXT_PRIMARY } else { Color::Rgb(80, 80, 80) })
-                    )
-                }
-            };
-
-            // Field row helper
-            let field_row = |idx: usize, label: &str, sel: usize| -> (Span<'static>, Span<'static>) {
-                let is_sel = sel == idx;
-                let indicator = if is_sel {
-                    Span::styled(" > ", Style::default().fg(GREEN).bold())
-                } else {
-                    Span::styled("   ", Style::default())
-                };
-                let label_style = if is_sel {
-                    Style::default().fg(TEXT_PRIMARY)
-                } else {
-                    Style::default().fg(TEXT_MUTED)
-                };
-                (indicator, Span::styled(format!("{:<15}", label), label_style))
-            };
-
             // Options
             let storage_opts = [
                 ("Default", storage_class.is_none()),
@@ -4451,58 +4245,50 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
 
             // Stream configuration section
             lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled("   Stream configuration ", Style::default().fg(CYAN).bold()),
-                Span::styled("─".repeat(25), Style::default().fg(Color::Rgb(50, 50, 50))),
-            ]));
+            lines.push(render_section_header("Stream configuration", 48));
             lines.push(Line::from(""));
 
             // Storage Class
-            let (ind, lbl) = field_row(0, "Storage", *selected);
+            let (ind, lbl) = render_field_row(0, "Storage", *selected);
             let mut storage_spans = vec![ind, lbl, Span::raw("  ")];
             for (label, active) in &storage_opts {
-                storage_spans.push(pill(label, *selected == 0, *active));
+                storage_spans.push(render_pill(label, *selected == 0, *active));
                 storage_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(storage_spans));
 
-            // Retention
             lines.push(Line::from(""));
-            let (ind, lbl) = field_row(1, "Retention", *selected);
+            let (ind, lbl) = render_field_row(1, "Retention", *selected);
             let mut ret_spans = vec![ind, lbl, Span::raw("  ")];
             for (label, active) in &ret_opts {
-                ret_spans.push(pill(label, *selected == 1, *active));
+                ret_spans.push(render_pill(label, *selected == 1, *active));
                 ret_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(ret_spans));
 
-            // Retention Age (conditional)
             if *retention_policy == RetentionPolicyOption::Age {
-                let (ind, lbl) = field_row(2, "  Duration", *selected);
-                let age_cursor = if *selected == 2 && *editing_age { cursor } else { "" };
+                let (ind, lbl) = render_field_row(2, "  Duration", *selected);
                 let age_display = if *selected == 2 && *editing_age { age_input.clone() } else { format!("{}s", retention_age_secs) };
-                lines.push(Line::from(vec![
-                    ind, lbl, Span::raw("  "),
-                    Span::styled(age_display, Style::default().fg(YELLOW)),
-                    Span::styled(age_cursor, Style::default().fg(GREEN)),
-                    Span::styled("  e.g. 604800 (7 days)", Style::default().fg(Color::Rgb(80, 80, 80)).italic()),
-                ]));
+                let mut duration_spans = vec![ind, lbl, Span::raw("  ")];
+                duration_spans.extend(render_text_input(&age_display, *selected == 2 && *editing_age, "", YELLOW));
+                duration_spans.push(Span::styled("  e.g. 604800 (7 days)", Style::default().fg(GRAY_600).italic()));
+                lines.push(Line::from(duration_spans));
             }
 
             // Timestamping Mode
             lines.push(Line::from(""));
-            let (ind, lbl) = field_row(3, "Timestamps", *selected);
+            let (ind, lbl) = render_field_row(3, "Timestamps", *selected);
             let mut ts_spans = vec![ind, lbl, Span::raw("  ")];
             for (label, active) in &ts_opts {
-                ts_spans.push(pill(label, *selected == 3, *active));
+                ts_spans.push(render_pill(label, *selected == 3, *active));
                 ts_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(ts_spans));
 
             // Uncapped Timestamps
-            let (ind, lbl) = field_row(4, "  Uncapped", *selected);
+            let (ind, lbl) = render_field_row(4, "  Uncapped", *selected);
             let mut uncapped_spans = vec![ind, lbl, Span::raw("  ")];
-            uncapped_spans.extend(toggle(timestamping_uncapped.unwrap_or(false), *selected == 4));
+            uncapped_spans.extend(render_toggle(timestamping_uncapped.unwrap_or(false), *selected == 4));
             lines.push(Line::from(uncapped_spans));
 
             // Delete on Empty
@@ -4511,24 +4297,21 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 ("After threshold", *delete_on_empty_enabled),
             ];
             lines.push(Line::from(""));
-            let (ind, lbl) = field_row(5, "Delete on empty", *selected);
+            let (ind, lbl) = render_field_row(5, "Delete on empty", *selected);
             let mut del_spans = vec![ind, lbl, Span::raw("  ")];
             for (label, active) in &delete_opts {
-                del_spans.push(pill(label, *selected == 5, *active));
+                del_spans.push(render_pill(label, *selected == 5, *active));
                 del_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(del_spans));
 
             // Delete on Empty Threshold (conditional)
             if *delete_on_empty_enabled {
-                let (ind, lbl) = field_row(6, "  Threshold", *selected);
-                let age_cursor = if *selected == 6 && *editing_age { cursor } else { "" };
-                lines.push(Line::from(vec![
-                    ind, lbl, Span::raw("  "),
-                    Span::styled(delete_on_empty_min_age.clone(), Style::default().fg(YELLOW)),
-                    Span::styled(age_cursor, Style::default().fg(GREEN)),
-                    Span::styled("  e.g. 1h, 7d", Style::default().fg(Color::Rgb(80, 80, 80)).italic()),
-                ]));
+                let (ind, lbl) = render_field_row(6, "  Threshold", *selected);
+                let mut threshold_spans = vec![ind, lbl, Span::raw("  ")];
+                threshold_spans.extend(render_text_input(delete_on_empty_min_age, *selected == 6 && *editing_age, "", YELLOW));
+                threshold_spans.push(Span::styled("  e.g. 1h, 7d", Style::default().fg(GRAY_600).italic()));
+                lines.push(Line::from(threshold_spans));
             }
 
             lines.push(Line::from(""));
@@ -4536,7 +4319,7 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             (
                 " Reconfigure Stream ",
                 lines,
-                "j/k navigate | h/l cycle | Space toggle | Enter edit | s save | Esc cancel",
+                "j/k navigate · h/l cycle · Space toggle · Enter edit · s save · Esc cancel",
             )
         }
 
@@ -4935,8 +4718,6 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                     ),
                 ]));
             }
-
-            // Resources section header
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled("── Resources ──", Style::default().fg(TEXT_MUTED))));
 
@@ -5275,7 +5056,7 @@ fn draw_bench_config(f: &mut Frame, area: Rect, state: &BenchViewState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // Title
-            Constraint::Length(3), // Record size
+            Constraint::Length(3),
             Constraint::Length(3), // Target MiB/s
             Constraint::Length(3), // Duration
             Constraint::Length(3), // Catchup delay
@@ -5311,8 +5092,6 @@ fn draw_bench_config(f: &mut Frame, area: Rect, state: &BenchViewState) {
         ]);
         f.render_widget(Paragraph::new(line), area);
     };
-
-    // Record size
     let record_size_str = if state.editing && state.config_field == BenchConfigField::RecordSize {
         format!("{}_", state.edit_buffer)
     } else {
@@ -5391,7 +5170,7 @@ fn draw_bench_running(f: &mut Frame, area: Rect, state: &BenchViewState) {
         .constraints([
             Constraint::Length(3),  // Progress bar
             Constraint::Length(5),  // Write stats
-            Constraint::Length(5),  // Read stats
+            Constraint::Length(5),
             Constraint::Length(5),  // Catchup stats (or waiting)
             Constraint::Min(3),     // Latency stats or chart
         ])
@@ -5426,14 +5205,16 @@ fn draw_bench_running(f: &mut Frame, area: Rect, state: &BenchViewState) {
     let filled = ((progress_pct / 100.0) * bar_width as f64) as usize;
     let empty = bar_width.saturating_sub(filled);
 
+    let time_display = if state.phase == BenchPhase::Write {
+        format!(" {:.1}s / {}s", state.elapsed_secs.min(state.duration_secs as f64), state.duration_secs)
+    } else {
+        format!(" {:.1}s", state.elapsed_secs)
+    };
     let progress_line = Line::from(vec![
         Span::styled(format!("{:>5.1}% ", progress_pct), Style::default().fg(TEXT_PRIMARY)),
         Span::styled("█".repeat(filled), Style::default().fg(GREEN)),
         Span::styled("░".repeat(empty), Style::default().fg(TEXT_MUTED)),
-        Span::styled(
-            format!(" {:.1}s / {}s", state.elapsed_secs, state.duration_secs),
-            Style::default().fg(TEXT_SECONDARY),
-        ),
+        Span::styled(time_display, Style::default().fg(TEXT_SECONDARY)),
     ]);
     f.render_widget(Paragraph::new(progress_line), progress_inner);
 
@@ -5449,8 +5230,6 @@ fn draw_bench_running(f: &mut Frame, area: Rect, state: &BenchViewState) {
         state.write_records,
         &state.write_history,
     );
-
-    // Read stats
     draw_bench_stat_box(
         f,
         chunks[2],
@@ -5603,8 +5382,6 @@ fn draw_throughput_sparklines(f: &mut Frame, area: Rect, write_history: &[f64], 
             .style(Style::default().fg(BLUE));
         f.render_widget(write_spark, chunks[0]);
     }
-
-    // Read sparkline
     if !read_history.is_empty() {
         let read_data: Vec<u64> = read_history.iter().map(|v| (*v * 100.0) as u64).collect();
         let read_spark = ratatui::widgets::Sparkline::default()
@@ -5685,6 +5462,70 @@ fn draw_latency_box(
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+fn draw_tail_sparklines(f: &mut Frame, area: Rect, throughput_history: &[f64], records_history: &[f64]) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+            Constraint::Length(2),
+        ])
+        .split(area);
+
+    // Throughput sparkline (MiB/s)
+    if !throughput_history.is_empty() {
+        let max_val = throughput_history.iter().cloned().fold(0.1_f64, f64::max);
+        let data: Vec<u64> = throughput_history
+            .iter()
+            .map(|v| ((v / max_val) * 100.0) as u64)
+            .collect();
+
+        let current = throughput_history.last().copied().unwrap_or(0.0);
+        let block = Block::default()
+            .title(Line::from(vec![
+                Span::styled(" ▲ ", Style::default().fg(CYAN)),
+                Span::styled(format!("{:.2} MiB/s ", current), Style::default().fg(CYAN).bold()),
+            ]))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(BORDER));
+
+        let inner = block.inner(chunks[1]);
+        f.render_widget(block, chunks[1]);
+
+        let sparkline = ratatui::widgets::Sparkline::default()
+            .data(&data)
+            .style(Style::default().fg(CYAN));
+        f.render_widget(sparkline, inner);
+    }
+
+    // Records/s sparkline
+    if !records_history.is_empty() {
+        let max_val = records_history.iter().cloned().fold(1.0_f64, f64::max);
+        let data: Vec<u64> = records_history
+            .iter()
+            .map(|v| ((v / max_val) * 100.0) as u64)
+            .collect();
+
+        let current = records_history.last().copied().unwrap_or(0.0);
+        let block = Block::default()
+            .title(Line::from(vec![
+                Span::styled(" ◆ ", Style::default().fg(GREEN)),
+                Span::styled(format!("{:.0} rec/s ", current), Style::default().fg(GREEN).bold()),
+            ]))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(BORDER));
+
+        let inner = block.inner(chunks[2]);
+        f.render_widget(block, chunks[2]);
+
+        let sparkline = ratatui::widgets::Sparkline::default()
+            .data(&data)
+            .style(Style::default().fg(GREEN));
+        f.render_widget(sparkline, inner);
+    }
+}
+
 fn format_number(n: u64) -> String {
     if n >= 1_000_000_000 {
         format!("{:.2}B", n as f64 / 1_000_000_000.0)
@@ -5695,4 +5536,142 @@ fn format_number(n: u64) -> String {
     } else {
         n.to_string()
     }
+}
+
+/// Draw Picture-in-Picture overlay in bottom-right corner
+fn draw_pip(f: &mut Frame, pip: &PipState) {
+    let area = f.area();
+
+    // PiP window size: 40 chars wide, 12 lines tall
+    let pip_width = 44.min(area.width.saturating_sub(4));
+    let pip_height = 14.min(area.height.saturating_sub(4));
+
+    // Position in bottom-right corner with some margin
+    let pip_area = Rect::new(
+        area.width.saturating_sub(pip_width + 2),
+        area.height.saturating_sub(pip_height + 2),
+        pip_width,
+        pip_height,
+    );
+
+    // Clear background
+    f.render_widget(Clear, pip_area);
+
+    // Create title with stream info
+    let title = format!(" {}/{} ", pip.basin_name, pip.stream_name);
+    let status = if pip.paused { " PAUSED " } else { " LIVE " };
+    let status_color = if pip.paused { WARNING } else { SUCCESS };
+
+    let block = Block::default()
+        .title(Line::from(vec![
+            Span::styled(&title, Style::default().fg(CYAN).bold()),
+            Span::styled(status, Style::default().fg(BG_DARK).bg(status_color).bold()),
+        ]))
+        .title_bottom(Line::from(vec![
+            Span::styled(" P", Style::default().fg(TEXT_MUTED)),
+            Span::styled("=close ", Style::default().fg(TEXT_MUTED)),
+        ]))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(CYAN))
+        .style(Style::default().bg(BG_PANEL));
+
+    let inner = block.inner(pip_area);
+    f.render_widget(block, pip_area);
+
+    // Split inner area: header line + records list
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),  // Stats line
+            Constraint::Min(1),     // Records
+        ])
+        .split(inner);
+
+    // Stats line
+    let stats = if pip.current_mibps > 0.0 {
+        format!(
+            "{:.1} MiB/s  {:.0} rec/s  {} records",
+            pip.current_mibps,
+            pip.current_recps,
+            pip.records.len()
+        )
+    } else {
+        format!("{} records", pip.records.len())
+    };
+    let stats_para = Paragraph::new(Span::styled(&stats, Style::default().fg(TEXT_MUTED)));
+    f.render_widget(stats_para, chunks[0]);
+
+    // Records list (show last N that fit)
+    let visible_height = chunks[1].height as usize;
+    let records_to_show: Vec<_> = pip.records.iter()
+        .rev()
+        .take(visible_height)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+
+    if records_to_show.is_empty() {
+        let waiting = Paragraph::new(Span::styled(
+            "Waiting for records...",
+            Style::default().fg(TEXT_MUTED).italic(),
+        )).alignment(Alignment::Center);
+        f.render_widget(waiting, chunks[1]);
+    } else {
+        let items: Vec<ListItem> = records_to_show.iter().map(|record| {
+            let seq = format!("#{:<6}", record.seq_num);
+            let body_preview: String = String::from_utf8_lossy(&record.body)
+                .chars()
+                .take(28)
+                .filter(|c| !c.is_control())
+                .collect();
+
+            ListItem::new(Line::from(vec![
+                Span::styled(seq, Style::default().fg(TEXT_MUTED)),
+                Span::styled(" ", Style::default()),
+                Span::styled(body_preview, Style::default().fg(TEXT_PRIMARY)),
+            ]))
+        }).collect();
+
+        let list = List::new(items);
+        f.render_widget(list, chunks[1]);
+    }
+}
+
+/// Draw minimized PiP indicator in bottom-right corner
+fn draw_pip_minimized(f: &mut Frame, pip: &PipState) {
+    let area = f.area();
+
+    // Small indicator: just shows stream name and record count
+    let indicator_width = 24.min(area.width.saturating_sub(4));
+    let indicator_height = 3;
+
+    let indicator_area = Rect::new(
+        area.width.saturating_sub(indicator_width + 2),
+        area.height.saturating_sub(indicator_height + 2),
+        indicator_width,
+        indicator_height,
+    );
+
+    f.render_widget(Clear, indicator_area);
+
+    let status_char = if pip.paused { "⏸" } else { "●" };
+    let status_color = if pip.paused { WARNING } else { SUCCESS };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER))
+        .style(Style::default().bg(BG_PANEL));
+
+    let para = Paragraph::new(Line::from(vec![
+        Span::styled(status_char, Style::default().fg(status_color)),
+        Span::styled(" ", Style::default()),
+        Span::styled(
+            format!("{} ({})", pip.stream_name, pip.records.len()),
+            Style::default().fg(TEXT_SECONDARY),
+        ),
+    ]))
+    .block(block);
+
+    f.render_widget(para, indicator_area);
 }

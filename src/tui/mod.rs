@@ -27,27 +27,42 @@ pub async fn run() -> Result<(), CliError> {
     };
 
     // Setup terminal
-    enable_raw_mode().map_err(|e| CliError::RecordWrite(format!("Failed to enable raw mode: {e}")))?;
+    enable_raw_mode().map_err(|e| CliError::RecordReaderInit(format!("terminal setup: {e}")))?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
-        .map_err(|e| CliError::RecordWrite(format!("Failed to setup terminal: {e}")))?;
+        .map_err(|e| CliError::RecordReaderInit(format!("terminal setup: {e}")))?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)
-        .map_err(|e| CliError::RecordWrite(format!("Failed to create terminal: {e}")))?;
+        .map_err(|e| CliError::RecordReaderInit(format!("terminal setup: {e}")))?;
 
     // Create and run app
     let app = App::new(s2);
     let result = app.run(&mut terminal).await;
 
-    // Restore terminal
-    disable_raw_mode().ok();
-    execute!(
+    // Restore terminal - attempt all cleanup steps even if some fail
+    // This is critical: a partially restored terminal leaves the user's shell broken
+    let mut cleanup_errors = Vec::new();
+
+    if let Err(e) = disable_raw_mode() {
+        cleanup_errors.push(format!("disable_raw_mode: {e}"));
+    }
+
+    if let Err(e) = execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture
-    )
-    .ok();
-    terminal.show_cursor().ok();
+    ) {
+        cleanup_errors.push(format!("leave_alternate_screen: {e}"));
+    }
+
+    if let Err(e) = terminal.show_cursor() {
+        cleanup_errors.push(format!("show_cursor: {e}"));
+    }
+
+    // Log cleanup errors to stderr (won't be visible in alternate screen anyway)
+    if !cleanup_errors.is_empty() {
+        eprintln!("Warning: terminal cleanup errors: {}", cleanup_errors.join(", "));
+    }
 
     result
 }
