@@ -15,17 +15,30 @@ use super::app::{
     SettingsState, SetupState, StreamDetailState, StreamsState, Tab,
 };
 
-const GREEN: Color = Color::Rgb(34, 197, 94); // Active green
-const YELLOW: Color = Color::Rgb(250, 204, 21); // Warning yellow
-const RED: Color = Color::Rgb(239, 68, 68); // Error red
-const CYAN: Color = Color::Rgb(34, 211, 238); // Cyan accent
-const BLUE: Color = Color::Rgb(59, 130, 246); // Blue accent
-const WHITE: Color = Color::Rgb(255, 255, 255); // Pure white
-const GRAY_100: Color = Color::Rgb(243, 244, 246); // Near white
-const GRAY_500: Color = Color::Rgb(107, 114, 128); // Muted gray
-const BG_DARK: Color = Color::Rgb(17, 17, 17); // Main background
-const BG_PANEL: Color = Color::Rgb(24, 24, 27); // Panel background
-const BORDER: Color = Color::Rgb(63, 63, 70); // Border gray
+const GREEN: Color = Color::Rgb(34, 197, 94);
+const YELLOW: Color = Color::Rgb(250, 204, 21);
+const RED: Color = Color::Rgb(239, 68, 68);
+const CYAN: Color = Color::Rgb(34, 211, 238);
+const BLUE: Color = Color::Rgb(59, 130, 246);
+const PURPLE: Color = Color::Rgb(167, 139, 250);
+const ORANGE: Color = Color::Rgb(251, 146, 60);
+const WHITE: Color = Color::Rgb(255, 255, 255);
+
+const GRAY_100: Color = Color::Rgb(243, 244, 246);
+const GRAY_200: Color = Color::Rgb(180, 180, 180);
+const GRAY_300: Color = Color::Rgb(150, 150, 150);
+const GRAY_400: Color = Color::Rgb(120, 120, 120);
+const GRAY_500: Color = Color::Rgb(107, 114, 128);
+const GRAY_600: Color = Color::Rgb(100, 100, 100);
+const GRAY_700: Color = Color::Rgb(80, 80, 80);
+const GRAY_750: Color = Color::Rgb(63, 63, 70);
+const GRAY_800: Color = Color::Rgb(60, 60, 60);
+const GRAY_850: Color = Color::Rgb(50, 50, 50);
+const GRAY_900: Color = Color::Rgb(40, 40, 40);
+
+const BG_DARK: Color = Color::Rgb(17, 17, 17);
+const BG_PANEL: Color = Color::Rgb(24, 24, 27);
+const BG_SELECTED: Color = Color::Rgb(39, 39, 42);
 
 const ACCENT: Color = WHITE;
 const SUCCESS: Color = GREEN;
@@ -34,18 +47,43 @@ const ERROR: Color = RED;
 const TEXT_PRIMARY: Color = WHITE;
 const TEXT_SECONDARY: Color = GRAY_100;
 const TEXT_MUTED: Color = GRAY_500;
+const BORDER: Color = GRAY_750;
+const BORDER_DIM: Color = GRAY_850;
+const BORDER_TITLE: Color = GRAY_900;
 
-// Additional gray shades for consistent styling
-const GRAY_600: Color = Color::Rgb(80, 80, 80);
-const GRAY_650: Color = Color::Rgb(60, 60, 60);
-const GRAY_700: Color = Color::Rgb(100, 100, 100);
-const GRAY_750: Color = Color::Rgb(50, 50, 50);
-const GRAY_800: Color = Color::Rgb(40, 40, 40);
+const BADGE_ACTIVE: Color = Color::Rgb(22, 101, 52);
+const BADGE_PENDING: Color = Color::Rgb(113, 63, 18);
+const BADGE_DANGER: Color = Color::Rgb(127, 29, 29);
 
-// Consistent cursor character
+const STAT_MIN: Color = Color::Rgb(96, 165, 250);
+const STAT_MAX: Color = Color::Rgb(251, 191, 36);
+const STAT_AVG: Color = PURPLE;
+
+const GREEN_BRIGHT: Color = Color::Rgb(34, 197, 94);
+const GREEN_LIGHT: Color = Color::Rgb(74, 222, 128);
+const GREEN_LIGHTER: Color = Color::Rgb(134, 239, 172);
+const GREEN_PALE: Color = Color::Rgb(187, 247, 208);
+const GREEN_PALEST: Color = Color::Rgb(220, 252, 231);
+
+const CHART_PURPLE: Color = Color::Rgb(139, 92, 246);
+const CHART_VIOLET: Color = Color::Rgb(124, 58, 237);
+const CHART_INDIGO: Color = Color::Rgb(99, 102, 241);
+const CHART_DEEP_INDIGO: Color = Color::Rgb(79, 70, 229);
+const CHART_BLUE: Color = Color::Rgb(59, 130, 246);
+const CHART_ROYAL_BLUE: Color = Color::Rgb(37, 99, 235);
+const CHART_LIGHT_BLUE: Color = Color::Rgb(96, 165, 250);
+const CHART_PALE_BLUE: Color = Color::Rgb(147, 197, 253);
+const CHART_YELLOW: Color = Color::Rgb(250, 204, 21);
+const CHART_ORANGE: Color = Color::Rgb(251, 146, 60);
+
+const STORAGE_EXPRESS: Color = ORANGE;
+const STORAGE_STANDARD: Color = Color::Rgb(147, 197, 253);
+
+const TIME_RECENT: Color = GREEN_LIGHT;
+const TIME_MODERATE: Color = YELLOW;
+const TIME_OLD: Color = GRAY_200;
+
 const CURSOR: &str = "▎";
-
-// Consistent selection indicator
 const SELECTED_INDICATOR: &str = " ▸ ";
 const UNSELECTED_INDICATOR: &str = "   ";
 
@@ -102,7 +140,7 @@ fn render_toggle(on: bool, is_selected: bool) -> Vec<Span<'static>> {
         vec![
             Span::styled(
                 "",
-                Style::default().fg(if is_selected { GREEN } else { GRAY_650 }),
+                Style::default().fg(if is_selected { GREEN } else { GRAY_800 }),
             ),
             Span::styled(" ON ", Style::default().fg(BG_DARK).bg(GREEN).bold()),
             Span::styled("", Style::default().fg(GREEN)),
@@ -111,10 +149,10 @@ fn render_toggle(on: bool, is_selected: bool) -> Vec<Span<'static>> {
         vec![
             Span::styled(
                 "",
-                Style::default().fg(if is_selected { TEXT_MUTED } else { GRAY_650 }),
+                Style::default().fg(if is_selected { TEXT_MUTED } else { GRAY_800 }),
             ),
-            Span::styled(" OFF ", Style::default().fg(TEXT_MUTED).bg(GRAY_650)),
-            Span::styled("", Style::default().fg(GRAY_650)),
+            Span::styled(" OFF ", Style::default().fg(TEXT_MUTED).bg(GRAY_800)),
+            Span::styled("", Style::default().fg(GRAY_800)),
         ]
     }
 }
@@ -251,7 +289,7 @@ fn render_search_bar(
         Line::from(vec![
             Span::styled(" [/] ", Style::default().fg(GREEN)),
             Span::styled(filter.to_string(), Style::default().fg(TEXT_PRIMARY)),
-            Span::styled("_", Style::default().fg(GREEN)),
+            Span::styled(CURSOR, Style::default().fg(GREEN)),
         ])
     } else if filter.is_empty() {
         Line::from(vec![Span::styled(
@@ -395,7 +433,7 @@ fn draw_setup(f: &mut Frame, area: Rect, state: &SetupState) {
         vec![
             Span::styled("Token ", Style::default().fg(TEXT_MUTED)),
             Span::styled("› ", Style::default().fg(BORDER)),
-            Span::styled("_", Style::default().fg(CYAN)),
+            Span::styled(CURSOR, Style::default().fg(CYAN)),
         ]
     } else {
         let display = truncate_str(&state.access_token, 40, "...");
@@ -403,7 +441,7 @@ fn draw_setup(f: &mut Frame, area: Rect, state: &SetupState) {
             Span::styled("Token ", Style::default().fg(TEXT_MUTED)),
             Span::styled("› ", Style::default().fg(GREEN)),
             Span::styled(display, Style::default().fg(WHITE)),
-            Span::styled("_", Style::default().fg(CYAN)),
+            Span::styled(CURSOR, Style::default().fg(CYAN)),
         ]
     };
     lines.push(Line::from(token_display));
@@ -1301,17 +1339,17 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
         Span::styled("min ", Style::default().fg(TEXT_MUTED)),
         Span::styled(
             format_metric_value_f64(min_val, metric_unit),
-            Style::default().fg(Color::Rgb(96, 165, 250)),
+            Style::default().fg(STAT_MIN),
         ),
         Span::styled("  max ", Style::default().fg(TEXT_MUTED)),
         Span::styled(
             format_metric_value_f64(max_val, metric_unit),
-            Style::default().fg(Color::Rgb(251, 191, 36)),
+            Style::default().fg(STAT_MAX),
         ),
         Span::styled("  avg ", Style::default().fg(TEXT_MUTED)),
         Span::styled(
             format_metric_value_f64(avg_val, metric_unit),
-            Style::default().fg(Color::Rgb(167, 139, 250)),
+            Style::default().fg(STAT_AVG),
         ),
         Span::styled(
             format!("  |  {} pts", all_values.len()),
@@ -1414,15 +1452,15 @@ fn draw_metrics_view(f: &mut Frame, area: Rect, state: &MetricsViewState) {
 /// Convert intensity (0.0-1.0) to a green gradient color
 fn intensity_to_color(intensity: f64) -> Color {
     if intensity > 0.8 {
-        Color::Rgb(34, 197, 94) // bright green
+        GREEN_BRIGHT
     } else if intensity > 0.6 {
-        Color::Rgb(74, 222, 128)
+        GREEN_LIGHT
     } else if intensity > 0.4 {
-        Color::Rgb(134, 239, 172)
+        GREEN_LIGHTER
     } else if intensity > 0.2 {
-        Color::Rgb(187, 247, 208)
+        GREEN_PALE
     } else {
-        Color::Rgb(220, 252, 231) // pale green
+        GREEN_PALEST
     }
 }
 
@@ -1435,16 +1473,16 @@ fn render_multi_metric(
 ) {
     use std::collections::BTreeMap;
     let colors = [
-        Color::Rgb(139, 92, 246),  // Purple (primary)
-        Color::Rgb(124, 58, 237),  // Violet
-        Color::Rgb(99, 102, 241),  // Indigo
-        Color::Rgb(79, 70, 229),   // Deep indigo
-        Color::Rgb(59, 130, 246),  // Blue
-        Color::Rgb(37, 99, 235),   // Royal blue
-        Color::Rgb(96, 165, 250),  // Light blue
-        Color::Rgb(147, 197, 253), // Pale blue
-        Color::Rgb(250, 204, 21),  // Yellow (for highlights)
-        Color::Rgb(251, 146, 60),  // Orange
+        CHART_PURPLE,
+        CHART_VIOLET,
+        CHART_INDIGO,
+        CHART_DEEP_INDIGO,
+        CHART_BLUE,
+        CHART_ROYAL_BLUE,
+        CHART_LIGHT_BLUE,
+        CHART_PALE_BLUE,
+        CHART_YELLOW,
+        CHART_ORANGE,
     ];
     let mut metric_totals: Vec<(String, f64, usize)> = metrics
         .iter()
@@ -1517,17 +1555,17 @@ fn render_multi_metric(
         Span::styled("min ", Style::default().fg(TEXT_MUTED)),
         Span::styled(
             format_count(min_val as u64),
-            Style::default().fg(Color::Rgb(96, 165, 250)),
+            Style::default().fg(STAT_MIN),
         ),
         Span::styled("  max ", Style::default().fg(TEXT_MUTED)),
         Span::styled(
             format_count(max_val as u64),
-            Style::default().fg(Color::Rgb(251, 191, 36)),
+            Style::default().fg(STAT_MAX),
         ),
         Span::styled("  avg ", Style::default().fg(TEXT_MUTED)),
         Span::styled(
             format_count(avg_val as u64),
-            Style::default().fg(Color::Rgb(167, 139, 250)),
+            Style::default().fg(STAT_AVG),
         ),
         Span::styled(
             format!("  |  {} pts", all_values.len()),
@@ -2307,7 +2345,7 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
 
         if is_selected {
             f.render_widget(
-                Block::default().style(Style::default().bg(Color::Rgb(39, 39, 42))),
+                Block::default().style(Style::default().bg(BG_SELECTED)),
                 row_area,
             );
         }
@@ -2317,9 +2355,9 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
         let display_name = truncate_str(&name, max_name_len, "…");
 
         let (state_text, state_bg) = match basin.state {
-            s2_sdk::types::BasinState::Active => ("Active", Color::Rgb(22, 101, 52)),
-            s2_sdk::types::BasinState::Creating => ("Creating", Color::Rgb(113, 63, 18)),
-            s2_sdk::types::BasinState::Deleting => ("Deleting", Color::Rgb(127, 29, 29)),
+            s2_sdk::types::BasinState::Active => ("Active", BADGE_ACTIVE),
+            s2_sdk::types::BasinState::Creating => ("Creating", BADGE_PENDING),
+            s2_sdk::types::BasinState::Deleting => ("Deleting", BADGE_DANGER),
         };
 
         let scope = basin
@@ -2498,7 +2536,7 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
 
         if is_selected {
             f.render_widget(
-                Block::default().style(Style::default().bg(Color::Rgb(39, 39, 42))),
+                Block::default().style(Style::default().bg(BG_SELECTED)),
                 row_area,
             );
         }
@@ -2543,16 +2581,16 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
     let header_lines = vec![
         Line::from(""),
         Line::from(vec![
-            Span::styled("  ← ", Style::default().fg(GRAY_700)),
-            Span::styled(&basin_str, Style::default().fg(Color::Rgb(150, 150, 150))),
-            Span::styled(" / ", Style::default().fg(Color::Rgb(80, 80, 80))),
+            Span::styled("  ← ", Style::default().fg(GRAY_600)),
+            Span::styled(&basin_str, Style::default().fg(GRAY_300)),
+            Span::styled(" / ", Style::default().fg(GRAY_700)),
             Span::styled(&stream_str, Style::default().fg(GREEN).bold()),
         ]),
     ];
     let header = Paragraph::new(header_lines).block(
         Block::default()
             .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(GRAY_800)),
+            .border_style(Style::default().fg(BORDER_TITLE)),
     );
     f.render_widget(header, chunks[0]);
 
@@ -2588,7 +2626,7 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
                 Span::styled(icon, Style::default().fg(value_color)),
                 Span::styled(
                     format!(" {}", label),
-                    Style::default().fg(Color::Rgb(120, 120, 120)),
+                    Style::default().fg(GRAY_400),
                 ),
             ]),
             Line::from(vec![
@@ -2599,7 +2637,7 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
         let widget = Paragraph::new(lines).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(GRAY_750))
+                .border_style(Style::default().fg(BORDER_DIM))
                 .border_type(ratatui::widgets::BorderType::Rounded),
         );
         f.render_widget(widget, area);
@@ -2608,14 +2646,14 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
     // Tail Position
     let (tail_val, tail_color) = if let Some(pos) = &state.tail_position {
         if pos.seq_num > 0 {
-            (format!("{}", pos.seq_num), Color::Rgb(34, 211, 238))
+            (format!("{}", pos.seq_num), CYAN)
         } else {
-            ("0".to_string(), GRAY_700)
+            ("0".to_string(), GRAY_600)
         }
     } else if state.loading {
-        ("...".to_string(), GRAY_700)
+        ("...".to_string(), GRAY_600)
     } else {
-        ("--".to_string(), GRAY_700)
+        ("--".to_string(), GRAY_600)
     };
     render_stat_card_v2(f, stats_chunks[0], "▌", "Records", &tail_val, tail_color);
 
@@ -2637,18 +2675,18 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
                 format!("{}d ago", age_secs / 86400)
             };
             let color = if age_secs < 60 {
-                Color::Rgb(74, 222, 128)
+                TIME_RECENT
             } else if age_secs < 3600 {
-                Color::Rgb(250, 204, 21)
+                TIME_MODERATE
             } else {
-                Color::Rgb(180, 180, 180)
+                TIME_OLD
             };
             (val, color)
         } else {
-            ("never".to_string(), GRAY_700)
+            ("never".to_string(), GRAY_600)
         }
     } else {
-        ("--".to_string(), GRAY_700)
+        ("--".to_string(), GRAY_600)
     };
     render_stat_card_v2(f, stats_chunks[1], "◷", "Last Write", &ts_val, ts_color);
 
@@ -2660,13 +2698,13 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
             .map(|s| format!("{:?}", s).to_lowercase())
             .unwrap_or_else(|| "default".to_string());
         let color = match val.as_str() {
-            "express" => Color::Rgb(251, 146, 60),
-            "standard" => Color::Rgb(147, 197, 253),
-            _ => Color::Rgb(180, 180, 180),
+            "express" => STORAGE_EXPRESS,
+            "standard" => STORAGE_STANDARD,
+            _ => GRAY_200,
         };
         (val, color)
     } else {
-        ("--".to_string(), GRAY_700)
+        ("--".to_string(), GRAY_600)
     };
     render_stat_card_v2(
         f,
@@ -2697,13 +2735,13 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
             })
             .unwrap_or_else(|| "∞".to_string());
         let color = if val == "∞" {
-            Color::Rgb(167, 139, 250)
+            PURPLE
         } else {
-            Color::Rgb(180, 180, 180)
+            GRAY_200
         };
         (val, color)
     } else {
-        ("--".to_string(), GRAY_700)
+        ("--".to_string(), GRAY_600)
     };
     render_stat_card_v2(
         f,
@@ -2754,9 +2792,9 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
             Line::from(vec![
                 Span::styled(
                     format!("  {} ", title),
-                    Style::default().fg(Color::Rgb(34, 211, 238)).bold(),
+                    Style::default().fg(CYAN).bold(),
                 ),
-                Span::styled("─".repeat(line_width), Style::default().fg(GRAY_800)),
+                Span::styled("─".repeat(line_width), Style::default().fg(BORDER_TITLE)),
             ]),
             Line::from(""),
         ];
@@ -2780,21 +2818,21 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
                     Span::styled("      ", Style::default()),
                     Span::styled(
                         *desc,
-                        Style::default().fg(Color::Rgb(180, 180, 180)).italic(),
+                        Style::default().fg(GRAY_200).italic(),
                     ),
                 ]));
             } else {
                 // Unselected action - dimmed
                 lines.push(Line::from(vec![
                     Span::styled("    ", Style::default()),
-                    Span::styled(*icon, Style::default().fg(Color::Rgb(80, 80, 80))),
+                    Span::styled(*icon, Style::default().fg(GRAY_700)),
                     Span::styled(
                         format!(" {} ", name),
-                        Style::default().fg(Color::Rgb(140, 140, 140)),
+                        Style::default().fg(GRAY_400),
                     ),
                     Span::styled(
                         format!("[{}]", key),
-                        Style::default().fg(Color::Rgb(80, 80, 80)),
+                        Style::default().fg(GRAY_700),
                     ),
                 ]));
             }
@@ -2860,10 +2898,10 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
     let record_count = format!("  {} records", state.records.len());
 
     let mut header_spans = vec![
-        Span::styled("  ← ", Style::default().fg(GRAY_700)),
-        Span::styled(&basin_str, Style::default().fg(Color::Rgb(150, 150, 150))),
-        Span::styled(" / ", Style::default().fg(Color::Rgb(80, 80, 80))),
-        Span::styled(&stream_str, Style::default().fg(Color::Rgb(180, 180, 180))),
+        Span::styled("  ← ", Style::default().fg(GRAY_600)),
+        Span::styled(&basin_str, Style::default().fg(GRAY_300)),
+        Span::styled(" / ", Style::default().fg(GRAY_700)),
+        Span::styled(&stream_str, Style::default().fg(GRAY_200)),
         Span::styled("  ", Style::default()),
         Span::styled(
             format!(" {} ", mode_text),
@@ -2975,7 +3013,7 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
 
             if is_selected {
                 f.render_widget(
-                    Block::default().style(Style::default().bg(Color::Rgb(39, 39, 42))),
+                    Block::default().style(Style::default().bg(BG_SELECTED)),
                     row_area,
                 );
             }
@@ -3303,10 +3341,10 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
     let header_lines = vec![
         Line::from(""),
         Line::from(vec![
-            Span::styled("  ← ", Style::default().fg(GRAY_700)),
-            Span::styled(&basin_str, Style::default().fg(Color::Rgb(150, 150, 150))),
-            Span::styled(" / ", Style::default().fg(Color::Rgb(80, 80, 80))),
-            Span::styled(&stream_str, Style::default().fg(Color::Rgb(180, 180, 180))),
+            Span::styled("  ← ", Style::default().fg(GRAY_600)),
+            Span::styled(&basin_str, Style::default().fg(GRAY_300)),
+            Span::styled(" / ", Style::default().fg(GRAY_700)),
+            Span::styled(&stream_str, Style::default().fg(GRAY_200)),
             Span::styled("  ", Style::default()),
             Span::styled(" APPEND ", Style::default().fg(BG_DARK).bg(GREEN).bold()),
         ]),
@@ -3314,7 +3352,7 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
     let header = Paragraph::new(header_lines).block(
         Block::default()
             .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(GRAY_800)),
+            .border_style(Style::default().fg(BORDER_TITLE)),
     );
     f.render_widget(header, outer_chunks[0]);
 
@@ -3507,9 +3545,9 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
 
     // Separator between single record and batch mode
     lines.push(Line::from(vec![
-        Span::styled("  ─── ", Style::default().fg(GRAY_650)),
+        Span::styled("  ─── ", Style::default().fg(GRAY_800)),
         Span::styled("or batch from file", Style::default().fg(TEXT_MUTED)),
-        Span::styled(" ───────────────", Style::default().fg(GRAY_650)),
+        Span::styled(" ───────────────", Style::default().fg(GRAY_800)),
     ]));
     lines.push(Line::from(""));
 
@@ -3832,14 +3870,14 @@ fn get_responsive_hints(screen: &Screen, width: usize) -> String {
                 MetricsType::Basin { .. } | MetricsType::Account
             ) {
                 if wide {
-                    "←→ category | jk scroll | r refresh | esc back | q quit".to_string()
+                    "←→ category | jk scroll | t time range | r refresh | esc back | q quit".to_string()
                 } else {
-                    "←→ cat | jk | r | esc q".to_string()
+                    "←→ cat | jk | t time | r | esc q".to_string()
                 }
             } else if wide {
-                "jk scroll | r refresh | esc back | q quit".to_string()
+                "jk scroll | t time range | r refresh | esc back | q quit".to_string()
             } else {
-                "jk | r | esc q".to_string()
+                "jk | t time | r | esc q".to_string()
             }
         }
         Screen::BenchView(state) => {
@@ -3872,7 +3910,7 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
         Line::from(vec![
             Span::styled("  ", Style::default()),
             Span::styled(format!("─── {} ", title), Style::default().fg(CYAN).bold()),
-            Span::styled("─".repeat(20), Style::default().fg(GRAY_650)),
+            Span::styled("─".repeat(20), Style::default().fg(GRAY_800)),
         ])
     }
 
@@ -5082,7 +5120,7 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             let mut seq_spans = vec![ind];
             seq_spans.push(Span::styled(
                 if is_seq { "● " } else { "○ " },
-                Style::default().fg(if is_seq { GREEN } else { GRAY_650 }),
+                Style::default().fg(if is_seq { GREEN } else { GRAY_800 }),
             ));
             seq_spans.push(lbl);
             seq_spans.push(Span::raw("  "));
@@ -5100,7 +5138,7 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             let mut ts_spans = vec![ind];
             ts_spans.push(Span::styled(
                 if is_ts { "● " } else { "○ " },
-                Style::default().fg(if is_ts { GREEN } else { GRAY_650 }),
+                Style::default().fg(if is_ts { GREEN } else { GRAY_800 }),
             ));
             ts_spans.push(lbl);
             ts_spans.push(Span::raw("  "));
@@ -5119,7 +5157,7 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             let mut ago_spans = vec![ind];
             ago_spans.push(Span::styled(
                 if is_ago { "● " } else { "○ " },
-                Style::default().fg(if is_ago { GREEN } else { GRAY_650 }),
+                Style::default().fg(if is_ago { GREEN } else { GRAY_800 }),
             ));
             ago_spans.push(lbl);
             ago_spans.push(Span::raw("  "));
@@ -5145,7 +5183,7 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             let mut off_spans = vec![ind];
             off_spans.push(Span::styled(
                 if is_off { "● " } else { "○ " },
-                Style::default().fg(if is_off { GREEN } else { GRAY_650 }),
+                Style::default().fg(if is_off { GREEN } else { GRAY_800 }),
             ));
             off_spans.push(lbl);
             off_spans.push(Span::raw("  "));
@@ -5824,7 +5862,7 @@ fn render_hint_with_keys(hint: &str) -> Vec<Span<'static>> {
 
     for (i, part) in parts.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::styled(" · ", Style::default().fg(GRAY_650)));
+            spans.push(Span::styled(" · ", Style::default().fg(GRAY_800)));
         }
 
         // Split into key and description (first word is the key)
