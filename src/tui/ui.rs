@@ -33,9 +33,11 @@ const TEXT_SECONDARY: Color = GRAY_100;
 const TEXT_MUTED: Color = GRAY_500;
 
 // Additional gray shades for consistent styling
-const GRAY_600: Color = Color::Rgb(80, 80, 80);           // Medium gray for hints/placeholders
-const GRAY_650: Color = Color::Rgb(60, 60, 60);           // For toggle off state
-const GRAY_750: Color = Color::Rgb(50, 50, 50);           // For inactive pills
+const GRAY_600: Color = Color::Rgb(80, 80, 80);
+const GRAY_650: Color = Color::Rgb(60, 60, 60);
+const GRAY_700: Color = Color::Rgb(100, 100, 100);
+const GRAY_750: Color = Color::Rgb(50, 50, 50);
+const GRAY_800: Color = Color::Rgb(40, 40, 40);
 
 // Consistent cursor character
 const CURSOR: &str = "▎";
@@ -731,13 +733,13 @@ fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
         Line::from(""),
         Line::from(vec![
             Span::styled("  Access Tokens", Style::default().fg(GREEN).bold()),
-            Span::styled(&count_text, Style::default().fg(Color::Rgb(100, 100, 100))),
+            Span::styled(&count_text, Style::default().fg(GRAY_700)),
         ]),
     ];
     let title_block = Paragraph::new(title_lines)
         .block(Block::default()
             .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
+            .border_style(Style::default().fg(GRAY_800)));
     f.render_widget(title_block, chunks[0]);
 
     let (search_block, search_text) = render_search_bar(&state.filter, state.filter_active, "Filter by token ID");
@@ -1584,7 +1586,7 @@ fn render_area_chart(
             } else {
                 // Value is below this row - empty or grid
                 if col % 10 == 0 {
-                    ('·', Color::Rgb(50, 50, 50))
+                    ('·', GRAY_750)
                 } else {
                     (' ', BG_DARK)
                 }
@@ -1966,13 +1968,13 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
         Line::from(""),
         Line::from(vec![
             Span::styled("  Basins", Style::default().fg(GREEN).bold()),
-            Span::styled(&count_text, Style::default().fg(Color::Rgb(100, 100, 100))),
+            Span::styled(&count_text, Style::default().fg(GRAY_700)),
         ]),
     ];
     let title_block = Paragraph::new(title_lines)
         .block(Block::default()
             .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
+            .border_style(Style::default().fg(GRAY_800)));
     f.render_widget(title_block, chunks[0]);
 
     let (search_block, search_text) = render_search_bar(&state.filter, state.filter_active, "Filter by prefix");
@@ -2116,15 +2118,15 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
     let title_lines = vec![
         Line::from(""),
         Line::from(vec![
-            Span::styled("  ← ", Style::default().fg(Color::Rgb(100, 100, 100))),
+            Span::styled("  ← ", Style::default().fg(GRAY_700)),
             Span::styled(&basin_name_str, Style::default().fg(GREEN).bold()),
-            Span::styled(&count_text, Style::default().fg(Color::Rgb(100, 100, 100))),
+            Span::styled(&count_text, Style::default().fg(GRAY_700)),
         ]),
     ];
     let title_block = Paragraph::new(title_lines)
         .block(Block::default()
             .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
+            .border_style(Style::default().fg(GRAY_800)));
     f.render_widget(title_block, chunks[0]);
 
     let (search_block, search_text) = render_search_bar(&state.filter, state.filter_active, "Filter by prefix");
@@ -2237,7 +2239,7 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
     let header_lines = vec![
         Line::from(""),
         Line::from(vec![
-            Span::styled("  ← ", Style::default().fg(Color::Rgb(100, 100, 100))),
+            Span::styled("  ← ", Style::default().fg(GRAY_700)),
             Span::styled(&basin_str, Style::default().fg(Color::Rgb(150, 150, 150))),
             Span::styled(" / ", Style::default().fg(Color::Rgb(80, 80, 80))),
             Span::styled(&stream_str, Style::default().fg(GREEN).bold()),
@@ -2246,7 +2248,7 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
     let header = Paragraph::new(header_lines)
         .block(Block::default()
             .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
+            .border_style(Style::default().fg(GRAY_800)));
     f.render_widget(header, chunks[0]);
 
     let stats_area = Layout::default()
@@ -2282,7 +2284,7 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
         let widget = Paragraph::new(lines)
             .block(Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Rgb(50, 50, 50)))
+                .border_style(Style::default().fg(GRAY_750))
                 .border_type(ratatui::widgets::BorderType::Rounded));
         f.render_widget(widget, area);
     }
@@ -2292,12 +2294,12 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
         if pos.seq_num > 0 {
             (format!("{}", pos.seq_num), Color::Rgb(34, 211, 238))
         } else {
-            ("0".to_string(), Color::Rgb(100, 100, 100))
+            ("0".to_string(), GRAY_700)
         }
     } else if state.loading {
-        ("...".to_string(), Color::Rgb(100, 100, 100))
+        ("...".to_string(), GRAY_700)
     } else {
-        ("--".to_string(), Color::Rgb(100, 100, 100))
+        ("--".to_string(), GRAY_700)
     };
     render_stat_card_v2(f, stats_chunks[0], "▌", "Records", &tail_val, tail_color);
 
@@ -2327,10 +2329,10 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
             };
             (val, color)
         } else {
-            ("never".to_string(), Color::Rgb(100, 100, 100))
+            ("never".to_string(), GRAY_700)
         }
     } else {
-        ("--".to_string(), Color::Rgb(100, 100, 100))
+        ("--".to_string(), GRAY_700)
     };
     render_stat_card_v2(f, stats_chunks[1], "◷", "Last Write", &ts_val, ts_color);
 
@@ -2347,7 +2349,7 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
         };
         (val, color)
     } else {
-        ("--".to_string(), Color::Rgb(100, 100, 100))
+        ("--".to_string(), GRAY_700)
     };
     render_stat_card_v2(f, stats_chunks[2], "◈", "Storage", &storage_val, storage_color);
     let (retention_val, retention_color) = if let Some(config) = &state.config {
@@ -2376,7 +2378,7 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
         };
         (val, color)
     } else {
-        ("--".to_string(), Color::Rgb(100, 100, 100))
+        ("--".to_string(), GRAY_700)
     };
     render_stat_card_v2(f, stats_chunks[3], "◔", "Retention", &retention_val, retention_color);
 
@@ -2415,7 +2417,7 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
         let mut lines = vec![
             Line::from(vec![
                 Span::styled(format!("  {} ", title), Style::default().fg(Color::Rgb(34, 211, 238)).bold()),
-                Span::styled("─".repeat(line_width), Style::default().fg(Color::Rgb(40, 40, 40))),
+                Span::styled("─".repeat(line_width), Style::default().fg(GRAY_800)),
             ]),
             Line::from(""),
         ];
@@ -2451,7 +2453,7 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
         let widget = Paragraph::new(lines)
             .block(Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Rgb(50, 50, 50)))
+                .border_style(Style::default().fg(GRAY_750))
                 .border_type(ratatui::widgets::BorderType::Rounded));
         f.render_widget(widget, area);
     }
@@ -2492,13 +2494,13 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
     let record_count = format!("  {} records", state.records.len());
 
     let mut header_spans = vec![
-        Span::styled("  ← ", Style::default().fg(Color::Rgb(100, 100, 100))),
+        Span::styled("  ← ", Style::default().fg(GRAY_700)),
         Span::styled(&basin_str, Style::default().fg(Color::Rgb(150, 150, 150))),
         Span::styled(" / ", Style::default().fg(Color::Rgb(80, 80, 80))),
         Span::styled(&stream_str, Style::default().fg(Color::Rgb(180, 180, 180))),
         Span::styled("  ", Style::default()),
         Span::styled(format!(" {} ", mode_text), Style::default().fg(BG_DARK).bg(mode_color).bold()),
-        Span::styled(&record_count, Style::default().fg(Color::Rgb(100, 100, 100))),
+        Span::styled(&record_count, Style::default().fg(GRAY_700)),
     ];
 
     if state.is_tailing && state.current_mibps > 0.0 {
@@ -2514,7 +2516,7 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
     }
 
     if let Some(ref output) = state.output_file {
-        header_spans.push(Span::styled("  → ", Style::default().fg(Color::Rgb(100, 100, 100))));
+        header_spans.push(Span::styled("  → ", Style::default().fg(GRAY_700)));
         header_spans.push(Span::styled(output, Style::default().fg(YELLOW)));
     }
 
@@ -2525,7 +2527,7 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
     let header = Paragraph::new(header_lines)
         .block(Block::default()
             .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
+            .border_style(Style::default().fg(GRAY_800)));
     f.render_widget(header, main_chunks[0]);
 
     if show_sparklines {
@@ -2855,7 +2857,7 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
     let header_lines = vec![
         Line::from(""),
         Line::from(vec![
-            Span::styled("  ← ", Style::default().fg(Color::Rgb(100, 100, 100))),
+            Span::styled("  ← ", Style::default().fg(GRAY_700)),
             Span::styled(&basin_str, Style::default().fg(Color::Rgb(150, 150, 150))),
             Span::styled(" / ", Style::default().fg(Color::Rgb(80, 80, 80))),
             Span::styled(&stream_str, Style::default().fg(Color::Rgb(180, 180, 180))),
@@ -2866,7 +2868,7 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
     let header = Paragraph::new(header_lines)
         .block(Block::default()
             .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(Color::Rgb(40, 40, 40))));
+            .border_style(Style::default().fg(GRAY_800)));
     f.render_widget(header, outer_chunks[0]);
 
     let main_chunks = Layout::default()
@@ -2879,7 +2881,7 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
 
     let form_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(50, 50, 50)))
+        .border_style(Style::default().fg(GRAY_750))
         .border_type(ratatui::widgets::BorderType::Rounded)
         .padding(Padding::new(2, 2, 1, 1));
 

@@ -173,14 +173,6 @@ impl InputFormat {
             Self::JsonBase64 => Self::Text,
         }
     }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Text => "text",
-            Self::Json => "json",
-            Self::JsonBase64 => "json-base64",
-        }
-    }
 }
 
 /// Result of an append operation
