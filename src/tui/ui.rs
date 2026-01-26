@@ -936,7 +936,10 @@ fn draw_access_tokens(f: &mut Frame, area: Rect, state: &AccessTokensState) {
             };
 
             let line = Line::from(vec![
-                Span::styled(prefix, Style::default().fg(if is_selected { GREEN } else { TEXT_PRIMARY })),
+                Span::styled(
+                    prefix,
+                    Style::default().fg(if is_selected { GREEN } else { TEXT_PRIMARY }),
+                ),
                 Span::styled(format!("{:<30}", token_id_display), name_style),
                 Span::styled(
                     format!("{:<28}", expires_display),
@@ -1573,20 +1576,11 @@ fn render_multi_metric(
         Span::styled(format!("{} ", trend_text), Style::default().fg(trend_color)),
         Span::styled("  |  ", Style::default().fg(BORDER)),
         Span::styled("min ", Style::default().fg(TEXT_MUTED)),
-        Span::styled(
-            format_count(min_val as u64),
-            Style::default().fg(STAT_MIN),
-        ),
+        Span::styled(format_count(min_val as u64), Style::default().fg(STAT_MIN)),
         Span::styled("  max ", Style::default().fg(TEXT_MUTED)),
-        Span::styled(
-            format_count(max_val as u64),
-            Style::default().fg(STAT_MAX),
-        ),
+        Span::styled(format_count(max_val as u64), Style::default().fg(STAT_MAX)),
         Span::styled("  avg ", Style::default().fg(TEXT_MUTED)),
-        Span::styled(
-            format_count(avg_val as u64),
-            Style::default().fg(STAT_AVG),
-        ),
+        Span::styled(format_count(avg_val as u64), Style::default().fg(STAT_AVG)),
         Span::styled(
             format!("  |  {} pts", all_values.len()),
             Style::default().fg(TEXT_MUTED),
@@ -2396,7 +2390,10 @@ fn draw_basins(f: &mut Frame, area: Rect, state: &BasinsState) {
         };
         f.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(prefix, Style::default().fg(if is_selected { GREEN } else { TEXT_SECONDARY })),
+                Span::styled(
+                    prefix,
+                    Style::default().fg(if is_selected { GREEN } else { TEXT_SECONDARY }),
+                ),
                 Span::styled(display_name, name_style),
             ])),
             Rect::new(row_area.x, y, name_col as u16, 1),
@@ -2579,7 +2576,10 @@ fn draw_streams(f: &mut Frame, area: Rect, state: &StreamsState) {
         };
         f.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(prefix, Style::default().fg(if is_selected { GREEN } else { TEXT_SECONDARY })),
+                Span::styled(
+                    prefix,
+                    Style::default().fg(if is_selected { GREEN } else { TEXT_SECONDARY }),
+                ),
                 Span::styled(display_name, name_style),
             ])),
             Rect::new(row_area.x, y, name_col as u16, 1),
@@ -2652,10 +2652,7 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
         let lines = vec![
             Line::from(vec![
                 Span::styled(icon, Style::default().fg(value_color)),
-                Span::styled(
-                    format!(" {}", label),
-                    Style::default().fg(GRAY_400),
-                ),
+                Span::styled(format!(" {}", label), Style::default().fg(GRAY_400)),
             ]),
             Line::from(vec![
                 Span::styled("  ", Style::default()),
@@ -2762,11 +2759,7 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
                 crate::types::RetentionPolicy::Infinite => "∞".to_string(),
             })
             .unwrap_or_else(|| "∞".to_string());
-        let color = if val == "∞" {
-            PURPLE
-        } else {
-            GRAY_200
-        };
+        let color = if val == "∞" { PURPLE } else { GRAY_200 };
         (val, color)
     } else {
         ("--".to_string(), GRAY_600)
@@ -2818,10 +2811,7 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
 
         let mut lines = vec![
             Line::from(vec![
-                Span::styled(
-                    format!("  {} ", title),
-                    Style::default().fg(CYAN).bold(),
-                ),
+                Span::styled(format!("  {} ", title), Style::default().fg(CYAN).bold()),
                 Span::styled("─".repeat(line_width), Style::default().fg(BORDER_TITLE)),
             ]),
             Line::from(""),
@@ -2844,24 +2834,15 @@ fn draw_stream_detail(f: &mut Frame, area: Rect, state: &StreamDetailState) {
                 ]));
                 lines.push(Line::from(vec![
                     Span::styled("      ", Style::default()),
-                    Span::styled(
-                        *desc,
-                        Style::default().fg(GRAY_200).italic(),
-                    ),
+                    Span::styled(*desc, Style::default().fg(GRAY_200).italic()),
                 ]));
             } else {
                 // Unselected action - dimmed
                 lines.push(Line::from(vec![
                     Span::styled("    ", Style::default()),
                     Span::styled(*icon, Style::default().fg(GRAY_700)),
-                    Span::styled(
-                        format!(" {} ", name),
-                        Style::default().fg(GRAY_400),
-                    ),
-                    Span::styled(
-                        format!("[{}]", key),
-                        Style::default().fg(GRAY_700),
-                    ),
+                    Span::styled(format!(" {} ", name), Style::default().fg(GRAY_400)),
+                    Span::styled(format!("[{}]", key), Style::default().fg(GRAY_700)),
                 ]));
             }
             lines.push(Line::from(""));
@@ -3898,7 +3879,8 @@ fn get_responsive_hints(screen: &Screen, width: usize) -> String {
                 MetricsType::Basin { .. } | MetricsType::Account
             ) {
                 if wide {
-                    "←→ category | jk scroll | t time range | r refresh | esc back | q quit".to_string()
+                    "←→ category | jk scroll | t time range | r refresh | esc back | q quit"
+                        .to_string()
                 } else {
                     "←→ cat | jk | t time | r | esc q".to_string()
                 }
