@@ -6930,7 +6930,7 @@ impl App {
             let result = run_bench_with_events(
                 stream,
                 record_size as usize,
-                NonZeroU64::new(target_mibps).unwrap_or(NonZeroU64::new(1).unwrap()),
+                NonZeroU64::new(target_mibps).unwrap_or(NonZeroU64::MIN),
                 Duration::from_secs(duration_secs),
                 Duration::from_secs(catchup_delay_secs),
                 user_stop,
