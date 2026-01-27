@@ -1,10 +1,37 @@
 name: release
-on:  
-  push:
-    tags: ["[0-9]+.[0-9]+.[0-9]+*"]
+
+on:
+  pull_request:
+    types: [closed]
   workflow_dispatch:
+
 jobs:
+  release_plz:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz release
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+
   build_binaries:
+    needs: release_plz
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -37,8 +64,8 @@ jobs:
           - os: windows-latest
             target: aarch64-pc-windows-msvc
     steps:
-      - name: checkout
-        uses: actions/checkout@v4      
+      - name: Checkout
+        uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           rustflags: ""
@@ -59,7 +86,7 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           echo "${{ secrets.MACOS_PEM }}" | base64 -d -o macos.pem
-          echo "${{ secrets.MACOS_CERTIFICATE_DER }}" | base64 -d -o certificate.der      
+          echo "${{ secrets.MACOS_CERTIFICATE_DER }}" | base64 -d -o certificate.der
       - name: Sign macos binary
         if: matrix.os == 'macos-latest'
         uses: indygreg/apple-code-sign-action@v1
@@ -73,104 +100,92 @@ jobs:
         shell: bash
         run: |
             cd target/${{ matrix.target }}/release
-            
-            if [ "${{ matrix.os }}" = "windows-latest" ]; 
+
+            if [ "${{ matrix.os }}" = "windows-latest" ];
             then
                 7z a ../../../s2-${{ matrix.target }}.zip s2.exe
             else
                 zip -r ../../../s2-${{ matrix.target }}.zip s2
-            fi      
+            fi
       - name: App store connect api key
         if: matrix.os == 'macos-latest'
         run: echo "${{ secrets.APP_STORE_CONNECT_API_KEY }}" | base64 -d -o app_store_connect_api_key.json
-      - name: Notarize macos binary              
-        if: matrix.os == 'macos-latest'  
+      - name: Notarize macos binary
+        if: matrix.os == 'macos-latest'
         uses: indygreg/apple-code-sign-action@v1
-        with:          
+        with:
           input_path: s2-${{ matrix.target }}.zip
           sign: false
           notarize: true
           app_store_connect_api_key_json_file: app_store_connect_api_key.json
-      - name: upload artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: |            
+          path: |
             *.zip
           if-no-files-found: error
 
-  create_release:
+  upload_release_artifacts:
     needs: build_binaries
     runs-on: ubuntu-22.04
-    if: github.event_name != 'workflow_dispatch'
     permissions:
       contents: write
     steps:
-      - name: checkout
+      - name: Checkout
         uses: actions/checkout@v4
-      - name: version
-        id: version
-        uses: SebRollen/toml-action@v1.2.0
-        with:
-          file: Cargo.toml
-          field: package.version
-      - uses: mindsers/changelog-reader-action@v2
-        id: changelog_reader
-        with:
-          version: ${{ steps.version.outputs.value }}
-      - name: install rust
-        uses: dtolnay/rust-toolchain@stable
-      - name: publish to crates.io
-        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}          
-      - name: download artifacts
-        uses: actions/download-artifact@v4
-      - name: create release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            **/*.tar.gz
-            **/*.zip
-          name: ${{ steps.version.outputs.value }}
-          body: ${{ steps.changelog_reader.outputs.changes }}       
-
-  update_homebrew:
-    needs: [create_release, build_binaries]
-    runs-on: ubuntu-22.04
-    if: github.event_name != 'workflow_dispatch'
-    steps:
-      - name: checkout
-        uses: actions/checkout@v4
-      - name: version
+      - name: Get version
         id: version
         uses: SebRollen/toml-action@v1.2.0
         with:
           file: Cargo.toml
           field: package.version
       - name: Download artifacts
-        uses: actions/download-artifact@v4      
-      - name: sha256sum
-        run: |          
+        uses: actions/download-artifact@v4
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.value }}
+          files: |
+            **/*.zip
+
+  update_homebrew:
+    needs: build_binaries
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Get version
+        id: version
+        uses: SebRollen/toml-action@v1.2.0
+        with:
+          file: Cargo.toml
+          field: package.version
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+      - name: Calculate checksums
+        run: |
           LINUX_INTEL_SHA256=$(shasum -a 256 x86_64-unknown-linux-gnu/s2-x86_64-unknown-linux-gnu.zip | awk '{print $1}')
-          echo "LINUX_INTEL_SHA256=$LINUX_INTEL_SHA256" >> $GITHUB_ENV  
+          echo "LINUX_INTEL_SHA256=$LINUX_INTEL_SHA256" >> $GITHUB_ENV
           LINUX_ARM_SHA256=$(shasum -a 256 aarch64-unknown-linux-gnu/s2-aarch64-unknown-linux-gnu.zip | awk '{print $1}')
           echo "LINUX_ARM_SHA256=$LINUX_ARM_SHA256" >> $GITHUB_ENV
           MAC_INTEL_SHA256=$(shasum -a 256 x86_64-apple-darwin/s2-x86_64-apple-darwin.zip | awk '{print $1}')
           echo "MAC_INTEL_SHA256=$MAC_INTEL_SHA256" >> $GITHUB_ENV
           MAC_ARM_SHA256=$(shasum -a 256 aarch64-apple-darwin/s2-aarch64-apple-darwin.zip | awk '{print $1}')
-          echo "MAC_ARM_SHA256=$MAC_ARM_SHA256" >> $GITHUB_ENV        
-      - name: checkout into the formula repo
+          echo "MAC_ARM_SHA256=$MAC_ARM_SHA256" >> $GITHUB_ENV
+      - name: Checkout homebrew repo
         uses: actions/checkout@v4
         with:
           repository: 's2-streamstore/homebrew-s2'
           token: ${{ secrets.HOMEBREW_PAT }}
-      - name: update formula
-        run: |          
+      - name: Update formula
+        run: |
           sed -i.bak "s/^  version \".*\"$/  version \"${{ steps.version.outputs.value }}\"/" s2.rb
           sed -z -i -e 's/[0-9a-f]\{64\}/${{ env.MAC_INTEL_SHA256 }}/1' s2.rb
           sed -z -i -e 's/[0-9a-f]\{64\}/${{ env.MAC_ARM_SHA256 }}/2' s2.rb
           sed -z -i -e 's/[0-9a-f]\{64\}/${{ env.LINUX_INTEL_SHA256 }}/3' s2.rb
-          sed -z -i -e 's/[0-9a-f]\{64\}/${{ env.LINUX_ARM_SHA256 }}/4' s2.rb          
-      - name: release
+          sed -z -i -e 's/[0-9a-f]\{64\}/${{ env.LINUX_ARM_SHA256 }}/4' s2.rb
+      - name: Push formula
         run: |
           git config --global user.email "mehul@s2.dev"
           git config --global user.name "Mehul Arora"
