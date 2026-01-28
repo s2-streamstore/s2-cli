@@ -37,6 +37,24 @@ use super::ui;
 /// Maximum records to keep in read view buffer
 const MAX_RECORDS_BUFFER: usize = 1000;
 
+/// Maximum throughput history samples to keep (60 seconds at 1 sample/sec)
+const MAX_THROUGHPUT_HISTORY: usize = 60;
+
+/// Splash screen display duration in milliseconds
+const SPLASH_DURATION_MS: u64 = 1200;
+
+/// Target frame interval in milliseconds (~60fps)
+const FRAME_INTERVAL_MS: u64 = 16;
+
+/// Calculate throughput rates from accumulated bytes/records over elapsed time.
+/// Returns (MiB/s, records/s).
+#[inline]
+fn calculate_throughput(bytes: u64, records: u64, elapsed_secs: f64) -> (f64, f64) {
+    let mibps = (bytes as f64) / (1024.0 * 1024.0) / elapsed_secs;
+    let recps = (records as f64) / elapsed_secs;
+    (mibps, recps)
+}
+
 /// Top-level navigation tabs
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
@@ -1187,7 +1205,7 @@ impl App {
     pub async fn run<B: Backend>(mut self, terminal: &mut Terminal<B>) -> Result<(), CliError> {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let splash_start = std::time::Instant::now();
-        let splash_duration = Duration::from_millis(1200);
+        let splash_duration = Duration::from_millis(SPLASH_DURATION_MS);
         if self.s2.is_some() {
             self.load_basins(tx.clone());
         }
@@ -1267,7 +1285,7 @@ impl App {
                         }
                     self.handle_event(event);
                 }
-                _ = tokio::time::sleep(Duration::from_millis(16)) => {}
+                _ = tokio::time::sleep(Duration::from_millis(FRAME_INTERVAL_MS)) => {}
             }
 
             if self.should_quit {
@@ -1380,23 +1398,23 @@ impl App {
                                 if let Some(last_tick) = state.last_tick {
                                     let elapsed = last_tick.elapsed();
                                     if elapsed >= std::time::Duration::from_secs(1) {
-                                        let secs = elapsed.as_secs_f64();
-                                        let mibps = (state.bytes_this_second as f64)
-                                            / (1024.0 * 1024.0)
-                                            / secs;
-                                        let recps = (state.records_this_second as f64) / secs;
+                                        let (mibps, recps) = calculate_throughput(
+                                            state.bytes_this_second,
+                                            state.records_this_second,
+                                            elapsed.as_secs_f64(),
+                                        );
 
                                         state.current_mibps = mibps;
                                         state.current_recps = recps;
                                         state.throughput_history.push(mibps);
                                         state.records_per_sec_history.push(recps);
 
-                                        // Keep only last 60 samples
-                                        const MAX_HISTORY: usize = 60;
-                                        if state.throughput_history.len() > MAX_HISTORY {
+                                        if state.throughput_history.len() > MAX_THROUGHPUT_HISTORY {
                                             state.throughput_history.remove(0);
                                         }
-                                        if state.records_per_sec_history.len() > MAX_HISTORY {
+                                        if state.records_per_sec_history.len()
+                                            > MAX_THROUGHPUT_HISTORY
+                                        {
                                             state.records_per_sec_history.remove(0);
                                         }
 
@@ -1468,10 +1486,13 @@ impl App {
                             if let Some(last_tick) = pip.last_tick {
                                 let elapsed = last_tick.elapsed();
                                 if elapsed >= std::time::Duration::from_secs(1) {
-                                    let secs = elapsed.as_secs_f64();
-                                    pip.current_mibps =
-                                        (pip.bytes_this_second as f64) / (1024.0 * 1024.0) / secs;
-                                    pip.current_recps = (pip.records_this_second as f64) / secs;
+                                    let (mibps, recps) = calculate_throughput(
+                                        pip.bytes_this_second,
+                                        pip.records_this_second,
+                                        elapsed.as_secs_f64(),
+                                    );
+                                    pip.current_mibps = mibps;
+                                    pip.current_recps = recps;
                                     pip.bytes_this_second = 0;
                                     pip.records_this_second = 0;
                                     pip.last_tick = Some(std::time::Instant::now());
@@ -6676,7 +6697,11 @@ impl App {
 
     fn date_to_timestamp(year: i32, month: u32, day: u32, start_of_day: bool) -> Option<u32> {
         use chrono::{TimeZone, Utc};
-        let (h, m, s) = if start_of_day { (0, 0, 0) } else { (23, 59, 59) };
+        let (h, m, s) = if start_of_day {
+            (0, 0, 0)
+        } else {
+            (23, 59, 59)
+        };
         Utc.with_ymd_and_hms(year, month, day, h, m, s)
             .single()
             .map(|dt| dt.timestamp() as u32)

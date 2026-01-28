@@ -1,6 +1,6 @@
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Padding, Paragraph},
@@ -86,6 +86,66 @@ const TIME_OLD: Color = GRAY_200;
 const CURSOR: &str = "▎";
 const SELECTED_INDICATOR: &str = " ▸ ";
 const UNSELECTED_INDICATOR: &str = "   ";
+
+/// Minimum dialog dimensions to ensure readability
+const MIN_DIALOG_WIDTH: u16 = 60;
+const MIN_DIALOG_HEIGHT: u16 = 20;
+
+/// Help descriptions for TUI options.
+/// Source: https://github.com/s2-streamstore/s2-specs/blob/main/s2/v1/openapi.json
+mod help_text {
+    // Record format (s2-format header) - exact from spec
+    pub const FORMAT_TEXT: &str = "Plain text, one record per line. No headers.";
+    pub const FORMAT_JSON: &str = "Efficient transmission and storage of Unicode data (UTF-8)."; // "raw" format
+    pub const FORMAT_JSON_BASE64: &str = "Safe transmission with efficient storage of binary data."; // "base64" format
+
+    // Storage class - spec has no descriptions, these are functional
+    pub const STORAGE_DEFAULT: &str = "Use basin's default storage class.";
+    pub const STORAGE_STANDARD: &str = "Standard storage class for recent writes.";
+    pub const STORAGE_EXPRESS: &str = "Express storage class, optimized for performance.";
+
+    // Timestamping mode - spec has no descriptions, these are functional
+    pub const TS_DEFAULT: &str = "Use basin's default timestamping mode.";
+    pub const TS_CLIENT_PREFER: &str = "Use client timestamp if provided, else arrival time.";
+    pub const TS_CLIENT_REQUIRE: &str = "Require client timestamp, reject if missing.";
+    pub const TS_ARRIVAL: &str = "Always use server arrival time.";
+
+    // Uncapped - exact from spec
+    pub const TS_UNCAPPED: &str = "Allow client timestamps to exceed arrival time.";
+    pub const TS_CAPPED: &str = "Client timestamps capped at arrival time.";
+
+    // Retention - exact from spec
+    pub const RETENTION_INFINITE: &str = "Retain records unless explicitly trimmed.";
+    pub const RETENTION_AGE: &str = "Auto-trim records older than threshold (seconds).";
+
+    // Delete on empty - exact from spec
+    pub const DELETE_NEVER: &str = "Set to 0 to disable delete-on-empty.";
+    pub const DELETE_THRESHOLD: &str = "Minimum age (seconds) before empty stream can be deleted.";
+
+    // Clamp - functional description
+    pub const CLAMP_ON: &str = "Clamp start position to stream bounds.";
+    pub const CLAMP_OFF: &str = "Error if start position out of bounds.";
+
+    // Auto-create streams - exact from spec
+    pub const AUTO_CREATE_APPEND: &str = "Create stream on append if it doesn't exist.";
+    pub const AUTO_CREATE_READ: &str = "Create stream on read if it doesn't exist.";
+
+    // Fencing - exact from spec
+    pub const FENCE_TOKEN: &str = "Fencing token which can be overridden by a fence command.";
+    pub const FENCE_CURRENT: &str = "Current fencing token (empty string if unfenced).";
+
+    // Trim - functional description
+    pub const TRIM_SEQ_NUM: &str = "Remove all records before this sequence number.";
+
+    // Match seq_num - exact from spec
+    pub const MATCH_SEQ_NUM: &str = "Enforce that the first record's sequence number matches.";
+
+    // Access tokens
+    pub const TOKEN_EXPIRY: &str = "When the token becomes invalid.";
+
+    // Append fencing - exact from spec
+    pub const APPEND_FENCING: &str = "Enforce fencing token match for this operation.";
+}
 
 /// Safely truncate a string to max_len characters, adding suffix if truncated.
 /// Returns the original string if it fits, otherwise truncates and adds suffix.
@@ -709,7 +769,9 @@ fn draw_settings_field(
         .borders(Borders::ALL)
         .border_style(border_style)
         .style(Style::default().bg(BG_DARK));
-    let value_para = Paragraph::new(Span::styled(value_display, value_style)).block(value_block);
+    let value_para = Paragraph::new(Span::styled(value_display, value_style))
+        .block(value_block)
+        .wrap(ratatui::widgets::Wrap { trim: false });
 
     f.render_widget(value_para, Rect::new(area.x, area.y + 1, area.width, 3));
 }
@@ -3334,7 +3396,9 @@ fn draw_headers_popup(f: &mut Frame, record: &s2_sdk::types::SequencedRecord) {
         .style(Style::default().bg(BG_DARK));
 
     f.render_widget(Clear, area);
-    let para = Paragraph::new(lines).block(block);
+    let para = Paragraph::new(lines)
+        .block(block)
+        .wrap(ratatui::widgets::Wrap { trim: false });
     f.render_widget(para, area);
 }
 
@@ -3520,6 +3584,15 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
             }),
         ),
     ]));
+    if match_selected {
+        lines.push(Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled(
+                help_text::MATCH_SEQ_NUM,
+                Style::default().fg(GRAY_600).italic(),
+            ),
+        ]));
+    }
     lines.push(Line::from(""));
 
     let fence_selected = state.selected == 3;
@@ -3550,6 +3623,15 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
             }),
         ),
     ]));
+    if fence_selected {
+        lines.push(Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled(
+                help_text::APPEND_FENCING,
+                Style::default().fg(GRAY_600).italic(),
+            ),
+        ]));
+    }
     lines.push(Line::from(""));
 
     // Separator between single record and batch mode
@@ -3617,6 +3699,17 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
         Span::raw(" "),
         render_pill(format_opts[2].0, format_selected, format_opts[2].1),
     ]));
+    if format_selected {
+        let format_help = match state.input_format {
+            super::app::InputFormat::Text => help_text::FORMAT_TEXT,
+            super::app::InputFormat::Json => help_text::FORMAT_JSON,
+            super::app::InputFormat::JsonBase64 => help_text::FORMAT_JSON_BASE64,
+        };
+        lines.push(Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled(format_help, Style::default().fg(GRAY_600).italic()),
+        ]));
+    }
 
     // Show progress if appending from file
     if let Some((done, total)) = state.file_append_progress {
@@ -3656,7 +3749,7 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
         Span::styled(btn_text, Style::default().fg(btn_fg).bg(btn_bg).bold()),
     ]));
 
-    let form_para = Paragraph::new(lines);
+    let form_para = Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false });
     f.render_widget(form_para, form_inner);
 
     let history_block = Block::default()
@@ -3704,7 +3797,8 @@ fn draw_append_view(f: &mut Frame, area: Rect, state: &AppendViewState) {
             history_lines.push(Line::from(spans));
         }
 
-        let history_para = Paragraph::new(history_lines);
+        let history_para =
+            Paragraph::new(history_lines).wrap(ratatui::widgets::Wrap { trim: false });
         f.render_widget(history_para, history_inner);
     }
 }
@@ -4247,23 +4341,109 @@ fn draw_help_overlay(f: &mut Frame, screen: &Screen) {
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
+    // Calculate target size from percentage
+    let target_width = (area.width as u32 * percent_x as u32 / 100) as u16;
+    let target_height = (area.height as u32 * percent_y as u32 / 100) as u16;
 
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
+    // Apply minimum sizes to ensure readability on small terminals
+    let width = target_width.max(MIN_DIALOG_WIDTH).min(area.width);
+    let height = target_height.max(MIN_DIALOG_HEIGHT).min(area.height);
+
+    // Center the rectangle
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + area.height.saturating_sub(height) / 2;
+
+    Rect::new(x, y, width, height)
+}
+
+fn get_selected_line_hint(mode: &InputMode) -> usize {
+    match mode {
+        InputMode::Normal => 0,
+        InputMode::CreateBasin { selected, .. } => match selected {
+            0 => 3,   // Name
+            1 => 7,   // Region
+            2 => 12,  // Storage
+            3 => 16,  // Retention
+            4 => 19,  // Duration
+            5 => 22,  // Timestamps
+            6 => 26,  // Uncapped
+            7 => 30,  // Delete on empty
+            8 => 34,  // Threshold
+            9 => 40,  // On append
+            10 => 44, // On read
+            _ => 48,  // Button
+        }
+        InputMode::CreateStream { selected, .. } => match selected {
+            0 => 5,  // Name
+            1 => 12, // Storage
+            2 => 16, // Retention
+            3 => 19, // Duration
+            4 => 22, // Timestamps
+            5 => 26, // Uncapped
+            6 => 30, // Delete on empty
+            7 => 34, // Threshold
+            _ => 38, // Button
+        },
+        InputMode::ReconfigureBasin { selected, .. } => match selected {
+            0 => 6,  // Storage
+            1 => 10, // Retention
+            2 => 14, // Duration
+            3 => 18, // Timestamps
+            4 => 22, // Uncapped
+            5 => 28, // On append
+            6 => 32, // On read
+            _ => 36,
+        },
+        InputMode::ReconfigureStream { selected, .. } => match selected {
+            0 => 6,  // Storage
+            1 => 10, // Retention
+            2 => 14, // Duration
+            3 => 18, // Timestamps
+            4 => 22, // Uncapped
+            5 => 26, // Delete on empty
+            6 => 30, // Threshold
+            _ => 34,
+        },
+        InputMode::CustomRead { selected, .. } => match selected {
+            0 => 6,  // Seq num
+            1 => 9,  // Timestamp
+            2 => 12, // Time ago
+            3 => 15, // Tail offset
+            4 => 20, // Max records
+            5 => 23, // Max bytes
+            6 => 26, // Until
+            7 => 31, // Clamp
+            8 => 35, // Format
+            9 => 40, // Output file
+            _ => 45, // Button
+        },
+        InputMode::IssueAccessToken { selected, .. } => match selected {
+            0 => 2,   // Token ID
+            1 => 5,   // Expiration
+            2 => 9,   // Custom duration
+            3 => 14,  // Basins scope
+            4 => 17,  // Basins pattern
+            5 => 20,  // Streams scope
+            6 => 23,  // Streams pattern
+            7 => 26,  // Tokens scope
+            8 => 29,  // Tokens pattern
+            9 => 34,  // Account read
+            10 => 36, // Account write
+            11 => 38, // Basin read
+            12 => 40, // Basin write
+            13 => 42, // Stream read
+            14 => 44, // Stream write
+            15 => 48, // Auto prefix
+            _ => 52,  // Button
+        }
+        InputMode::Fence { selected, .. } => *selected * 4 + 5,
+        InputMode::Trim { selected, .. } => *selected * 4 + 5,
+        InputMode::ConfirmDeleteBasin { .. }
+        | InputMode::ConfirmDeleteStream { .. }
+        | InputMode::ConfirmRevokeToken { .. }
+        | InputMode::ShowIssuedToken { .. }
+        | InputMode::ViewTokenDetail { .. } => 0,
+    }
 }
 
 fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
@@ -4398,6 +4578,19 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             }
             lines.push(Line::from(storage_spans));
 
+            // Storage class help text
+            if *selected == 2 {
+                let storage_help = match storage_class {
+                    None => help_text::STORAGE_DEFAULT,
+                    Some(StorageClass::Standard) => help_text::STORAGE_STANDARD,
+                    Some(StorageClass::Express) => help_text::STORAGE_EXPRESS,
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(storage_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
+
             lines.push(Line::from(""));
             let (ind, lbl) = render_field_row_bold(3, "Retention", *selected);
             let mut ret_spans = vec![ind, lbl, Span::raw("  ")];
@@ -4406,6 +4599,18 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 ret_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(ret_spans));
+
+            // Retention help text
+            if *selected == 3 {
+                let ret_help = match retention_policy {
+                    RetentionPolicyOption::Infinite => help_text::RETENTION_INFINITE,
+                    RetentionPolicyOption::Age => help_text::RETENTION_AGE,
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(ret_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
 
             if *retention_policy == RetentionPolicyOption::Age {
                 let (ind, lbl) = render_field_row_bold(4, "  Duration", *selected);
@@ -4433,11 +4638,38 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             }
             lines.push(Line::from(ts_spans));
 
+            // Timestamping mode help text
+            if *selected == 5 {
+                let ts_help = match timestamping_mode {
+                    None => help_text::TS_DEFAULT,
+                    Some(TimestampingMode::ClientPrefer) => help_text::TS_CLIENT_PREFER,
+                    Some(TimestampingMode::ClientRequire) => help_text::TS_CLIENT_REQUIRE,
+                    Some(TimestampingMode::Arrival) => help_text::TS_ARRIVAL,
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(ts_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
+
             // Uncapped Timestamps
             let (ind, lbl) = render_field_row_bold(6, "  Uncapped", *selected);
             let mut uncapped_spans = vec![ind, lbl, Span::raw("  ")];
             uncapped_spans.extend(render_toggle(*timestamping_uncapped, *selected == 6));
             lines.push(Line::from(uncapped_spans));
+
+            // Uncapped help text
+            if *selected == 6 {
+                let uncapped_help = if *timestamping_uncapped {
+                    help_text::TS_UNCAPPED
+                } else {
+                    help_text::TS_CAPPED
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(uncapped_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
 
             // Delete on Empty
             let delete_opts = [
@@ -4452,6 +4684,19 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 del_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(del_spans));
+
+            // Delete on empty help text
+            if *selected == 7 {
+                let del_help = if *delete_on_empty_enabled {
+                    help_text::DELETE_THRESHOLD
+                } else {
+                    help_text::DELETE_NEVER
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(del_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
 
             // Delete on Empty Threshold (conditional)
             if *delete_on_empty_enabled {
@@ -4481,12 +4726,34 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             append_spans.extend(render_toggle(*create_stream_on_append, *selected == 9));
             lines.push(Line::from(append_spans));
 
+            // On append help text
+            if *selected == 9 {
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(
+                        help_text::AUTO_CREATE_APPEND,
+                        Style::default().fg(GRAY_600).italic(),
+                    ),
+                ]));
+            }
+
             // On Read
             lines.push(Line::from(""));
             let (ind, lbl) = render_field_row_bold(10, "On read", *selected);
             let mut read_spans = vec![ind, lbl, Span::raw("  ")];
             read_spans.extend(render_toggle(*create_stream_on_read, *selected == 10));
             lines.push(Line::from(read_spans));
+
+            // On read help text
+            if *selected == 10 {
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(
+                        help_text::AUTO_CREATE_READ,
+                        Style::default().fg(GRAY_600).italic(),
+                    ),
+                ]));
+            }
 
             // Create button section
             lines.push(Line::from(""));
@@ -4609,6 +4876,19 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             }
             lines.push(Line::from(storage_spans));
 
+            // Storage class help text
+            if *selected == 1 {
+                let storage_help = match storage_class {
+                    None => help_text::STORAGE_DEFAULT,
+                    Some(StorageClass::Standard) => help_text::STORAGE_STANDARD,
+                    Some(StorageClass::Express) => help_text::STORAGE_EXPRESS,
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(storage_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
+
             lines.push(Line::from(""));
             let (ind, lbl) = render_field_row(2, "Retention", *selected);
             let mut ret_spans = vec![ind, lbl, Span::raw("  ")];
@@ -4617,6 +4897,18 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 ret_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(ret_spans));
+
+            // Retention help text
+            if *selected == 2 {
+                let ret_help = match retention_policy {
+                    RetentionPolicyOption::Infinite => help_text::RETENTION_INFINITE,
+                    RetentionPolicyOption::Age => help_text::RETENTION_AGE,
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(ret_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
 
             if *retention_policy == RetentionPolicyOption::Age {
                 let (ind, lbl) = render_field_row(3, "  Duration", *selected);
@@ -4644,11 +4936,38 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             }
             lines.push(Line::from(ts_spans));
 
+            // Timestamping mode help text
+            if *selected == 4 {
+                let ts_help = match timestamping_mode {
+                    None => help_text::TS_DEFAULT,
+                    Some(TimestampingMode::ClientPrefer) => help_text::TS_CLIENT_PREFER,
+                    Some(TimestampingMode::ClientRequire) => help_text::TS_CLIENT_REQUIRE,
+                    Some(TimestampingMode::Arrival) => help_text::TS_ARRIVAL,
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(ts_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
+
             // Uncapped Timestamps
             let (ind, lbl) = render_field_row(5, "  Uncapped", *selected);
             let mut uncapped_spans = vec![ind, lbl, Span::raw("  ")];
             uncapped_spans.extend(render_toggle(*timestamping_uncapped, *selected == 5));
             lines.push(Line::from(uncapped_spans));
+
+            // Uncapped help text
+            if *selected == 5 {
+                let uncapped_help = if *timestamping_uncapped {
+                    help_text::TS_UNCAPPED
+                } else {
+                    help_text::TS_CAPPED
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(uncapped_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
 
             // Delete on Empty
             let delete_opts = [
@@ -4663,6 +4982,19 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 del_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(del_spans));
+
+            // Delete on empty help text
+            if *selected == 6 {
+                let del_help = if *delete_on_empty_enabled {
+                    help_text::DELETE_THRESHOLD
+                } else {
+                    help_text::DELETE_NEVER
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(del_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
 
             // Delete on Empty Threshold (conditional)
             if *delete_on_empty_enabled {
@@ -4828,6 +5160,19 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             }
             lines.push(Line::from(storage_spans));
 
+            // Storage class help text
+            if *selected == 0 {
+                let storage_help = match storage_class {
+                    None => help_text::STORAGE_DEFAULT,
+                    Some(StorageClass::Standard) => help_text::STORAGE_STANDARD,
+                    Some(StorageClass::Express) => help_text::STORAGE_EXPRESS,
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(storage_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
+
             lines.push(Line::from(""));
             let (ind, lbl) = render_field_row_bold(1, "Retention", *selected);
             let mut ret_spans = vec![ind, lbl, Span::raw("  ")];
@@ -4836,6 +5181,18 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 ret_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(ret_spans));
+
+            // Retention help text
+            if *selected == 1 {
+                let ret_help = match retention_policy {
+                    RetentionPolicyOption::Infinite => help_text::RETENTION_INFINITE,
+                    RetentionPolicyOption::Age => help_text::RETENTION_AGE,
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(ret_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
 
             if *retention_policy == RetentionPolicyOption::Age {
                 let (ind, lbl) = render_field_row_bold(2, "  Duration", *selected);
@@ -4868,6 +5225,20 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             }
             lines.push(Line::from(ts_spans));
 
+            // Timestamping mode help text
+            if *selected == 3 {
+                let ts_help = match timestamping_mode {
+                    None => help_text::TS_DEFAULT,
+                    Some(TimestampingMode::ClientPrefer) => help_text::TS_CLIENT_PREFER,
+                    Some(TimestampingMode::ClientRequire) => help_text::TS_CLIENT_REQUIRE,
+                    Some(TimestampingMode::Arrival) => help_text::TS_ARRIVAL,
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(ts_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
+
             // Uncapped Timestamps
             let (ind, lbl) = render_field_row_bold(4, "  Uncapped", *selected);
             let mut uncapped_spans = vec![ind, lbl, Span::raw("  ")];
@@ -4876,6 +5247,19 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 *selected == 4,
             ));
             lines.push(Line::from(uncapped_spans));
+
+            // Uncapped help text
+            if *selected == 4 {
+                let uncapped_help = if timestamping_uncapped.unwrap_or(false) {
+                    help_text::TS_UNCAPPED
+                } else {
+                    help_text::TS_CAPPED
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(uncapped_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
 
             // Create streams automatically section
             lines.push(Line::from(""));
@@ -4891,6 +5275,17 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             ));
             lines.push(Line::from(append_spans));
 
+            // On append help text
+            if *selected == 5 {
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(
+                        help_text::AUTO_CREATE_APPEND,
+                        Style::default().fg(GRAY_600).italic(),
+                    ),
+                ]));
+            }
+
             // On Read
             lines.push(Line::from(""));
             let (ind, lbl) = render_field_row_bold(6, "On read", *selected);
@@ -4900,6 +5295,17 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 *selected == 6,
             ));
             lines.push(Line::from(read_spans));
+
+            // On read help text
+            if *selected == 6 {
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(
+                        help_text::AUTO_CREATE_READ,
+                        Style::default().fg(GRAY_600).italic(),
+                    ),
+                ]));
+            }
 
             lines.push(Line::from(""));
 
@@ -4985,6 +5391,19 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             }
             lines.push(Line::from(storage_spans));
 
+            // Storage class help text
+            if *selected == 0 {
+                let storage_help = match storage_class {
+                    None => help_text::STORAGE_DEFAULT,
+                    Some(StorageClass::Standard) => help_text::STORAGE_STANDARD,
+                    Some(StorageClass::Express) => help_text::STORAGE_EXPRESS,
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(storage_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
+
             lines.push(Line::from(""));
             let (ind, lbl) = render_field_row(1, "Retention", *selected);
             let mut ret_spans = vec![ind, lbl, Span::raw("  ")];
@@ -4993,6 +5412,18 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 ret_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(ret_spans));
+
+            // Retention help text
+            if *selected == 1 {
+                let ret_help = match retention_policy {
+                    RetentionPolicyOption::Infinite => help_text::RETENTION_INFINITE,
+                    RetentionPolicyOption::Age => help_text::RETENTION_AGE,
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(ret_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
 
             if *retention_policy == RetentionPolicyOption::Age {
                 let (ind, lbl) = render_field_row(2, "  Duration", *selected);
@@ -5025,6 +5456,20 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             }
             lines.push(Line::from(ts_spans));
 
+            // Timestamping mode help text
+            if *selected == 3 {
+                let ts_help = match timestamping_mode {
+                    None => help_text::TS_DEFAULT,
+                    Some(TimestampingMode::ClientPrefer) => help_text::TS_CLIENT_PREFER,
+                    Some(TimestampingMode::ClientRequire) => help_text::TS_CLIENT_REQUIRE,
+                    Some(TimestampingMode::Arrival) => help_text::TS_ARRIVAL,
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(ts_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
+
             // Uncapped Timestamps
             let (ind, lbl) = render_field_row(4, "  Uncapped", *selected);
             let mut uncapped_spans = vec![ind, lbl, Span::raw("  ")];
@@ -5033,6 +5478,19 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 *selected == 4,
             ));
             lines.push(Line::from(uncapped_spans));
+
+            // Uncapped help text
+            if *selected == 4 {
+                let uncapped_help = if timestamping_uncapped.unwrap_or(false) {
+                    help_text::TS_UNCAPPED
+                } else {
+                    help_text::TS_CAPPED
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(uncapped_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
 
             // Delete on Empty
             let delete_opts = [
@@ -5047,6 +5505,19 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 del_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(del_spans));
+
+            // Delete on empty help text
+            if *selected == 5 {
+                let del_help = if *delete_on_empty_enabled {
+                    help_text::DELETE_THRESHOLD
+                } else {
+                    help_text::DELETE_NEVER
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(del_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
 
             // Delete on Empty Threshold (conditional)
             if *delete_on_empty_enabled {
@@ -5256,6 +5727,19 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             clamp_spans.extend(render_toggle(*clamp, *selected == 7));
             lines.push(Line::from(clamp_spans));
 
+            // Clamp help text
+            if *selected == 7 {
+                let clamp_help = if *clamp {
+                    help_text::CLAMP_ON
+                } else {
+                    help_text::CLAMP_OFF
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(clamp_help, Style::default().fg(GRAY_600).italic()),
+                ]));
+            }
+
             // Row 8: Format
             let (ind, lbl) = render_field_row(8, "Format", *selected);
             let mut format_spans = vec![ind, lbl, Span::raw("  ")];
@@ -5264,6 +5748,17 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 format_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(format_spans));
+
+            // Format help text - shows description of currently selected format
+            let format_help = match format.as_str() {
+                "text" => help_text::FORMAT_TEXT,
+                "json" => help_text::FORMAT_JSON,
+                _ => help_text::FORMAT_JSON_BASE64,
+            };
+            lines.push(Line::from(vec![
+                Span::raw("                  "),
+                Span::styled(format_help, Style::default().fg(GRAY_600).italic()),
+            ]));
 
             // Row 9: Output file
             lines.push(Line::from(""));
@@ -5333,6 +5828,17 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             ));
             lines.push(Line::from(new_spans));
 
+            // New token help text
+            if *selected == 0 {
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(
+                        help_text::FENCE_TOKEN,
+                        Style::default().fg(GRAY_600).italic(),
+                    ),
+                ]));
+            }
+
             // Row 1: Current token
             lines.push(Line::from(""));
             let (ind, lbl) = render_field_row_bold(1, "Current", *selected);
@@ -5344,6 +5850,17 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 TEXT_SECONDARY,
             ));
             lines.push(Line::from(cur_spans));
+
+            // Current token help text
+            if *selected == 1 {
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(
+                        help_text::FENCE_CURRENT,
+                        Style::default().fg(GRAY_600).italic(),
+                    ),
+                ]));
+            }
 
             // Divider and button
             lines.push(Line::from(""));
@@ -5410,6 +5927,17 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
             ));
             lines.push(Line::from(trim_spans));
 
+            // Trim point help text
+            if *selected == 0 {
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(
+                        help_text::TRIM_SEQ_NUM,
+                        Style::default().fg(GRAY_600).italic(),
+                    ),
+                ]));
+            }
+
             // Row 1: Fencing token
             lines.push(Line::from(""));
             let (ind, lbl) = render_field_row_bold(1, "Fence Token", *selected);
@@ -5421,6 +5949,17 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 TEXT_SECONDARY,
             ));
             lines.push(Line::from(fence_spans));
+
+            // Fence token help text
+            if *selected == 1 {
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(
+                        help_text::APPEND_FENCING,
+                        Style::default().fg(GRAY_600).italic(),
+                    ),
+                ]));
+            }
 
             // Divider and button
             lines.push(Line::from(""));
@@ -5507,6 +6046,17 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
                 expiry_spans.push(Span::raw(" "));
             }
             lines.push(Line::from(expiry_spans));
+
+            // Expiration help text
+            if *selected == 1 {
+                lines.push(Line::from(vec![
+                    Span::raw("                  "),
+                    Span::styled(
+                        help_text::TOKEN_EXPIRY,
+                        Style::default().fg(GRAY_600).italic(),
+                    ),
+                ]));
+            }
 
             // Row 2: Custom expiration (only if Custom selected)
             if *expiry == ExpiryOption::Custom {
@@ -5854,8 +6404,52 @@ fn draw_input_dialog(f: &mut Frame, mode: &InputMode) {
 
     f.render_widget(Clear, area);
 
-    let dialog = Paragraph::new(content).block(block);
+    // Calculate scroll offset to keep selected item visible
+    // Inner height = area height - borders (2) - padding (0) - hint line (1)
+    let inner_height = chunks[0].height.saturating_sub(4) as usize;
+    let content_height = content.len();
+    let scroll_offset = if content_height > inner_height {
+        // Find the selected field's approximate line position
+        let selected_line = get_selected_line_hint(mode);
+        // Scroll so selected item is in the middle-ish of visible area
+        let half_visible = inner_height / 2;
+        if selected_line > half_visible {
+            (selected_line - half_visible).min(content_height.saturating_sub(inner_height))
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    let dialog = Paragraph::new(content.clone())
+        .block(block)
+        .wrap(ratatui::widgets::Wrap { trim: false })
+        .scroll((scroll_offset as u16, 0));
     f.render_widget(dialog, chunks[0]);
+
+    if content_height > inner_height {
+        let inner_area = chunks[0].inner(Margin::new(1, 1));
+        if scroll_offset > 0 {
+            let up_indicator = Paragraph::new("▲")
+                .style(Style::default().fg(GRAY_600))
+                .alignment(Alignment::Right);
+            let up_area = Rect::new(inner_area.x, inner_area.y, inner_area.width, 1);
+            f.render_widget(up_indicator, up_area);
+        }
+        if scroll_offset + inner_height < content_height {
+            let down_indicator = Paragraph::new("▼")
+                .style(Style::default().fg(GRAY_600))
+                .alignment(Alignment::Right);
+            let down_area = Rect::new(
+                inner_area.x,
+                inner_area.y + inner_area.height.saturating_sub(1),
+                inner_area.width,
+                1,
+            );
+            f.render_widget(down_indicator, down_area);
+        }
+    }
 
     // Parse and render hint with highlighted keys for better accessibility
     let hint_spans = render_hint_with_keys(hint);
