@@ -7,12 +7,6 @@ jobs:
   test:
     runs-on: blacksmith-2vcpu-ubuntu-2204
     steps:
-      - name: Setup
-        uses: useblacksmith/stickydisk@v1
-        with:
-          key: test
-          enable-ssh: true
-
       - name: Run
         env:
           MACOS_PEM: ${{ secrets.MACOS_PEM }}
