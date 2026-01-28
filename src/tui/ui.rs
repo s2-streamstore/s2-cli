@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
@@ -3112,14 +3114,15 @@ fn draw_read_view(f: &mut Frame, area: Rect, state: &ReadViewState) {
             f.render_widget(Paragraph::new(line), row_area);
         }
 
-        // Vertical separator
+        // Vertical separator - single widget instead of per-row loop
         let sep_x = panes[1].x.saturating_sub(1);
-        for y in 0..inner_area.height {
-            f.render_widget(
-                Paragraph::new(Span::styled("│", Style::default().fg(BORDER))),
-                Rect::new(sep_x, inner_area.y + y, 1, 1),
-            );
-        }
+        let sep_lines: Vec<Line> = (0..inner_area.height)
+            .map(|_| Line::from(Span::styled("│", Style::default().fg(BORDER))))
+            .collect();
+        f.render_widget(
+            Paragraph::new(sep_lines),
+            Rect::new(sep_x, inner_area.y, 1, inner_area.height),
+        );
 
         panes[1]
     };
@@ -3350,8 +3353,12 @@ fn draw_headers_popup(f: &mut Frame, record: &s2_sdk::types::SequencedRecord) {
     } else {
         record.headers.len()
     };
-    let height = (content_lines + 5).min(20) as u16;
-    let area = centered_rect(50, height * 100 / f.area().height.max(1), f.area());
+    // Compact sizing: 5 lines overhead (title, record#, spacing, border) + content
+    let height = ((content_lines + 5) as u16).min(20).min(f.area().height);
+    let width = 45_u16.min(f.area().width);
+    let x = f.area().x + f.area().width.saturating_sub(width) / 2;
+    let y = f.area().y + f.area().height.saturating_sub(height) / 2;
+    let area = Rect::new(x, y, width, height);
 
     let mut lines = vec![
         Line::from(""),
@@ -6740,6 +6747,7 @@ fn draw_bench_running(f: &mut Frame, area: Rect, state: &BenchViewState) {
         .alignment(Alignment::Center);
         f.render_widget(wait_text, wait_inner);
     } else {
+        let empty_history = VecDeque::new();
         draw_bench_stat_box(
             f,
             chunks[3],
@@ -6749,7 +6757,7 @@ fn draw_bench_running(f: &mut Frame, area: Rect, state: &BenchViewState) {
             state.catchup_recps,
             state.catchup_bytes,
             state.catchup_records,
-            &[],
+            &empty_history,
         );
     }
 
@@ -6787,7 +6795,7 @@ fn draw_bench_stat_box(
     recps: f64,
     bytes: u64,
     records: u64,
-    history: &[f64],
+    history: &VecDeque<f64>,
 ) {
     let block = Block::default()
         .title(Line::from(Span::styled(
@@ -6842,8 +6850,8 @@ fn draw_bench_stat_box(
 fn draw_throughput_sparklines(
     f: &mut Frame,
     area: Rect,
-    write_history: &[f64],
-    read_history: &[f64],
+    write_history: &VecDeque<f64>,
+    read_history: &VecDeque<f64>,
 ) {
     let block = Block::default()
         .title(Line::from(Span::styled(
@@ -6967,8 +6975,8 @@ fn draw_latency_box(
 fn draw_tail_sparklines(
     f: &mut Frame,
     area: Rect,
-    throughput_history: &[f64],
-    records_history: &[f64],
+    throughput_history: &VecDeque<f64>,
+    records_history: &VecDeque<f64>,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -6988,7 +6996,7 @@ fn draw_tail_sparklines(
             .map(|v| ((v / max_val) * 100.0) as u64)
             .collect();
 
-        let current = throughput_history.last().copied().unwrap_or(0.0);
+        let current = throughput_history.back().copied().unwrap_or(0.0);
         let block = Block::default()
             .title(Line::from(vec![
                 Span::styled(" ▲ ", Style::default().fg(CYAN)),
@@ -7017,7 +7025,7 @@ fn draw_tail_sparklines(
             .map(|v| ((v / max_val) * 100.0) as u64)
             .collect();
 
-        let current = records_history.last().copied().unwrap_or(0.0);
+        let current = records_history.back().copied().unwrap_or(0.0);
         let block = Block::default()
             .title(Line::from(vec![
                 Span::styled(" ◆ ", Style::default().fg(GREEN)),

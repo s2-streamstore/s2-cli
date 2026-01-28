@@ -134,8 +134,8 @@ pub struct ReadViewState {
     pub hide_list: bool,
     pub output_file: Option<String>,
     // Throughput tracking for live sparklines
-    pub throughput_history: Vec<f64>,      // MiB/s samples
-    pub records_per_sec_history: Vec<f64>, // records/s samples
+    pub throughput_history: VecDeque<f64>,      // MiB/s samples
+    pub records_per_sec_history: VecDeque<f64>, // records/s samples
     pub current_mibps: f64,
     pub current_recps: f64,
     pub bytes_this_second: u64,
@@ -539,12 +539,12 @@ pub struct BenchViewState {
     pub write_recps: f64,
     pub write_bytes: u64,
     pub write_records: u64,
-    pub write_history: Vec<f64>,
+    pub write_history: VecDeque<f64>,
     pub read_mibps: f64,
     pub read_recps: f64,
     pub read_bytes: u64,
     pub read_records: u64,
-    pub read_history: Vec<f64>,
+    pub read_history: VecDeque<f64>,
     pub catchup_mibps: f64,
     pub catchup_recps: f64,
     pub catchup_bytes: u64,
@@ -576,12 +576,12 @@ impl BenchViewState {
             write_recps: 0.0,
             write_bytes: 0,
             write_records: 0,
-            write_history: Vec::new(),
+            write_history: VecDeque::new(),
             read_mibps: 0.0,
             read_recps: 0.0,
             read_bytes: 0,
             read_records: 0,
-            read_history: Vec::new(),
+            read_history: VecDeque::new(),
             catchup_mibps: 0.0,
             catchup_recps: 0.0,
             catchup_bytes: 0,
@@ -1406,16 +1406,16 @@ impl App {
 
                                         state.current_mibps = mibps;
                                         state.current_recps = recps;
-                                        state.throughput_history.push(mibps);
-                                        state.records_per_sec_history.push(recps);
+                                        state.throughput_history.push_back(mibps);
+                                        state.records_per_sec_history.push_back(recps);
 
                                         if state.throughput_history.len() > MAX_THROUGHPUT_HISTORY {
-                                            state.throughput_history.remove(0);
+                                            state.throughput_history.pop_front();
                                         }
                                         if state.records_per_sec_history.len()
                                             > MAX_THROUGHPUT_HISTORY
                                         {
-                                            state.records_per_sec_history.remove(0);
+                                            state.records_per_sec_history.pop_front();
                                         }
 
                                         state.bytes_this_second = 0;
@@ -1987,9 +1987,9 @@ impl App {
                     state.progress_pct =
                         ((state.elapsed_secs / state.duration_secs as f64) * 100.0).min(100.0);
 
-                    state.write_history.push(sample.mib_per_sec);
+                    state.write_history.push_back(sample.mib_per_sec);
                     if state.write_history.len() > 60 {
-                        state.write_history.remove(0);
+                        state.write_history.pop_front();
                     }
                 }
             }
@@ -2002,9 +2002,9 @@ impl App {
                     state.read_records = sample.records;
                     state.elapsed_secs = sample.elapsed.as_secs_f64();
 
-                    state.read_history.push(sample.mib_per_sec);
+                    state.read_history.push_back(sample.mib_per_sec);
                     if state.read_history.len() > 60 {
-                        state.read_history.remove(0);
+                        state.read_history.pop_front();
                     }
                 }
             }
@@ -4093,8 +4093,8 @@ impl App {
             show_detail: false,
             hide_list: false,
             output_file: None,
-            throughput_history: Vec::new(),
-            records_per_sec_history: Vec::new(),
+            throughput_history: VecDeque::new(),
+            records_per_sec_history: VecDeque::new(),
             current_mibps: 0.0,
             current_recps: 0.0,
             bytes_this_second: 0,
@@ -4284,8 +4284,8 @@ impl App {
             } else {
                 None
             },
-            throughput_history: Vec::new(),
-            records_per_sec_history: Vec::new(),
+            throughput_history: VecDeque::new(),
+            records_per_sec_history: VecDeque::new(),
             current_mibps: 0.0,
             current_recps: 0.0,
             bytes_this_second: 0,
