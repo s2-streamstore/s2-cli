@@ -6606,16 +6606,19 @@ impl App {
                             .calendar_end
                             .expect("calendar_end set before should_apply");
 
-                        // Ensure start <= end
                         let (start, end) = if start_date <= end_date {
                             (start_date, end_date)
                         } else {
                             (end_date, start_date)
                         };
 
-                        // Convert to unix timestamps (start of day for start, end of day for end)
                         let start_ts = Self::date_to_timestamp(start.0, start.1, start.2, true);
                         let end_ts = Self::date_to_timestamp(end.0, end.1, end.2, false);
+
+                        let Some((start_ts, end_ts)) = start_ts.zip(end_ts) else {
+                            state.calendar_open = false;
+                            return;
+                        };
 
                         let time_range = TimeRangeOption::Custom {
                             start: start_ts,
@@ -6659,28 +6662,24 @@ impl App {
         }
     }
 
-    /// Get the number of days in a month
     fn days_in_month(year: i32, month: u32) -> u32 {
-        NaiveDate::from_ymd_opt(year, month + 1, 1)
-            .unwrap_or_else(|| NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap())
-            .pred_opt()
+        let next_month_start = if month == 12 {
+            NaiveDate::from_ymd_opt(year + 1, 1, 1)
+        } else {
+            NaiveDate::from_ymd_opt(year, month + 1, 1)
+        };
+        next_month_start
+            .and_then(|d| d.pred_opt())
             .map(|d| d.day())
             .unwrap_or(28)
     }
 
-    /// Convert a date to unix timestamp
-    fn date_to_timestamp(year: i32, month: u32, day: u32, start_of_day: bool) -> u32 {
+    fn date_to_timestamp(year: i32, month: u32, day: u32, start_of_day: bool) -> Option<u32> {
         use chrono::{TimeZone, Utc};
-        let dt = if start_of_day {
-            Utc.with_ymd_and_hms(year, month, day, 0, 0, 0)
-                .single()
-                .expect("invalid date selected in calendar")
-        } else {
-            Utc.with_ymd_and_hms(year, month, day, 23, 59, 59)
-                .single()
-                .expect("invalid date selected in calendar")
-        };
-        dt.timestamp() as u32
+        let (h, m, s) = if start_of_day { (0, 0, 0) } else { (23, 59, 59) };
+        Utc.with_ymd_and_hms(year, month, day, h, m, s)
+            .single()
+            .map(|dt| dt.timestamp() as u32)
     }
 
     fn handle_bench_view_key(&mut self, key: KeyEvent, tx: mpsc::UnboundedSender<Event>) {
@@ -7135,13 +7134,14 @@ async fn run_bench_with_events(
 
     let catchup_stream = bench_read_catchup(stream.clone(), record_size, bench_start);
     let mut catchup_stream = std::pin::pin!(catchup_stream);
-    while let Some(result) = catchup_stream.next().await {
-        // Check stop signal during catchup
+    let catchup_timeout = Duration::from_secs(300);
+    let catchup_deadline = tokio::time::Instant::now() + catchup_timeout;
+    loop {
         if stop.load(Ordering::Relaxed) {
             break;
         }
-        match result {
-            Ok(sample) => {
+        match tokio::time::timeout_at(catchup_deadline, catchup_stream.next()).await {
+            Ok(Some(Ok(sample))) => {
                 let mibps = sample.bytes as f64
                     / (1024.0 * 1024.0)
                     / sample.elapsed.as_secs_f64().max(0.001);
@@ -7154,8 +7154,14 @@ async fn run_bench_with_events(
                     records_per_sec: recps,
                 }));
             }
-            Err(e) => {
+            Ok(Some(Err(e))) => {
                 return Err(e);
+            }
+            Ok(None) => break,
+            Err(_) => {
+                return Err(CliError::BenchVerification(
+                    "catchup read timed out after 5 minutes".to_string(),
+                ));
             }
         }
     }
