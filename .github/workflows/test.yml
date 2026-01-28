@@ -1,0 +1,24 @@
+name: test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: blacksmith-2vcpu-ubuntu-2204
+    steps:
+      - name: Setup
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: test
+          enable-ssh: true
+
+      - name: Run
+        env:
+          MACOS_PEM: ${{ secrets.MACOS_PEM }}
+          MACOS_CERTIFICATE_DER: ${{ secrets.MACOS_CERTIFICATE_DER }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+          HOMEBREW_PAT: ${{ secrets.HOMEBREW_PAT }}
+        run: |
+          sleep 1800
