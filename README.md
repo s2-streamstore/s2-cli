@@ -21,8 +21,14 @@
     <a href="https://discord.gg/vTCs7kMkAf"><img src="https://img.shields.io/discord/1209937852528599092?logo=discord" /></a>
     <!-- LICENSE -->
     <a href="./LICENSE"><img src="https://img.shields.io/github/license/s2-streamstore/s2-cli" /></a>
+  
   </p>
 </div>
+
+> [!NOTE]
+> **Repository moved:** The S2 CLI is now maintained in the
+> [`s2-streamstore/s2`](https://github.com/s2-streamstore/s2) repository.
+> This repository is archived and kept for historical reference only.
 
 Command Line Interface to interact with the
 [S2 API](https://s2.dev/docs/rest/protocol).
